@@ -1,0 +1,85 @@
+name: PR validation
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate contribution contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate branch, issue, and type
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const failures = [];
+
+            const branchPattern = /^(feat|fix|chore|docs|style|refactor|perf|test|build|ci|revert)\/[a-z0-9._-]+$/;
+            if (!branchPattern.test(pr.head.ref)) {
+              failures.push(`Branch "${pr.head.ref}" must match ${branchPattern}.`);
+            }
+
+            const typeOptions = new Map([
+              ['Bug fix', 'type:bug'],
+              ['New feature', 'type:feature'],
+              ['Documentation only', 'type:docs'],
+              ['Code refactoring', 'type:refactor'],
+              ['Maintenance / tooling', 'type:chore'],
+              ['Breaking change', 'type:breaking-change'],
+            ]);
+            const selectedTypes = (pr.body || '')
+              .split(/\r?\n/)
+              .map((line) => line.match(/^- \[[xX]\] (.+?)(?: \(`type:[^`]+`\))?$/)?.[1])
+              .filter((name) => typeOptions.has(name));
+            if (selectedTypes.length !== 1) {
+              failures.push(`Select exactly one PR type; found ${selectedTypes.length}.`);
+            }
+
+            const typeLabels = pr.labels
+              .map((label) => label.name)
+              .filter((name) => name.startsWith('type:'));
+            if (typeLabels.length !== 1) {
+              failures.push(`Apply exactly one type:* label; found ${typeLabels.length}.`);
+            } else if (selectedTypes.length === 1 && typeLabels[0] !== typeOptions.get(selectedTypes[0])) {
+              failures.push(`Selected PR type requires label "${typeOptions.get(selectedTypes[0])}", not "${typeLabels[0]}".`);
+            }
+
+            const issueNumbers = [...(pr.body || '').matchAll(/\b(?:Closes|Fixes|Resolves)\s+#(\d+)\b/gi)]
+              .map((match) => Number(match[1]));
+            const uniqueIssueNumbers = [...new Set(issueNumbers)];
+            if (uniqueIssueNumbers.length === 0) {
+              failures.push('Link at least one issue with Closes #N, Fixes #N, or Resolves #N.');
+            }
+
+            for (const issueNumber of uniqueIssueNumbers) {
+              try {
+                const { data: issue } = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                });
+                if (issue.pull_request) {
+                  failures.push(`#${issueNumber} is a pull request, not an issue.`);
+                  continue;
+                }
+                if (issue.state !== 'open') {
+                  failures.push(`Issue #${issueNumber} must be open.`);
+                }
+                const labels = issue.labels.map((label) => typeof label === 'string' ? label : label.name);
+                if (!labels.includes('status:approved')) {
+                  failures.push(`Issue #${issueNumber} must have status:approved.`);
+                }
+              } catch (error) {
+                failures.push(`Issue #${issueNumber} is missing or inaccessible (${error.status || 'API error'}).`);
+              }
+            }
+
+            if (failures.length > 0) {
+              core.setFailed(failures.join('\n'));
+            }

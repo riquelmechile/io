@@ -1,0 +1,112 @@
+name: Bug report
+description: Report a reproducible problem in IO
+title: "[Bug]: "
+labels:
+  - bug
+  - status:needs-review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve IO. A maintainer must approve this issue before implementation begins.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true
+        - label: I understand that a PR requires this issue to have `status:approved`.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: Explain the problem clearly and concisely.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reliable sequence that demonstrates the problem.
+      placeholder: |
+        1. Run ...
+        2. Configure ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include the exact error when available.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Ubuntu / Debian
+        - Fedora / RHEL
+        - Arch Linux
+        - Windows
+        - WSL
+        - Other Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: Agent or client
+      options:
+        - Claude Code
+        - OpenCode
+        - Gemini CLI
+        - Cursor
+        - Windsurf
+        - Codex
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: shell
+    attributes:
+      label: Shell
+      options:
+        - bash
+        - zsh
+        - fish
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove secrets and other sensitive data before submitting.
+      render: shell
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, workarounds, or other useful details.
