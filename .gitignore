@@ -1,0 +1,21 @@
+# Local tooling state (machine-specific, not shared)
+.atl/
+.codegraph/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
