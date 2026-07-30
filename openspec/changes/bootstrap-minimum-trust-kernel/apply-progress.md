@@ -1,10 +1,11 @@
 # Apply Progress: Bootstrap Minimum Trust Kernel
 
 > Strict TDD throughout. Slice 1 (Phase 1 + Phase 2), Slice 2 (Phase 3 + Phase
-> 4), and Slice 3 (Phase 5 + Phase 6) implemented. Boundary/transitional identity
-> + neutral identity/bounded roles + deterministic risk + deny-by-default grant
-> + in-memory SOD complete; `pnpm check` GREEN (84 tests, 0 warnings). Phases
-> 7–10 remain for later slices.
+> 4), Slice 3 (Phase 5 + Phase 6), and Slice 4 (Phase 7 + Phase 8) implemented.
+> Boundary/transitional identity + neutral identity/bounded roles + deterministic
+> risk + deny-by-default grant + in-memory SOD + in-memory evidence/audit +
+> honest in-memory receipt complete; `pnpm check` GREEN (111 tests, 0 warnings).
+> Phases 9–10 remain for the final slice.
 
 ## Slice 1 outcome
 
@@ -250,3 +251,92 @@ None.
 
 - Two genuine RED-phase bugs caught by execution and fixed BEFORE declaring GREEN (both test-side, implementation was correct): (a) `grant({ expiry: 2000 })` at `now: 1500` is active, not expired — fixture corrected; (b) `FIVE_WAY` rebuilt explicitly instead of spreading `FOUR_WAY` objects.
 - Source compaction pass (comments/helpers) reduced new-file lines 524 → 468 after GREEN without changing behavior or coverage; full suite re-verified green.
+
+---
+
+## Slice 4 outcome
+
+| Field | Value |
+|-------|-------|
+| Slices implemented | Slice 4 (Phase 7 tasks 7.1–7.3, Phase 8 tasks 8.1–8.3) |
+| Mode | Strict TDD |
+| Gate | `PATH="/tmp/opencode/node-24.18.1/node-v24.18.1-linux-x64/bin:$PATH" pnpm check` — GREEN (exit 0, 0 warnings) |
+| Test result | 8 test files, 111 tests passing (root 2 + boundary 18 + identity 11 + risk 12 + grant 20 + sod 23 + evidence 11 + receipt 14) |
+| Changed lines (authored, add+del) | **~418 product+test+task lines** before this mandatory apply-progress artifact (which the native ledger also counts) — OVER the 400-line budget |
+| Exclusions held | Yes — pure in-memory functions only; no persistence/adapters/HTTP/db/daemon/LLM/framework; evidence/audit/receipt declare non-persistence; no crypto/durable receipts; no pipeline behavior |
+
+## Slice 4 files changed
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `packages/trust-kernel/src/model.ts` | Modified | Added `InMemoryRecord` (shared non-persistent record: `persistent:false` literal + disclosure) plus `Evidence` and `AuditEntry` type aliases (Req 7). At the minimum stage the evidence record and audit entry share the same shape; they diverge when persistence arrives. |
+| `packages/trust-kernel/src/evidence.ts` | Created | `NON_PERSISTENT_DISCLOSURE` (shared label), `EvidenceInput`/`EvidenceResult`, `captureEvidence` (capture evidence record + append ONE disclosed audit entry for ALLOW and DENY; return NEW immutable list), `buildDisclosedRecord` + `appendImmutable` helpers. |
+| `packages/trust-kernel/src/receipt.ts` | Created | `RECEIPT_DISCLOSURE` (built on the shared non-persistent label + unsigned), `UnsignedInMemoryReceipt` (`signed:false`/`persistent:false`), `issueReceipt` (unsigned non-persistent receipt on ALLOW only; `null` on DENY), `summarizeEvidence`. |
+| `packages/trust-kernel/test/evidence.test.ts` | Created | RED-first evidence/audit suite (11 tests): one entry for ALLOW and DENY; non-persistent disclosure; required fields; immutable/pure audit list (no state survives). |
+| `packages/trust-kernel/test/receipt.test.ts` | Created | RED-first honest-receipt suite (14 tests): receipt only on ALLOW; DENY→none; required fields; unsigned/non-persistent disclosure; deterministic `summarizeEvidence`. |
+
+## Slice 4 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 7.1 | `packages/trust-kernel/test/evidence.test.ts` | Unit | ✅ 84/84 (workspace) | ✅ Written — `Cannot find module '../src/evidence.js'` | ✅ Passed (11) | ✅ ALLOW+DENY append + non-empty prior + 4 immutability/chaining cases → 11 | ➖ See 7.3 |
+| 7.2 | `packages/trust-kernel/test/evidence.test.ts` | Unit | ✅ 84/84 | ✅ (same RED) | ✅ Passed | ✅ Same | ➖ See 7.3 |
+| 7.3 | `packages/trust-kernel/test/evidence.test.ts` | Unit | ✅ 84/84 → 96/96 | ➖ Refactor | ✅ Passed (11); `pnpm check` GREEN (96) | ➖ N/A | ✅ Extracted `appendImmutable` + `buildDisclosedRecord`; `pnpm check` GREEN (0 warnings) |
+| 8.1 | `packages/trust-kernel/test/receipt.test.ts` | Unit | ✅ 96/96 | ✅ Written — `Cannot find module '../src/receipt.js'` | ✅ Passed (14) | ✅ ALLOW/DENY + distinct-per-action + summary stable/differs → 14 | ➖ See 8.3 |
+| 8.2 | `packages/trust-kernel/test/receipt.test.ts` | Unit | ✅ 96/96 | ✅ (same RED) | ✅ Passed | ✅ Same | ➖ See 8.3 |
+| 8.3 | `packages/trust-kernel/test/receipt.test.ts` | Unit | ✅ 96/96 → 111/111 | ➖ Refactor | ✅ Passed (14); `pnpm check` GREEN (111) | ➖ N/A | ✅ `RECEIPT_DISCLOSURE` shares `NON_PERSISTENT_DISCLOSURE` from evidence; `pnpm check` GREEN (0 warnings) |
+
+### Slice 4 test summary
+
+- **Total tests written**: 25 (11 evidence + 14 receipt). Boundary auto-extended +2 (`evidence.ts`/`receipt.ts` "imports nothing forbidden") → 111 workspace-wide.
+- **Total tests passing**: 111.
+- **Layers used**: Unit (25 new).
+- **Approval tests**: None — no refactoring of existing product behavior (`model.ts` additions are purely additive types; no existing slice behavior changed).
+- **Pure functions created**: 3 (`captureEvidence`, `issueReceipt`, `summarizeEvidence`) + 2 internal helpers (`buildDisclosedRecord`, `appendImmutable`).
+
+## Slice 4 RED → GREEN → REFACTOR narrative
+
+1. **RED (7.1)**: `evidence.test.ts` imported `{ NON_PERSISTENT_DISCLOSURE, captureEvidence, type EvidenceInput }` from `../src/evidence.js` and `Evidence`/`AuditEntry` types from `../src/model.js`, neither of which existed. Confirmed: `pnpm vitest run packages/trust-kernel/test/evidence.test.ts` → `Failed Suites 1` / `Cannot find module '../src/evidence.js'`.
+2. **GREEN (7.2)**: Added `InMemoryRecord`/`Evidence`/`AuditEntry` to `model.ts` and created `evidence.ts` (`captureEvidence` + `NON_PERSISTENT_DISCLOSURE`). Triangulation was built into the suite: ALLOW and DENY both append exactly one entry, a non-empty prior log grows by one, and four immutability/purity/chaining cases force a real new-list return rather than a shared constant. Focused run → 11 passed.
+3. **REFACTOR (7.3)**: Extracted `appendImmutable` (single immutable-append path so no caller can mutate the prior log) and `buildDisclosedRecord` (single source of truth for the `persistent:false` literal + disclosure). `pnpm check` GREEN (96 tests, 0 warnings) after one biome format auto-fix (collapsed a multi-line import).
+4. **RED (8.1)**: `receipt.test.ts` imported `{ issueReceipt, summarizeEvidence, type ReceiptInput }` from `../src/receipt.js`, which did not exist. Confirmed: `Cannot find module '../src/receipt.js'`.
+5. **GREEN (8.2)**: Created `receipt.ts` (`UnsignedInMemoryReceipt` + `issueReceipt` + `summarizeEvidence` + `RECEIPT_DISCLOSURE`). Triangulation: ALLOW→receipt, DENY→null even with an authority present, distinct receipts per action, and `summarizeEvidence` stable for the same evidence yet different across evidence. Focused run → 14 passed.
+6. **REFACTOR (8.3)**: `RECEIPT_DISCLOSURE` is built from the shared `NON_PERSISTENT_DISCLOSURE` imported from `evidence.ts` (shared disclosure label, single source of truth). `pnpm check` GREEN (111 tests, 0 warnings, 0 fixes).
+
+## Slice 4 Work Unit Evidence
+
+| Evidence | Value |
+|----------|-------|
+| Focused test command + result | `pnpm test packages/trust-kernel/test/evidence.test.ts packages/trust-kernel/test/receipt.test.ts` → `Test Files 2 passed (2)`, `Tests 25 passed (25)`; full `pnpm check` → exit 0, 0 warnings, `Test Files 8 passed (8)`, `Tests 111 passed (111)` |
+| Runtime harness command/scenario + result | N/A — pure in-memory functions with no transport/daemon/app to exercise (per design Threat Matrix: persistence/adapter/network/framework leakage, routing/shell/subprocess = "No such boundary is introduced"). |
+| Rollback boundary | Remove `packages/trust-kernel/src/{evidence,receipt}.ts` + `packages/trust-kernel/test/{evidence,receipt}.test.ts`, and revert the `model.ts` `InMemoryRecord`/`Evidence`/`AuditEntry` additions. Slices 1–3 are untouched; `pnpm check` returns to the Slice 3 baseline (84 tests). |
+
+## Slice 4 exclusion guard (Req 7, Req 8)
+
+- `src/{evidence,receipt}.ts` import only `./model.js` and `./evidence.js` (relative `.js` specifiers); the Slice 1 boundary scan auto-covers them and reports **no** forbidden imports (proven by the two new `imports nothing forbidden` boundary cases).
+- Evidence and audit entries are **non-persistent**: `persistent:false` literal + disclosure; they explicitly do NOT satisfy persistent R1–R17 obligations (Req 7).
+- No state survives: `captureEvidence` returns a NEW immutable list; the prior log is never mutated and there is no module-level mutable state (four purity/immutability tests prove it).
+- The receipt is produced **only on ALLOW**; a DENY yields `null`. It is unsigned (`signed:false`) and non-persistent (`persistent:false`) with an explicit disclosure that makes no cryptographic or durable guarantee (Req 8).
+- No pipeline behavior, delegation, policy-version, budget, approval, or records behavior implemented (deferred to Slice 5).
+
+## Slice 4 deviations from design
+
+- **Shared `InMemoryRecord` shape for Evidence and AuditEntry (interpretation)**: the spec (Req 7) requires "an in-memory evidence record" and "one in-memory audit entry recording principal, action, risk class, decision, and reason" without requiring them to differ. At the minimum persistence-free stage they record the same facts, so `Evidence` and `AuditEntry` are type aliases of a shared `InMemoryRecord` (`persistent:false` + disclosure carried by the type). They will diverge when persistence arrives; documented in `model.ts`. This is an interpretation of an under-specified point, not a contradiction.
+- **Over 400-line budget**: ~418 authored product+test+task lines before this mandatory apply-progress artifact (which the native ledger also counts). Flagged `changed_line_budget_exceeded: true`; no `size:exception` recorded. Consistent with Slice 1 (408) and Slice 3 (537) precedent — flagged for maintainer budget decision.
+- No other deviations.
+
+## Slice 4 issues found
+
+- One biome format auto-fix after 7.2 (collapsed a multi-line import in `evidence.test.ts`); re-ran `pnpm check` GREEN. No product-code issues; both RED phases were genuine module-not-found failures with no implementation bugs.
+
+## Remaining tasks (final slice)
+
+- Phase 9 — Scoped in-memory pipeline
+- Phase 10 — Final verification & exclusion guard
+
+## Workload / PR boundary (cumulative)
+
+- Mode: **chained PR slice (Slice 4)** — `stacked-to-main`
+- Current work unit: `slice-4-evidence-receipt` (Work Unit 4 → PR 4 → main)
+- Boundary: starts from the committed Slice 3 baseline; ends with in-memory evidence/audit + honest in-memory receipt and their RED→GREEN→REFACTOR tests. Slices 1–3 work is untouched.
+- Estimated review budget impact: **over the 400-line budget** (`changed_line_budget_exceeded: true`); flagged for maintainer budget decision (same disposition as Slice 1 and Slice 3).

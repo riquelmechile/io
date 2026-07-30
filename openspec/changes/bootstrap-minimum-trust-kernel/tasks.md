@@ -69,15 +69,15 @@ Chain strategy: stacked-to-main
 
 ## Phase 7: In-Memory Evidence & Audit — Req 7
 
-- [ ] 7.1 RED `test/evidence.test.ts`: exactly one audit entry appended for allow AND deny, each disclosing non-persistence; audit list immutable (no state survives returned values).
-- [ ] 7.2 GREEN: create `src/evidence.ts`: capture evidence record + append one disclosed audit entry, return new immutable list.
-- [ ] 7.3 REFACTOR: shared immutable-append helper; `pnpm check` GREEN.
+- [x] 7.1 RED `test/evidence.test.ts`: exactly one audit entry appended for allow AND deny, each disclosing non-persistence; audit list immutable (no state survives returned values).
+- [x] 7.2 GREEN: create `src/evidence.ts`: capture evidence record + append one disclosed audit entry, return new immutable list.
+- [x] 7.3 REFACTOR: shared immutable-append helper; `pnpm check` GREEN.
 
 ## Phase 8: Honest In-Memory Receipt — Req 8 (Threat: receipt overclaim)
 
-- [ ] 8.1 RED `test/receipt.test.ts`: receipt produced only on ALLOW; carries work/action ID, authority reference, risk class, evidence summary, terminal state, and explicit unsigned/non-persistent disclosure; DENY yields no receipt.
-- [ ] 8.2 GREEN: create `src/receipt.ts` unsigned non-persistent receipt on ALLOW only.
-- [ ] 8.3 REFACTOR: share disclosure label with evidence; `pnpm check` GREEN.
+- [x] 8.1 RED `test/receipt.test.ts`: receipt produced only on ALLOW; carries work/action ID, authority reference, risk class, evidence summary, terminal state, and explicit unsigned/non-persistent disclosure; DENY yields no receipt.
+- [x] 8.2 GREEN: create `src/receipt.ts` unsigned non-persistent receipt on ALLOW only.
+- [x] 8.3 REFACTOR: share disclosure label with evidence; `pnpm check` GREEN.
 
 ## Phase 9: Scoped In-Memory Pipeline — Req 3 ordering, 4, 5, 7, 8, 9 (Threat: order bypass; +Persistence-Free Scoping)
 

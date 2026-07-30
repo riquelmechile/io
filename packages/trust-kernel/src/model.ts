@@ -96,3 +96,31 @@ export interface KernelAction {
   readonly category?: ReservedCategory | string;
   readonly impactScore?: number;
 }
+
+/**
+ * Fields shared by every in-memory kernel record (Req 7, Req 8). All such
+ * records are non-persistent and disclose that fact; `persistent` is a literal
+ * `false` so the honesty contract is carried by the type, not just runtime.
+ */
+export interface InMemoryRecord {
+  readonly actionId: string;
+  readonly principalId: PrincipalId;
+  readonly riskClass: RiskClass;
+  readonly decision: Decision;
+  readonly reason: string;
+  readonly timestamp: number;
+  readonly persistent: false;
+  readonly disclosure: string;
+}
+
+/**
+ * In-memory evidence captured for one evaluation (Req 7). NOT persisted and does
+ * NOT satisfy persistent R1–R17 obligations. At this minimum stage the evidence
+ * record and the audit entry share the same shape; they diverge when
+ * persistence arrives.
+ */
+export type Evidence = InMemoryRecord;
+
+/** One in-memory audit entry recording principal/action/risk/decision/reason
+ * (Req 7). NOT persisted; discloses its non-persistent nature. */
+export type AuditEntry = InMemoryRecord;
