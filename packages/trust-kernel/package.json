@@ -1,0 +1,7 @@
+{
+  "name": "@io/trust-kernel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Transitional in-memory, persistence-free trust kernel (minimum authority evaluation). Not a canonical package."
+}

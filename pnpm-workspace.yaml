@@ -1,5 +1,8 @@
-# Root-only, non-product workspace. No apps/ or packages/ tree is created.
-packages: []
+# Workspace now includes one transitional package: packages/trust-kernel. It is a
+# transitional, persistence-free, in-memory module — NOT a canonical product
+# package (see packages/trust-kernel/README.md). No apps/ tree is created.
+packages:
+  - 'packages/*'
 # Strict dependency engines. The root package.json engines.node is always
 # enforced by pnpm against the real runtime. Never set nodeVersion here (it
 # makes pnpm assume a Node version and bypasses real-runtime enforcement).
