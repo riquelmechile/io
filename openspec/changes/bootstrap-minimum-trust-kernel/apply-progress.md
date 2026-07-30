@@ -1,11 +1,12 @@
 # Apply Progress: Bootstrap Minimum Trust Kernel
 
-> Strict TDD throughout. Slice 1 (Phase 1 + Phase 2), Slice 2 (Phase 3 + Phase
-> 4), Slice 3 (Phase 5 + Phase 6), and Slice 4 (Phase 7 + Phase 8) implemented.
-> Boundary/transitional identity + neutral identity/bounded roles + deterministic
-> risk + deny-by-default grant + in-memory SOD + in-memory evidence/audit +
-> honest in-memory receipt complete; `pnpm check` GREEN (111 tests, 0 warnings).
-> Phases 9–10 remain for the final slice.
+> Strict TDD throughout. Slices 1–5 implemented. Slice 1 (Phase 1 + Phase 2),
+> Slice 2 (Phase 3 + Phase 4), Slice 3 (Phase 5 + Phase 6), Slice 4 (Phase 7 +
+> Phase 8), and Slice 5 (Phase 9 + Phase 10). Boundary/transitional identity +
+> neutral identity/bounded roles + deterministic risk + deny-by-default grant +
+> in-memory SOD + in-memory evidence/audit + honest in-memory receipt + the
+> scoped 16-step in-memory pipeline are complete; `pnpm check` GREEN
+> (144 tests, 0 warnings). All 10 phases done; ready for sdd-verify.
 
 ## Slice 1 outcome
 
@@ -340,3 +341,89 @@ None.
 - Current work unit: `slice-4-evidence-receipt` (Work Unit 4 → PR 4 → main)
 - Boundary: starts from the committed Slice 3 baseline; ends with in-memory evidence/audit + honest in-memory receipt and their RED→GREEN→REFACTOR tests. Slices 1–3 work is untouched.
 - Estimated review budget impact: **over the 400-line budget** (`changed_line_budget_exceeded: true`); flagged for maintainer budget decision (same disposition as Slice 1 and Slice 3).
+
+---
+
+## Slice 5 outcome
+
+| Field | Value |
+|-------|-------|
+| Slices implemented | Slice 5 (Phase 9 tasks 9.1–9.3, Phase 10 tasks 10.1–10.3) |
+| Mode | Strict TDD |
+| Gate | `PATH="/tmp/opencode/node-24.18.1/node-v24.18.1-linux-x64/bin:$PATH" pnpm check` — GREEN (exit 0, 0 warnings) |
+| Test result | 9 test files, 144 tests passing (root 2 + boundary 19 + identity 11 + risk 12 + grant 20 + sod 23 + evidence 11 + receipt 14 + pipeline 32) |
+| Changed lines (authored, add+del) | **612** (index.ts 43 + pipeline.ts 297 + pipeline.test.ts 272) — OVER the 400-line budget; pre-approved Slice 5 budget-reset/acceptance pattern (`size:exception` disposition consistent with Slices 1/3/4) |
+| Exclusions held | Yes — pure in-memory pipeline only; no persistence/adapters/HTTP/db/daemon/LLM/framework; the six deferred steps are documented no-op pass-throughs; receipt unsigned/non-persistent; no crypto/durable receipts |
+
+## Slice 5 files changed
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `packages/trust-kernel/src/pipeline.ts` | Created | `evaluate(input)` composing the fixed 16-step pipeline (10 enforced gates + 6 deferred no-op pass-throughs) with terminal DENY short-circuit; `StepResult`/`EvaluationInput`/`EvaluationResult`/`DeferredStep` types; `DEFERRED_STEPS` canonical names; granular per-step gate predicates reusing `classify`/`validateBoundedWindow`/`checkSod`/`captureEvidence`/`issueReceipt`; `finalize` captures one evidence + one audit entry per evaluation and issues a receipt only on ALLOW. |
+| `packages/trust-kernel/test/pipeline.test.ts` | Created | RED-first pipeline suite (32 tests): fixed 16-step order + classify-before-grant; reserved→critical→five-way SOD ordering; six deferred no-op pass-throughs; every enforced gate denies on failure (8 `it.each` crafted fixtures + revoked); allow→evidence+audit+receipt; deny→audit only, no receipt; purity (no surviving state). |
+| `packages/trust-kernel/src/index.ts` | Modified | Expanded to export the public evaluation API surface: `evaluate` + `DEFERRED_STEPS`/`NON_PERSISTENT_DISCLOSURE`/`RECEIPT_DISCLOSURE` + the input/output types needed to call `evaluate` and read `EvaluationResult` + the transitional descriptor. Internal slice check functions (`classify`/`checkGrant`/`checkSod`/`captureEvidence`/`issueReceipt`) remain unexported. |
+
+## Slice 5 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 9.1 | `packages/trust-kernel/test/pipeline.test.ts` | Unit | ✅ 111/111 (workspace) | ✅ Written — `Cannot find module '../src/pipeline.js'` | ✅ Passed (32) | ✅ 8 enforced-gate deny cases (it.each) + reserved-vs-medium ordering + allow/deny + revoked + 2 purity → 32 | ➖ See 9.3 |
+| 9.2 | `packages/trust-kernel/test/pipeline.test.ts` | Unit | ✅ 111/111 | ✅ (same RED) | ✅ Passed (32) | ✅ Same | ➖ See 9.3 |
+| 9.3 | `packages/trust-kernel/test/pipeline.test.ts` | Unit | ✅ 111/111 → 144/144 | ➖ Refactor | ✅ Passed (32); `pnpm check` GREEN (144) | ➖ N/A | ✅ Unified `StepResult` recording via single `record` helper (removed unused `gate` params); expanded `index.ts` to the public evaluation surface; trimmed internal check-function I/O types; `pnpm check` GREEN (0 warnings) |
+| 10.1 | — | N/A (gate) | ✅ 144/144 | ➖ Structural | ✅ `pnpm check` GREEN (format-check → typecheck → build → lint → test, exit 0, 0 warnings) | ➖ Structural | ➖ None needed |
+| 10.2 | `packages/trust-kernel/test/{boundary,pipeline}.test.ts` | Unit | ✅ 144/144 | ➖ Exclusion guard | ✅ `src/pipeline.ts imports nothing forbidden`; six deferred steps proven no-op; receipt unsigned/non-persistent | ➖ N/A | ➖ None needed |
+| 10.3 | — | N/A (surface guard) | ✅ 144/144 | ➖ Surface guard | ✅ `index.ts` exports `evaluate` + types + disclosures + transitional descriptor only; slice check functions internal | ➖ N/A | ➖ None needed |
+
+### Slice 5 test summary
+
+- **Total tests written**: 32 (pipeline). Boundary auto-extended +1 (`pipeline.ts` "imports nothing forbidden") → 144 workspace-wide.
+- **Total tests passing**: 144.
+- **Layers used**: Unit (32 new).
+- **Approval tests**: None — no refactoring of existing product behavior (`index.ts` expansion was purely additive re-exports; no existing slice behavior changed).
+- **Pure functions created**: 1 (`evaluate`) + 1 `finalize` helper + 8 per-step gate predicates (`classifyGate`/`authorityGate`/`identityGate`/`assignmentGate`/`boundedScopeGate`/`sodGate`/`expiryGate`/`actionScopeGate`) + 2 recording helpers (`gate`/`passThrough`/`record`).
+
+## Slice 5 RED → GREEN → REFACTOR narrative
+
+1. **RED (9.1)**: `pipeline.test.ts` imported `{ DEFERRED_STEPS, evaluate, type EvaluationInput }` from `../src/pipeline.js`, which did not exist. Confirmed: `pnpm vitest run packages/trust-kernel/test/pipeline.test.ts` → `Failed Suites 1` / `Cannot find module '../src/pipeline.js'`. Triangulation was built into the suite up front: 8 enforced-gate deny cases via `it.each`, reserved-vs-medium risk ordering, allow/deny receipt asymmetry, revoked grant, and two purity cases.
+2. **GREEN (9.2)**: Created `pipeline.ts`. First draft had a short-circuit bug (the `enforced` helper returned a finalize result that `evaluate` ignored, so DENY never terminated). Caught before declaring GREEN by reading the control flow, not by a failing test — rewrote `evaluate` with explicit `if (!gate(...)) return finalize(...)` short-circuits. Focused run → 32 passed on the corrected implementation.
+3. **REFACTOR (9.3)**: (a) Removed the unused `input`/`ctx` params (and `void` hack) from the `gate` helper — cleaner signature; (b) expanded `index.ts` to the public evaluation surface, then trimmed internal check-function I/O types (`ActiveIdentity`/`GrantDecision`/`SodInput`/`ReceiptInput`/`BoundedWindow`/`ValidationOutcome`) so only what a caller needs to invoke `evaluate` and read `EvaluationResult` is exported; (c) one biome format auto-fix on `pipeline.test.ts` (long `it.each` rows wrapped). `pnpm check` GREEN (144, 0 warnings).
+
+## Slice 5 Work Unit Evidence
+
+| Evidence | Value |
+|----------|-------|
+| Focused test command + result | `pnpm vitest run packages/trust-kernel/test/pipeline.test.ts` → `Test Files 1 passed (1)`, `Tests 32 passed (32)`; full `pnpm check` → exit 0, 0 warnings, `Test Files 9 passed (9)`, `Tests 144 passed (144)` |
+| Runtime harness command/scenario + result | N/A — pure in-memory pipeline with no transport/daemon/app to exercise (per design Threat Matrix: persistence/adapter/network/framework leakage, routing/shell/subprocess = "No such boundary is introduced"). |
+| Rollback boundary | Remove `packages/trust-kernel/src/pipeline.ts` + `packages/trust-kernel/test/pipeline.test.ts`, and revert `src/index.ts` to the Slice 1 minimal barrel (`transitionalDescriptor` only). Slices 1–4 are untouched; `pnpm check` returns to the Slice 4 baseline (111 tests). |
+
+## Slice 5 exclusion guard (Req 5, Req 9, io-ports Persistence-Free Pipeline Scoping)
+
+- `src/pipeline.ts` imports only `./model.js`/`./risk.js`/`./grant.js`/`./identity.js`/`./sod.js`/`./evidence.js`/`./receipt.js` (relative `.js` specifiers); the Slice 1 boundary scan auto-covers it and reports **no** forbidden imports (proven by the new `src/pipeline.ts imports nothing forbidden` boundary case).
+- The **six deferred steps** (`delegation`, `policy-version`, `budget`, `approvals`, `exceptions`, `records`) are documented no-op pass-throughs: `passThrough` records `{deferred:true, passThrough:true, decision:'ALLOW', reason:'<name> deferred: harden downstream; no-op pass-through'}` and performs NO real delegation/policy-version/budget/approval/exception/records behavior (Req 5, io-ports). Proven by the "six deferred steps are documented no-op pass-throughs" test group.
+- Every enforced gate (`classification`/`authority`/`identity`/`assignment`/`bounded-scope`/`evidence`/`sod`/`expiry`/`action-scope`/`final`) produces a terminal DENY on failure; classify (step 1) strictly precedes authority (step 3). Proven by 8 `it.each` crafted-failure cases + a revoked-grant case.
+- No crypto/durable receipts: the receipt is issued only on ALLOW, is unsigned (`signed:false`) and non-persistent (`persistent:false`) with `RECEIPT_DISCLOSURE`; DENY yields no receipt. Proven by the pipeline receipt + deny test groups.
+- No state survives: `evaluate` threads local `steps`/`ctx`, returns a NEW immutable audit list from `captureEvidence`; two purity tests prove repeated evaluations from the same prior log stay independent.
+
+## Slice 5 deviations from design
+
+- **Canonical 16-step interleaving (interpretation)**: the canonical "Default-Deny Authority with Reserved Categories" 16-step ordering is referenced by the design but not enumerated in-repo. The pipeline fixes a concrete ordered interleaving of the 10 enforceable steps and 6 deferred steps — classification(1) → delegation(2,deferred) → authority(3) → policy-version(4,deferred) → identity(5) → assignment(6) → bounded-scope(7) → budget(8,deferred) → evidence(9) → sod(10) → approvals(11,deferred) → expiry(12) → exceptions(13,deferred) → action-scope(14) → records(15,deferred) → final(16) — satisfying the spec-mandated invariant that **classify precedes authority** and that the 10 enforceable + 6 deferred names each appear once. This is an interpretation of an under-specified ordering, not a contradiction; it is re-validatable when the canonical source is referenced.
+- **Grant gates decomposed vs `checkGrant` (interpretation)**: the standalone slice-3 `checkGrant` bundles existence+validity+active+command+principal into one deny-by-default oracle. The canonical pipeline instead expresses these as distinct observable gates so each can independently DENY and be audited: `authority` = grant existence for the principal; `assignment` = well-formed grant record; `bounded-scope` = `validateBoundedWindow`; `expiry` = active at `now`; `action-scope` = command binding. This matches the design Requirement-to-Test Map row ("absent/unbounded/wrong-command/expired grant denies") and reuses the shared `validateBoundedWindow` helper; `checkGrant` remains the standalone tested oracle and is not altered.
+- **`evidence` gate has no failure mode (honest)**: evidence capture is a pure append with no failure condition, so the evidence step always proceeds; the actual evidence record + audit entry are captured at `finalize` for the terminal decision (ALLOW or DENY), satisfying "every evaluation captures one evidence + one audit entry" regardless of where the pipeline stopped. Documented rather than given an artificial deny path.
+- **Over 400-line budget**: 612 authored product+test+index lines. Pre-approved Slice 5 budget-reset/acceptance pattern (`size:exception` disposition consistent with Slices 1/3/4).
+- No other deviations.
+
+## Slice 5 issues found
+
+- **Short-circuit bug caught before GREEN**: the first `pipeline.ts` draft used an `enforced` helper whose DENY finalize return value `evaluate` ignored, so a failing gate would NOT have terminated evaluation. Caught by reading the control flow during GREEN (not by a failing test) and rewritten with explicit `if (!gate(...)) return finalize(...)` short-circuits before declaring GREEN. The 8 deny-case `it.each` tests would have caught it at run time (they assert the failing step is the LAST recorded step), confirming the fix.
+- One biome format auto-fix on `pipeline.test.ts` (wrapped long `it.each` rows); re-ran `pnpm check` GREEN. No product-code issues.
+
+## Remaining tasks
+
+- None for apply. All 10 phases (tasks 1.1–10.3) are complete. Next step is `sdd-verify` (verify the change against specs/design/tasks).
+
+## Workload / PR boundary (cumulative)
+
+- Mode: **chained PR slice (Slice 5 — final)** — `stacked-to-main`
+- Current work unit: `slice-5-pipeline-final` (Work Unit 5 → PR 5 → main)
+- Boundary: starts from the committed Slice 4 baseline; ends with the scoped 16-step in-memory pipeline + public export surface + final exclusion guard and their RED→GREEN→REFACTOR tests. Slices 1–4 work is untouched.
+- Estimated review budget impact: **612 authored lines — OVER the 400-line budget** (`changed_line_budget_exceeded: true`); pre-approved Slice 5 budget-reset/acceptance pattern (`size:exception`), consistent with Slices 1 (408), 3 (537), and 4 (~418).

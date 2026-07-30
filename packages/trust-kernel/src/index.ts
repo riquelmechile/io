@@ -1,10 +1,49 @@
 /**
  * Transitional in-memory, persistence-free trust kernel — minimum authority
  * evaluation behavior. NOT a canonical package; see README.md for the boundary
- * and extraction map. This slice exposes only the transitional identity surface.
+ * and extraction map. The public evaluation surface is {@link evaluate}; the
+ * re-exported types let a caller construct an {@link EvaluationInput} and read
+ * an {@link EvaluationResult}. Slice-level check functions remain internal.
  */
 
-/** Centralized transitional labels — single source of truth. */
+// --- Public evaluation entry point + pipeline types (Req 5) ---
+export { DEFERRED_STEPS, evaluate, NON_PERSISTENT_DISCLOSURE } from './pipeline.js';
+export type {
+  DeferredStep,
+  EvaluationInput,
+  EvaluationResult,
+  StepResult,
+} from './pipeline.js';
+
+// --- Base neutral model types needed to build inputs / read outputs ---
+export type {
+  AuditEntry,
+  Authority,
+  CommandId,
+  Decision,
+  Evidence,
+  InMemoryRecord,
+  KernelAction,
+  PositionId,
+  PrincipalId,
+  ReservedCategory,
+  RiskClass,
+  Role,
+  Scope,
+  TemporaryAssignment,
+} from './model.js';
+
+// --- Input builder types from each slice ---
+export type { PrincipalIdentity } from './identity.js';
+export type { Grant } from './grant.js';
+export type { RiskThresholds } from './risk.js';
+export type { SodAssignment, SodPolicy, SodRole } from './sod.js';
+
+// --- Output honesty contracts (Req 7, Req 8) ---
+export { RECEIPT_DISCLOSURE } from './receipt.js';
+export type { UnsignedInMemoryReceipt } from './receipt.js';
+
+// --- Centralized transitional labels — single source of truth. ---
 const PACKAGE_ID = 'trust-kernel' as const;
 const TRANSITIONAL = true as const;
 const CANONICAL_PARTITION_EXCLUDED = true as const;

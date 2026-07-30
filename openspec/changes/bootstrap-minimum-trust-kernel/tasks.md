@@ -81,12 +81,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 9: Scoped In-Memory Pipeline — Req 3 ordering, 4, 5, 7, 8, 9 (Threat: order bypass; +Persistence-Free Scoping)
 
-- [ ] 9.1 RED `test/pipeline.test.ts`: fixed 16-step order with classify BEFORE grant; every enforced gate (classification/authority/identity/assignment/scope/evidence/SOD/expiry/action-scope/final) denies on failure (terminal DENY); the six deferred steps (delegation, policy-version, budget, approvals, exceptions, records) execute as documented no-op pass-throughs (never real behavior); allow→decision+evidence+audit+receipt; deny→audit appended, no receipt.
-- [ ] 9.2 GREEN: create `src/pipeline.ts` composing the enforced gates + six pass-throughs; DENY on any failed enforced step; ALLOW builds receipt.
-- [ ] 9.3 REFACTOR: unify StepResult recording; expand `src/index.ts` to export public evaluation surface; `pnpm check` GREEN.
+- [x] 9.1 RED `test/pipeline.test.ts`: fixed 16-step order with classify BEFORE grant; every enforced gate (classification/authority/identity/assignment/scope/evidence/SOD/expiry/action-scope/final) denies on failure (terminal DENY); the six deferred steps (delegation, policy-version, budget, approvals, exceptions, records) execute as documented no-op pass-throughs (never real behavior); allow→decision+evidence+audit+receipt; deny→audit appended, no receipt.
+- [x] 9.2 GREEN: create `src/pipeline.ts` composing the enforced gates + six pass-throughs; DENY on any failed enforced step; ALLOW builds receipt.
+- [x] 9.3 REFACTOR: unify StepResult recording; expand `src/index.ts` to export public evaluation surface; `pnpm check` GREEN.
 
 ## Phase 10: Final Verification & Exclusion Guard
 
-- [ ] 10.1 Full `pnpm check` GREEN across the whole workspace (format-check → typecheck → build → lint → test).
-- [ ] 10.2 Confirm no deferred behavior was silently implemented: all six steps remain documented no-ops; no crypto/durable receipts; no persistence/adapter/framework leakage.
-- [ ] 10.3 Confirm `index.ts` exports only the public evaluation API surface; leave `sdd-verify` to the verify phase.
+- [x] 10.1 Full `pnpm check` GREEN across the whole workspace (format-check → typecheck → build → lint → test).
+- [x] 10.2 Confirm no deferred behavior was silently implemented: all six steps remain documented no-ops; no crypto/durable receipts; no persistence/adapter/framework leakage.
+- [x] 10.3 Confirm `index.ts` exports only the public evaluation API surface; leave `sdd-verify` to the verify phase.
