@@ -155,8 +155,14 @@ MUST be NO continued execution under revoked authority. [ADR-0002] [INF]
 
 ### Requirement: Required Persistence and Recovery Records
 
-The following records are REQUIRED for audit, recovery, and reconciliation;
-storage mechanisms are downstream. [INF] [HYP]
+The following records are REQUIRED for audit, recovery, and reconciliation. The
+persistence and recovery semantics for ALL of these records — ownership,
+transaction boundary, append-only integrity, privacy deletion, idempotency,
+outbox/inbox, lease fencing, external-call UNKNOWN recovery, daemon outcomes,
+receipts, and the failure recovery matrix — are carried into and defined by the
+`io-persistence-recovery-contract` capability. This contract MUST NOT duplicate
+those semantics; it references them by capability. Storage mechanisms remain
+downstream. [INF] [HYP]
 
 | # | Record | Scope |
 |---|--------|-------|
@@ -178,8 +184,16 @@ storage mechanisms are downstream. [INF] [HYP]
 | R16 | Append-only audit log | Immutable R/W log with authority |
 | R17 | Unknown/partial outcome reconciliation | Crash recovery, partial-result resolution |
 
+(Previously: records were REQUIRED with storage mechanisms left undefined and downstream; now their persistence/recovery semantics are explicitly carried into `io-persistence-recovery-contract`.)
+
 #### Scenario: Records present for every required area
 
 - GIVEN the system executing authority, work, delegation, daemon, and LLM operations
 - WHEN inspected for audit or recovery
 - THEN records R1–R17 MUST be present, and the Work/authority dual-reference MUST be identifiable in R10 and R15
+
+#### Scenario: Persistence and recovery handoff resolved
+
+- GIVEN records R1-R17 referenced by this contract
+- WHEN their persistence, idempotency, lease, daemon/LLM, receipt, or recovery semantics are needed
+- THEN they MUST be sourced from the `io-persistence-recovery-contract` capability and MUST NOT be redefined or duplicated here
