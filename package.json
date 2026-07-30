@@ -1,0 +1,28 @@
+{
+  "name": "io",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Root-only, non-product development toolchain for IO. No product/domain behavior.",
+  "engines": {
+    "node": "^24.18.1",
+    "pnpm": "^11.18.0"
+  },
+  "packageManager": "pnpm@11.18.0",
+  "scripts": {
+    "format": "biome format --write .",
+    "format-check": "biome format .",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "biome lint .",
+    "test": "vitest run",
+    "check": "pnpm run format-check && pnpm run typecheck && pnpm run build && pnpm run lint && pnpm run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}

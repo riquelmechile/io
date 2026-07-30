@@ -26,31 +26,31 @@ Estimate **180–320 authored lines**, uncertain: final ADR evidence, config/met
 
 ## Phase 1: Primary-Doc Verification & ADR 0004
 
-- [ ] 1.1 Verify official docs (pnpm, TS 6.x ESM, Vitest, Biome, Actions); resolve latest secure Node 24 LTS patch; record URLs + date; reject unverified.
-- [ ] 1.2 Create `docs/adr/0004-development-toolchain.md` (+ README row): exact versions, Node patch, doc refs/date, enforcement syntax, rejected alternatives, ADR-selected install commands.
-- [ ] 1.3 Create `.nvmrc` (Node 24 LTS patch). Gate: ADR 0004 + `.nvmrc` accepted before any manifest or lockfile.
+- [x] 1.1 Verify official docs (pnpm, TS 6.x ESM, Vitest, Biome, Actions); resolve latest secure Node 24 LTS patch; record URLs + date; reject unverified.
+- [x] 1.2 Create `docs/adr/0004-development-toolchain.md` (+ README row): exact versions, Node patch, doc refs/date, enforcement syntax, rejected alternatives, ADR-selected install commands.
+- [x] 1.3 Create `.nvmrc` (Node 24 LTS patch). Gate: ADR 0004 + `.nvmrc` accepted before any manifest or lockfile.
 
 ## Phase 2: Root Toolchain & Reproducible Lockfile
 
-- [ ] 2.1 Create `package.json` (private root ESM; `engines`/`packageManager` pin Node 24 + pnpm; scripts `format`/`format-check`/`typecheck`/`build`/`lint`/`test`/ordered `check`) + `pnpm-workspace.yaml` (root-only) + `.npmrc` (engine-strict, Corepack).
-- [ ] 2.2 Create `tsconfig.json` (strict ESM, NodeNext) + `tsconfig.build.json` (no-emit) + `biome.json` (ADR policy) + `vitest.config.ts` (non-domain discovery).
-- [ ] 2.3 Engine-mismatch enforcement check (separate from lockfile bootstrap; NOT a harness RED test): under non-enforced/stale Node, install MUST refuse; expected = blocked.
-- [ ] 2.4 Lockfile bootstrap, explicit sequence — no frozen install before a lockfile exists: (a) verify Node/pnpm pins equal ADR; (b) create initial `pnpm-lock.yaml` with the ADR-approved install command; (c) commit/retain the lockfile; (d) clean reinstall via `pnpm install --frozen-lockfile` (or exact ADR-selected equivalent); (e) verify zero lockfile diff (`git diff --exit-code pnpm-lock.yaml`); reproduce on clean clone.
+- [x] 2.1 Create `package.json` (private root ESM; `engines`/`packageManager` pin Node 24 + pnpm; scripts `format`/`format-check`/`typecheck`/`build`/`lint`/`test`/ordered `check`) + `pnpm-workspace.yaml` (root-only) + `.npmrc` (engine-strict, Corepack).
+- [x] 2.2 Create `tsconfig.json` (strict ESM, NodeNext) + `tsconfig.build.json` (no-emit) + `biome.json` (ADR policy) + `vitest.config.ts` (non-domain discovery).
+- [x] 2.3 Engine-mismatch enforcement check (separate from lockfile bootstrap; NOT a harness RED test): under non-enforced/stale Node, install MUST refuse; expected = blocked.
+- [x] 2.4 Lockfile bootstrap, explicit sequence — no frozen install before a lockfile exists: (a) verify Node/pnpm pins equal ADR; (b) create initial `pnpm-lock.yaml` with the ADR-approved install command; (c) commit/retain the lockfile; (d) clean reinstall via `pnpm install --frozen-lockfile` (or exact ADR-selected equivalent); (e) verify zero lockfile diff (`git diff --exit-code pnpm-lock.yaml`); reproduce on clean clone.
 
 ## Phase 3: Harness RED→GREEN, Gates & CI
 
-- [ ] 3.1 RED (local, UNCOMMITTED): `test/toolchain-probe.test.ts` fails vs absent `src/toolchain-probe.ts`; record evidence to `docs/evidence/bootstrap-development-toolchain-red-green.md`; do not commit RED.
-- [ ] 3.2 GREEN: implement `src/toolchain-probe.ts`; `pnpm test` passes; commit GREEN only (RED evidence retained; RED state never committed).
-- [ ] 3.3 Ordered `pnpm check` exits 0: `format-check` (non-rewriting), `typecheck`, no-emit `build`, `lint`, `test`.
-- [ ] 3.4 Classify each gate across applicability/requirement/outcome; integration, E2E, coverage, security, publication = `not_applicable` + rationale; required AND applicable ⇒ `passed`.
-- [ ] 3.5 Create `.github/workflows/ci.yml`: `.nvmrc`, Corepack, cache, frozen install, check-only non-mutating gates, no secrets; mirrors local; preserve `.github/workflows/pr-validation.yml`.
+- [x] 3.1 RED (local, UNCOMMITTED): `test/toolchain-probe.test.ts` fails vs absent `src/toolchain-probe.ts`; record evidence to `docs/evidence/bootstrap-development-toolchain-red-green.md`; do not commit RED.
+- [x] 3.2 GREEN: implement `src/toolchain-probe.ts`; `pnpm test` passes; commit GREEN only (RED evidence retained; RED state never committed).
+- [x] 3.3 Ordered `pnpm check` exits 0: `format-check` (non-rewriting), `typecheck`, no-emit `build`, `lint`, `test`.
+- [x] 3.4 Classify each gate across applicability/requirement/outcome; integration, E2E, coverage, security, publication = `not_applicable` + rationale; required AND applicable ⇒ `passed`.
+- [x] 3.5 Create `.github/workflows/ci.yml`: `.nvmrc`, Corepack, cache, frozen install, check-only non-mutating gates, no secrets; mirrors local; preserve `.github/workflows/pr-validation.yml`.
 
 ## Phase 4: Source Normalization, Activation & Pre-START Final Checks
 
-- [ ] 4.1 All source-mutating normalization BEFORE review START: run mutating `pnpm format` once; no mutating tool runs after this.
-- [ ] 4.2 Metadata activation in the SAME candidate (proof + activation atomic; rollback preserved): `openspec/config.yaml` — `strict_tdd: true`, populate `testing`, command metadata, `rules.apply.tdd`/`test_command`, `rules.verify.*`, `coverage_threshold`.
-- [ ] 4.3 Run final full gate suite + CI-equivalent on the final PROSPECTIVE candidate bytes → all required+applicable pass (bytes are prospective, NOT frozen yet).
-- [ ] 4.4 `gentle-ai review start` → freezes the exact candidate bytes/paths/modes. This is the ONLY freeze point; no mutation permitted after START.
+- [x] 4.1 All source-mutating normalization BEFORE review START: run mutating `pnpm format` once; no mutating tool runs after this.
+- [x] 4.2 Metadata activation in the SAME candidate (proof + activation atomic; rollback preserved): `openspec/config.yaml` — `strict_tdd: true`, populate `testing`, command metadata, `rules.apply.tdd`/`test_command`, `rules.verify.*`, `coverage_threshold`.
+- [x] 4.3 Run final full gate suite + CI-equivalent on the final PROSPECTIVE candidate bytes → all required+applicable pass (bytes are prospective, NOT frozen yet).
+- [ ] 4.4 `gentle-ai review start` → freezes the exact candidate bytes/paths/modes. This is the ONLY freeze point; no mutation permitted after START. *(parent orchestrator-owned; not executed by apply — see return summary)*
 
 ## Phase 5: Native Review → sdd-Verify → Cache Sync
 
