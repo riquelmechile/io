@@ -85,6 +85,32 @@ describe('trust-kernel transitional boundary', () => {
         expect(violations).toEqual([]);
       });
     }
+
+    // Centralized proof that ports/ is covered by the UNIVERSAL scan (D7): the
+    // ports/ directory is NOT exempted — its files appear in the discovered list
+    // and pass the forbidden-import detector on merit, exactly like every other
+    // src file.
+    const portsFiles = srcFiles
+      .map((file) => relative(srcDir, file))
+      .filter((rel) => rel.startsWith('ports/'));
+
+    it('ports/*.ts ARE discovered by the universal recursive scan (not exempted, D7)', () => {
+      // This slice introduced at least the two port modules.
+      expect(portsFiles.length).toBeGreaterThanOrEqual(2);
+      expect(portsFiles).toContain('ports/repositories.ts');
+      expect(portsFiles).toContain('ports/fakes.ts');
+    });
+
+    it('a forbidden import inside a ports/ file WOULD still be caught (ports pass on merit)', () => {
+      // Proves ports/ is not silently exempted: a driver import in a ports file
+      // is rejected by the same detector that guards the rest of src.
+      const portsLikeSource = "import { Client } from 'pg';\n";
+      const caught = extractImportSpecifiers(portsLikeSource).filter((spec) =>
+        forbiddenSpecifiers.some((rule) => rule.pattern.test(spec)),
+      );
+
+      expect(caught).toEqual(['pg']);
+    });
   });
 
   describe('README — transitional, not canonical, extraction targets recorded (Req 1, 10)', () => {

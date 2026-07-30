@@ -114,6 +114,25 @@ export interface InMemoryRecord {
 }
 
 /**
+ * A durable-capable record produced through a repository port (Req 3). Diverges
+ * from {@link InMemoryRecord} ONLY on the `persistent` literal (`true` vs
+ * `false`) so the type system records which records are durable-capable. The
+ * durability truth lives in the adapter-supplied `disclosure`, NOT the literal:
+ * the literal is a port-contract path marker (D6/D8). Field order mirrors
+ * {@link InMemoryRecord} exactly.
+ */
+export interface PersistentRecord {
+  readonly actionId: string;
+  readonly principalId: PrincipalId;
+  readonly riskClass: RiskClass;
+  readonly decision: Decision;
+  readonly reason: string;
+  readonly timestamp: number;
+  readonly persistent: true;
+  readonly disclosure: string;
+}
+
+/**
  * In-memory evidence captured for one evaluation (Req 7). NOT persisted and does
  * NOT satisfy persistent R1–R17 obligations. At this minimum stage the evidence
  * record and the audit entry share the same shape; they diverge when
@@ -124,3 +143,16 @@ export type Evidence = InMemoryRecord;
 /** One in-memory audit entry recording principal/action/risk/decision/reason
  * (Req 7). NOT persisted; discloses its non-persistent nature. */
 export type AuditEntry = InMemoryRecord;
+
+/**
+ * Durable-capable evidence routed through the evidence repository port (R7).
+ * Aliases {@link PersistentRecord}; routed evidence and audit share the same
+ * durable-capable shape during the transition.
+ */
+export type PersistentEvidence = PersistentRecord;
+
+/**
+ * Durable-capable audit entry routed through the audit repository port (R16).
+ * Aliases {@link PersistentRecord}.
+ */
+export type PersistentAuditEntry = PersistentRecord;
