@@ -1,0 +1,35 @@
+name: Toolchain
+
+# Additive application/toolchain CI: runs the same secret-free, check-only,
+# non-mutating local gates under the enforced Node 24 LTS runtime. This workflow
+# does NOT replace .github/workflows/pr-validation.yml (governance).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4 # reads version from package.json `packageManager`
+
+      - name: Setup Node 24 LTS (from .nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run ordered quality gates # format-check -> typecheck -> build -> lint -> test
+        run: pnpm run check

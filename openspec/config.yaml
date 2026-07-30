@@ -24,23 +24,27 @@ context: |
   (no LangGraph, CrewAI, AutoGen, Mem0, Zep, Engram, Mastra, Paperclip, etc.).
   Only auditable infra primitives + first-party components built by IO.
 
-# No test runner exists yet (no code). Flip to true once the TS toolchain +
-# Node test runner are bootstrapped (doc Section 6.4 permits build/lint/test tools).
-strict_tdd: false
+# Bootstrapped root-only toolchain: TS 6.x strict-ESM + Node 24 LTS + Vitest +
+# Biome + tsc. Enabled only after all gates passed GREEN (see ADR 0004 and
+# docs/evidence/bootstrap-development-toolchain-red-green.md). Per doc Section
+# 6.4, build/lint/test tooling is permitted.
+strict_tdd: true
 
 testing:
-  runner: none
-  unit: false
+  runner: vitest
+  unit: true
   integration: false
   e2e: false
   coverage: false
   coverage_threshold: 0
-  linter: none
-  type_checker: none
-  formatter: none
+  linter: biome
+  type_checker: tsc
+  formatter: biome
   note: |
-    Greenfield. TS 6.x + a Node test runner are intended but not yet present.
-    Once bootstrapped, set strict_tdd: true and populate the fields above.
+    Root-only non-product toolchain (TypeScript 6.x strict-ESM on Node 24 LTS).
+    Vitest unit harness + Biome format/lint + tsc strict typecheck/no-emit build.
+    strict_tdd enabled after every required+applicable gate passed. Integration,
+    E2E, and coverage remain out of scope (root-only bootstrap); see ADR 0004.
 
 delivery:
   execution_mode: auto
@@ -72,11 +76,12 @@ rules:
     guidelines:
       - Follow existing code patterns
       - Do NOT add prohibited agentic/business frameworks
-    tdd: false
-    test_command: ""
+      - Run `pnpm check` (ordered gates) before declaring a task complete
+    tdd: true
+    test_command: "pnpm test"
   verify:
-    test_command: ""
-    build_command: ""
+    test_command: "pnpm test"
+    build_command: "pnpm build"
     coverage_threshold: 0
   archive:
     - Warn before merging destructive deltas
