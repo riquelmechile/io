@@ -1,6 +1,13 @@
 import { NON_PERSISTENT_DISCLOSURE, captureEvidence, type EvidenceInput } from './evidence.js';
 import { validateBoundedWindow } from './model.js';
-import type { AuditEntry, Decision, Evidence, KernelAction, RiskClass } from './model.js';
+import type {
+  AuditEntry,
+  Decision,
+  Evidence,
+  KernelAction,
+  PersistentRecord,
+  RiskClass,
+} from './model.js';
 import type { Grant } from './grant.js';
 import { classify } from './risk.js';
 import type { RiskThresholds } from './risk.js';
@@ -8,6 +15,12 @@ import type { PrincipalIdentity } from './identity.js';
 import { issueReceipt, type UnsignedInMemoryReceipt } from './receipt.js';
 import { checkSod } from './sod.js';
 import type { SodAssignment, SodPolicy } from './sod.js';
+import type {
+  AuditRepository,
+  EvidenceRepository,
+  PersistenceOutcome,
+} from './ports/repositories.js';
+import { PERSISTENT_PORT_DISCLOSURE } from './ports/repositories.js';
 
 /**
  * Scoped in-memory evaluation pipeline (Req 5). Composes the persistence-free
@@ -59,6 +72,18 @@ export interface EvaluationInput {
   readonly priorAuditLog?: readonly AuditEntry[];
   readonly policy?: SodPolicy;
   readonly receiptId?: string;
+  /**
+   * OPTIONAL evidence repository port (Req 5, D1). When absent the evaluation is
+   * byte-identical to the persistence-free kernel. When present, `finalize()`
+   * routes a durable-capable record through the port (D5).
+   */
+  readonly evidenceRepository?: EvidenceRepository;
+  /**
+   * OPTIONAL audit repository port (Req 5, D1). When absent the evaluation is
+   * byte-identical to the persistence-free kernel. When present, `finalize()`
+   * routes a durable-capable entry through the port (D5).
+   */
+  readonly auditRepository?: AuditRepository;
 }
 
 /** Outcome of an evaluation: decision, risk, evidence, audit log, receipt, steps. */
@@ -70,6 +95,13 @@ export interface EvaluationResult {
   readonly auditLog: readonly AuditEntry[];
   readonly receipt?: UnsignedInMemoryReceipt;
   readonly steps: readonly StepResult[];
+  /**
+   * OPTIONAL durable-capable view of the routed records (Req 5, D5). Absent when
+   * no repository is injected (byte-identical default path). When present, the
+   * captured in-memory `evidence`/`auditLog` are KEPT (persistent:false) and
+   * `persistence` carries the routed {@link PersistentRecord}s (persistent:true).
+   */
+  readonly persistence?: PersistenceOutcome;
 }
 
 interface PipelineContext {
@@ -257,7 +289,10 @@ function actionScopeGate(input: EvaluationInput, ctx: PipelineContext): GateResu
 /**
  * Capture one evidence record + one disclosed audit entry for the terminal
  * decision and issue a receipt only on ALLOW (Req 7, Req 8). Pure: returns a
- * new immutable audit list; the prior log is never mutated.
+ * new immutable audit list; the prior log is never mutated. When OPTIONAL
+ * repository ports are injected, routes a durable-capable record through them
+ * (Req 5, D1/D5); the no-repo path is byte-identical to the persistence-free
+ * kernel.
  */
 function finalize(
   input: EvaluationInput,
@@ -285,7 +320,7 @@ function finalize(
     now: input.now,
   });
 
-  return {
+  const base: EvaluationResult = {
     decision,
     reason,
     risk: ctx.risk,
@@ -293,6 +328,61 @@ function finalize(
     auditLog,
     receipt: receipt ?? undefined,
     steps,
+  };
+
+  // OPTIONAL repository routing (Req 5, D1/D5). When no repo is injected the
+  // result carries NO persistence field (byte-identical default path). When a
+  // repo IS present, the captured in-memory records stay and a durable-capable
+  // PersistentRecord is routed through the port(s).
+  const persistence = routeThroughPorts(input, evidenceInput);
+  return persistence === undefined ? base : { ...base, persistence };
+}
+
+/**
+ * Build a durable-capable {@link PersistentRecord} mirroring the captured
+ * in-memory evidence (D8 field order), diverging ONLY on the `persistent: true`
+ * literal and the port-contract disclosure (D6 path marker). Pure.
+ */
+function buildPersistentRecord(input: EvidenceInput): PersistentRecord {
+  return {
+    actionId: input.actionId,
+    principalId: input.principalId,
+    riskClass: input.riskClass,
+    decision: input.decision,
+    reason: input.reason,
+    timestamp: input.now,
+    persistent: true,
+    disclosure: PERSISTENT_PORT_DISCLOSURE,
+  };
+}
+
+/**
+ * Route the evaluation's records through the OPTIONAL repository ports (Req 5,
+ * D1/D5). Returns `undefined` when no repository is injected so the default path
+ * is byte-identical. When a repository IS present, builds one durable-capable
+ * record and saves it via the evidence port and/or appends it via the audit
+ * port. The captured in-memory records in `evidence`/`auditLog` are NEVER
+ * replaced; `persistence` carries the routed durable view (D5). Routing never
+ * touches the caller's prior audit log.
+ */
+function routeThroughPorts(
+  input: EvaluationInput,
+  evidenceInput: EvidenceInput,
+): PersistenceOutcome | undefined {
+  const { evidenceRepository, auditRepository } = input;
+  if (evidenceRepository === undefined && auditRepository === undefined) {
+    return undefined;
+  }
+  const record = buildPersistentRecord(evidenceInput);
+  if (evidenceRepository !== undefined) {
+    evidenceRepository.save(record);
+  }
+  if (auditRepository !== undefined) {
+    auditRepository.append(record);
+  }
+  return {
+    evidenceRecord: evidenceRepository !== undefined ? record : undefined,
+    auditRecord: auditRepository !== undefined ? record : undefined,
   };
 }
 

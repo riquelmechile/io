@@ -51,12 +51,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: Pipeline Wiring — Optional Repo Routing — Req 5, trust-kernel delta (Threat: backward-compat break)
 
-- [ ] 5.1 RED `test/ports.test.ts`: no-repo `evaluate()` is byte-identical to today (decision/evidence/audit/receipt/steps unchanged; `result.evidence`/`auditLog` carry `InMemoryRecord` `persistent:false`; no `persistence` field); with repos present, `finalize()` routes — `result.evidence`/`auditLog` STILL carry the captured `InMemoryRecord`, AND `result.persistence.evidenceRecord`/`auditRecord` carry the routed `PersistentRecord` (`persistent:true`) (consumer contract D5); evidence is saved via the evidence port and audit appended via the audit port; routing never mutates the prior audit log.
-- [ ] 5.2 GREEN: add optional `evidenceRepository?`/`auditRepository?` to `EvaluationInput`; in `finalize()` build a `PersistentRecord` + route through the ports when present, setting `result.persistence`; add optional `persistence?: PersistenceOutcome` to `EvaluationResult`; export ports + fakes + `PersistentRecord` from `index.ts`.
-- [ ] 5.3 REFACTOR: extract a `buildPersistentRecord` helper; `pnpm check`.
+- [x] 5.1 RED `test/ports.test.ts`: no-repo `evaluate()` is byte-identical to today (decision/evidence/audit/receipt/steps unchanged; `result.evidence`/`auditLog` carry `InMemoryRecord` `persistent:false`; no `persistence` field); with repos present, `finalize()` routes — `result.evidence`/`auditLog` STILL carry the captured `InMemoryRecord`, AND `result.persistence.evidenceRecord`/`auditRecord` carry the routed `PersistentRecord` (`persistent:true`) (consumer contract D5); evidence is saved via the evidence port and audit appended via the audit port; routing never mutates the prior audit log.
+- [x] 5.2 GREEN: add optional `evidenceRepository?`/`auditRepository?` to `EvaluationInput`; in `finalize()` build a `PersistentRecord` + route through the ports when present, setting `result.persistence`; add optional `persistence?: PersistenceOutcome` to `EvaluationResult`; export ports + fakes + `PersistentRecord` from `index.ts`.
+- [x] 5.3 REFACTOR: extract a `buildPersistentRecord` helper; `pnpm check`.
 
 ## Phase 6: Final Verification & Exclusion Guard — Req 6 (Threat: leakage/overclaim/deferred)
 
-- [ ] 6.1 Full `pnpm check` GREEN (format-check → typecheck → build → lint → test); every prior test stays green (no-repo byte-identity intact).
-- [ ] 6.2 Exclusion guard: no forbidden import (fs/net/http/db/daemon/LLM/framework) anywhere in src incl. `ports/`; no real PG driver; no crypto or durable overclaim; no canonical extraction performed this slice; `ports/` is a forward extraction signal ONLY and the kernel stays excluded from the 8+12+10=30 canonical partition.
-- [ ] 6.3 Confirm deferred items remain deferred: real PG storage, canonical extraction into `organization/policy/approvals/evidence/receipts/audit`, the other aggregate ports (R1–R6, R8–R15, R17), cryptographic receipts, and real approval chains.
+- [x] 6.1 Full `pnpm check` GREEN (format-check → typecheck → build → lint → test); every prior test stays green (no-repo byte-identity intact).
+- [x] 6.2 Exclusion guard: no forbidden import (fs/net/http/db/daemon/LLM/framework) anywhere in src incl. `ports/`; no real PG driver; no crypto or durable overclaim; no canonical extraction performed this slice; `ports/` is a forward extraction signal ONLY and the kernel stays excluded from the 8+12+10=30 canonical partition.
+- [x] 6.3 Confirm deferred items remain deferred: real PG storage, canonical extraction into `organization/policy/approvals/evidence/receipts/audit`, the other aggregate ports (R1–R6, R8–R15, R17), cryptographic receipts, and real approval chains.

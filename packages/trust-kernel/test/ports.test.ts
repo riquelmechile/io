@@ -4,16 +4,24 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
+import { NON_PERSISTENT_DISCLOSURE } from '../src/evidence.js';
+import type { Grant } from '../src/grant.js';
+import type { PrincipalIdentity } from '../src/identity.js';
 import type {
+  AuditEntry,
   Decision,
   InMemoryRecord,
+  KernelAction,
   PersistentRecord,
   PrincipalId,
   RiskClass,
 } from '../src/model.js';
+import { evaluate, type EvaluationInput } from '../src/pipeline.js';
 import type { AuditRepository, EvidenceRepository } from '../src/ports/repositories.js';
 import { PERSISTENT_PORT_DISCLOSURE } from '../src/ports/repositories.js';
 import { InMemoryAuditRepository, InMemoryEvidenceRepository } from '../src/ports/fakes.js';
+import type { RiskThresholds } from '../src/risk.js';
+import type { SodAssignment } from '../src/sod.js';
 
 /**
  * Persistence port boundary (Req 1-6). Strict-TDD proof of the hexagonal port
@@ -327,6 +335,254 @@ describe('In-memory fake adapters (Req 4, D6)', () => {
       expect(stored?.disclosure).toBe(PERSISTENT_PORT_DISCLOSURE);
       expect(stored?.disclosure.toLowerCase()).not.toContain('postgresql');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Backward-compatible pipeline wiring (Req 5, D1/D5/D6).
+// ---------------------------------------------------------------------------
+
+const wirePrincipalId: PrincipalId = 'p1';
+const wireCommand = 'execute';
+const wireThresholds: RiskThresholds = { lowMax: 10, mediumMax: 50 };
+
+/** Medium risk (impact 25) needs 4-way distinct SOD. */
+const fourWaySod: SodAssignment[] = [
+  { role: 'proposer', principalId: 'p1' },
+  { role: 'approver', principalId: 'p2' },
+  { role: 'executor', principalId: 'p3' },
+  { role: 'verifier', principalId: 'p4' },
+];
+
+function wireGrant(overrides: Partial<Grant> = {}): Grant {
+  return {
+    grantId: 'g1',
+    principalId: wirePrincipalId,
+    command: 'execute',
+    authority: 'op:execute',
+    scope: 'region:us',
+    start: 1000,
+    expiry: 9000,
+    ...overrides,
+  };
+}
+
+function wirePrincipal(overrides: Partial<PrincipalIdentity> = {}): PrincipalIdentity {
+  return {
+    principalId: wirePrincipalId,
+    primaryRole: 'operator',
+    temporaryAssignments: [],
+    ...overrides,
+  };
+}
+
+function wireAction(overrides: Partial<KernelAction> = {}): KernelAction {
+  return { actionId: 'a1', command: wireCommand, impactScore: 25, ...overrides };
+}
+
+/** A valid prior audit entry independent of the production builder. */
+function wirePriorEntry(overrides: Partial<AuditEntry> = {}): AuditEntry {
+  return {
+    actionId: 'prior',
+    principalId: wirePrincipalId,
+    riskClass: 'low',
+    decision: 'DENY',
+    reason: 'prior evaluation',
+    timestamp: 500,
+    persistent: false,
+    disclosure: NON_PERSISTENT_DISCLOSURE,
+    ...overrides,
+  };
+}
+
+function wireInput(overrides: Partial<EvaluationInput> = {}): EvaluationInput {
+  return {
+    principal: wirePrincipal(),
+    action: wireAction(),
+    grants: [wireGrant()],
+    sodAssignments: fourWaySod,
+    thresholds: wireThresholds,
+    now: 1500,
+    ...overrides,
+  };
+}
+
+describe('Backward-compatible pipeline wiring — no repository (Req 5, D1)', () => {
+  it('produces no persistence field when no repository is injected', () => {
+    const result = evaluate(wireInput());
+
+    expect(result).not.toHaveProperty('persistence');
+  });
+
+  it('keeps evidence and auditLog as InMemoryRecord persistent:false', () => {
+    const result = evaluate(wireInput());
+
+    expect(result.evidence.persistent).toBe(false);
+    expect(result.evidence.disclosure).toBe(NON_PERSISTENT_DISCLOSURE);
+    expect(result.auditLog.at(-1)?.persistent).toBe(false);
+  });
+
+  it('keeps decision, evidence, receipt, and steps identical to the persistence-free kernel', () => {
+    const result = evaluate(wireInput());
+
+    expect(result.decision).toBe('ALLOW');
+    expect(result.reason).toBe('all enforced gates passed');
+    expect(result.risk).toBe('medium');
+    expect(result.steps).toHaveLength(16);
+    expect(result.evidence).toEqual({
+      actionId: 'a1',
+      principalId: 'p1',
+      riskClass: 'medium',
+      decision: 'ALLOW',
+      reason: 'all enforced gates passed',
+      timestamp: 1500,
+      persistent: false,
+      disclosure: NON_PERSISTENT_DISCLOSURE,
+    });
+    expect(result.receipt?.terminalState).toBe('ALLOW');
+  });
+
+  it('a DENY evaluation also stays byte-identical with no persistence field', () => {
+    const result = evaluate(wireInput({ grants: [] }));
+
+    expect(result.decision).toBe('DENY');
+    expect(result).not.toHaveProperty('persistence');
+    expect(result.evidence.persistent).toBe(false);
+    expect(result.auditLog.at(-1)?.persistent).toBe(false);
+    expect(result.receipt).toBeUndefined();
+  });
+});
+
+describe('Pipeline wiring — repositories injected routes through the ports (Req 5, D5)', () => {
+  it('evidence and auditLog STILL carry the captured InMemoryRecord (persistent:false, D5)', () => {
+    const result = evaluate(
+      wireInput({
+        evidenceRepository: new InMemoryEvidenceRepository(),
+        auditRepository: new InMemoryAuditRepository(),
+      }),
+    );
+
+    // Consumer contract D5: the captured in-memory records are NOT replaced.
+    expect(result.evidence.persistent).toBe(false);
+    expect(result.evidence.disclosure).toBe(NON_PERSISTENT_DISCLOSURE);
+    expect(result.auditLog.at(-1)?.persistent).toBe(false);
+  });
+
+  it('persistence.evidenceRecord and auditRecord carry the routed PersistentRecord (persistent:true, D5)', () => {
+    const result = evaluate(
+      wireInput({
+        evidenceRepository: new InMemoryEvidenceRepository(),
+        auditRepository: new InMemoryAuditRepository(),
+      }),
+    );
+
+    expect(result.persistence?.evidenceRecord?.persistent).toBe(true);
+    expect(result.persistence?.auditRecord?.persistent).toBe(true);
+    // The routed record carries the port-contract disclosure (D6 path marker).
+    expect(result.persistence?.evidenceRecord?.disclosure).toBe(PERSISTENT_PORT_DISCLOSURE);
+  });
+
+  it('saves the evidence record via the evidence port (R7)', () => {
+    const evidenceRepo = new InMemoryEvidenceRepository();
+    evaluate(
+      wireInput({
+        action: wireAction({ actionId: 'routed-evidence' }),
+        evidenceRepository: evidenceRepo,
+      }),
+    );
+
+    const stored = evidenceRepo.get('routed-evidence');
+    expect(stored).toBeDefined();
+    expect(stored?.persistent).toBe(true);
+    expect(stored?.decision).toBe('ALLOW');
+    expect(stored?.riskClass).toBe('medium');
+  });
+
+  it('appends the audit entry via the audit port (R16)', () => {
+    const auditRepo = new InMemoryAuditRepository();
+    evaluate(
+      wireInput({
+        action: wireAction({ actionId: 'routed-audit' }),
+        auditRepository: auditRepo,
+      }),
+    );
+
+    expect(auditRepo.getLog()).toHaveLength(1);
+    expect(auditRepo.getLog()[0]?.persistent).toBe(true);
+    expect(auditRepo.getLog()[0]?.actionId).toBe('routed-audit');
+  });
+
+  it('routing never mutates the prior audit log', () => {
+    const prior = [wirePriorEntry()];
+    const auditRepo = new InMemoryAuditRepository();
+    evaluate(wireInput({ priorAuditLog: prior, auditRepository: auditRepo }));
+
+    // The caller's prior log is untouched; the audit repo received only the one
+    // routed entry (it is NOT fed the prior in-memory log).
+    expect(prior).toHaveLength(1);
+    expect(auditRepo.getLog()).toHaveLength(1);
+    expect(auditRepo.getLog()[0]?.persistent).toBe(true);
+  });
+
+  it('routes only evidence when only the evidence repository is present', () => {
+    const result = evaluate(wireInput({ evidenceRepository: new InMemoryEvidenceRepository() }));
+
+    expect(result.persistence?.evidenceRecord).toBeDefined();
+    expect(result.persistence?.evidenceRecord?.persistent).toBe(true);
+    expect(result.persistence?.auditRecord).toBeUndefined();
+  });
+
+  it('routes only audit when only the audit repository is present', () => {
+    const result = evaluate(wireInput({ auditRepository: new InMemoryAuditRepository() }));
+
+    expect(result.persistence?.auditRecord).toBeDefined();
+    expect(result.persistence?.auditRecord?.persistent).toBe(true);
+    expect(result.persistence?.evidenceRecord).toBeUndefined();
+  });
+
+  it('the routed PersistentRecord mirrors the captured evidence core fields (D8)', () => {
+    const result = evaluate(
+      wireInput({
+        evidenceRepository: new InMemoryEvidenceRepository(),
+        auditRepository: new InMemoryAuditRepository(),
+      }),
+    );
+
+    const captured = result.evidence;
+    const routed = result.persistence?.evidenceRecord;
+    expect(routed).toBeDefined();
+    // Core fields mirror the captured InMemoryRecord (D8 field order).
+    expect(routed?.actionId).toBe(captured.actionId);
+    expect(routed?.principalId).toBe(captured.principalId);
+    expect(routed?.riskClass).toBe(captured.riskClass);
+    expect(routed?.decision).toBe(captured.decision);
+    expect(routed?.reason).toBe(captured.reason);
+    expect(routed?.timestamp).toBe(captured.timestamp);
+    // Diverges ONLY on the persistent literal + disclosure.
+    expect(routed?.persistent).toBe(true);
+    expect(captured.persistent).toBe(false);
+  });
+
+  it('a DENY evaluation also routes through the ports when present (triangulation)', () => {
+    const evidenceRepo = new InMemoryEvidenceRepository();
+    const auditRepo = new InMemoryAuditRepository();
+    const result = evaluate(
+      wireInput({
+        grants: [],
+        evidenceRepository: evidenceRepo,
+        auditRepository: auditRepo,
+      }),
+    );
+
+    expect(result.decision).toBe('DENY');
+    // Captured in-memory records stay non-persistent.
+    expect(result.evidence.persistent).toBe(false);
+    // Routed records are durable-capable.
+    expect(result.persistence?.evidenceRecord?.persistent).toBe(true);
+    expect(result.persistence?.auditRecord?.persistent).toBe(true);
+    expect(result.persistence?.evidenceRecord?.decision).toBe('DENY');
+    expect(evidenceRepo.get(result.evidence.actionId)?.persistent).toBe(true);
+    expect(auditRepo.getLog()).toHaveLength(1);
   });
 });
 

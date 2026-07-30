@@ -24,6 +24,9 @@ export type {
   Evidence,
   InMemoryRecord,
   KernelAction,
+  PersistentAuditEntry,
+  PersistentEvidence,
+  PersistentRecord,
   PositionId,
   PrincipalId,
   ReservedCategory,
@@ -38,6 +41,18 @@ export type { PrincipalIdentity } from './identity.js';
 export type { Grant } from './grant.js';
 export type { RiskThresholds } from './risk.js';
 export type { SodAssignment, SodPolicy, SodRole } from './sod.js';
+
+// --- Persistence port boundary (Increment 2, Req 1-5) ---
+// Generic outbound port interfaces + honest disclosure + in-memory fakes.
+// import type keeps the package dependency-free (D3/D4); the disclosure value
+// is the only runtime export and is a plain string.
+export type {
+  AuditRepository,
+  EvidenceRepository,
+  PersistenceOutcome,
+} from './ports/repositories.js';
+export { PERSISTENT_PORT_DISCLOSURE } from './ports/repositories.js';
+export { InMemoryAuditRepository, InMemoryEvidenceRepository } from './ports/fakes.js';
 
 // --- Output honesty contracts (Req 7, Req 8) ---
 export { RECEIPT_DISCLOSURE } from './receipt.js';
