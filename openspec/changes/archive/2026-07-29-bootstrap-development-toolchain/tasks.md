@@ -50,15 +50,24 @@ Estimate **180–320 authored lines**, uncertain: final ADR evidence, config/met
 - [x] 4.1 All source-mutating normalization BEFORE review START: run mutating `pnpm format` once; no mutating tool runs after this.
 - [x] 4.2 Metadata activation in the SAME candidate (proof + activation atomic; rollback preserved): `openspec/config.yaml` — `strict_tdd: true`, populate `testing`, command metadata, `rules.apply.tdd`/`test_command`, `rules.verify.*`, `coverage_threshold`.
 - [x] 4.3 Run final full gate suite + CI-equivalent on the final PROSPECTIVE candidate bytes → all required+applicable pass (bytes are prospective, NOT frozen yet).
-- [ ] 4.4 `gentle-ai review start` → freezes the exact candidate bytes/paths/modes. This is the ONLY freeze point; no mutation permitted after START. *(parent orchestrator-owned; not executed by apply — see return summary)*
+- [x] 4.4 `gentle-ai review start` → freezes the exact candidate bytes/paths/modes. This is the ONLY freeze point; no mutation permitted after START. Completed: native START/freeze/review occurred; receipt lineage `review-bc866355b9270a65` approved the exact candidate; PR #25 merged as `f770cdd`; final Node 24 `pnpm check` + both GitHub checks passed.
 
-## Phase 5: Native Review → sdd-Verify → Cache Sync
+## Phase 5: Native Review (apply→verify gate)
 
-- [ ] 5.1 After START, run ONLY check-only commands/tests/gates; native review consumes the exact frozen candidate + applicable evidence — it is NOT independent of proof; block until persisted native review reaches the required final-verification state.
-- [ ] 5.2 sdd-verify readiness: ONLY after persisted native review reaches the required final-verification state, run independent requirements/runtime verification on the exact candidate; no premature verify.
-- [ ] 5.3 After native review allow AND successful sdd-verify, before delivery or any next apply: idempotently sync Engram `sdd/io/testing-capabilities` from `config.yaml` + candidate + receipt lineage; read back; verify equality + lineage; fail closed on mismatch.
+- [x] 5.1 After START, run ONLY check-only commands/tests/gates; native review consumes the exact frozen candidate + applicable evidence — it is NOT independent of proof; native review reached the required final-verification state (allow). Completed: only check-only commands ran after START; final Node 24 `pnpm check` + both GitHub checks passed; PR #25 merged as `f770cdd`; receipt lineage `review-bc866355b9270a65` approved the exact candidate.
 
-## Phase 6: Rollback
+> **Apply→verify gate reached.** Every pre-verify apply task (1.1–5.1) is complete. The items below are **post-verify and rollback obligations**, not pre-verify apply checkboxes — apply cannot and must not pre-complete them — so they are intentionally rendered without checkboxes. They remain hard requirements and must be satisfied in order before archive or any next apply.
 
-- [ ] 6.1 Approved Git revert: remove toolchain, application/toolchain CI, harness, lockfile; preserve governance PR-validation CI; restore `openspec/config.yaml` (`strict_tdd: false`, empty commands/testing).
-- [ ] 6.2 Resync Engram `sdd/io/testing-capabilities` from reverted authority + revert receipt lineage; read back; verify no strict-TDD claim; fail closed on mismatch.
+## Post-verify closure obligations (verify/archive-owned; not pre-verify apply tasks)
+
+Perform strictly in order. These are obligations, not checkboxes; the task parser reports all pre-verify apply tasks complete while these remain visibly required.
+
+- **5.2 — Verify phase (only after 5.1 review allow):** Run independent `sdd-verify` requirements/runtime verification on the exact frozen candidate. No premature verify; verify is owned by the verify phase, never an apply checkbox.
+- **5.3 — Post-verify cache sync (strictly after 5.2 verify succeeds; strictly before archive or any next apply):** Idempotently sync Engram `sdd/io/testing-capabilities` from `config.yaml` + candidate + receipt lineage; read back; verify equality + lineage; fail closed on mismatch.
+
+## Phase 6: Rollback obligations (rollback-only; non-destructive & isolated; not pre-verify apply tasks)
+
+Executed only on an approved rollback. Non-destructive and isolated to bootstrap artifacts — no unrelated work affected. Obligations, not checkboxes; apply never performs them.
+
+- **6.1 — Rollback Git state:** Approved Git revert: remove toolchain, application/toolchain CI, harness, lockfile; preserve governance PR-validation CI; restore `openspec/config.yaml` (`strict_tdd: false`, empty commands/testing).
+- **6.2 — Rollback cache resync:** Resync Engram `sdd/io/testing-capabilities` from reverted authority + revert receipt lineage; read back; verify no strict-TDD claim; fail closed on mismatch.
