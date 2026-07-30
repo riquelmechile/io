@@ -45,15 +45,15 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Neutral Identity & Bounded Roles — Req 2 (Threat: ambient/expired authority)
 
-- [ ] 3.1 RED `test/identity.test.ts`: indefinite temp role rejected (grants no authority); expiry/revocation strips temp authority while primary role unchanged; temp role carries no ambient authority.
-- [ ] 3.2 GREEN: create `src/model.ts` (neutral `PrincipalId`/`PositionId`, Role, TemporaryAssignment, Grant, Policy, EvaluationInput, Decision/StepResult/Evidence/AuditEntry/Receipt types) + `src/identity.ts` (validate assignment id+scope+start+expiry; expiry/revocation strip authority; primary immutable).
-- [ ] 3.3 REFACTOR: dedupe assignment-validation helpers; `pnpm check` GREEN.
+- [x] 3.1 RED `test/identity.test.ts`: indefinite temp role rejected (grants no authority); expiry/revocation strips temp authority while primary role unchanged; temp role carries no ambient authority.
+- [x] 3.2 GREEN: create `src/model.ts` (neutral `PrincipalId`/`PositionId`, Role, TemporaryAssignment, Grant, Policy, EvaluationInput, Decision/StepResult/Evidence/AuditEntry/Receipt types) + `src/identity.ts` (validate assignment id+scope+start+expiry; expiry/revocation strip authority; primary immutable).
+- [x] 3.3 REFACTOR: dedupe assignment-validation helpers; `pnpm check` GREEN.
 
 ## Phase 4: Deterministic Risk Classification — Req 3 (Threat: risk downgrade)
 
-- [ ] 4.1 RED `test/risk.test.ts`: identical input → identical class across repeats; the 5 reserved categories (purpose, capital, critical limits, irreversible actions, constitutional modification) always critical, never downgradable; no LLM-input path exists in the API.
-- [ ] 4.2 GREEN: create `src/risk.ts` pure `classify(action, thresholds)`.
-- [ ] 4.3 REFACTOR: extract reserved-category set + threshold map; `pnpm check` GREEN.
+- [x] 4.1 RED `test/risk.test.ts`: identical input → identical class across repeats; the 5 reserved categories (purpose, capital, critical limits, irreversible actions, constitutional modification) always critical, never downgradable; no LLM-input path exists in the API.
+- [x] 4.2 GREEN: create `src/risk.ts` pure `classify(action, thresholds)`.
+- [x] 4.3 REFACTOR: extract reserved-category set + threshold map; `pnpm check` GREEN.
 
 ## Phase 5: Deny-by-Default Explicit Grant — Req 4 (Threat: ambient/expired authority)
 
