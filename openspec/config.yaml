@@ -48,7 +48,7 @@ testing:
 
 delivery:
   execution_mode: auto
-  artifact_store: hybrid        # OpenSpec files + Engram observations
+  artifact_store: openspec      # OpenSpec files are the canonical SDD artifact store
   delivery_strategy: auto-chain
   chain_strategy: stacked-to-main
   review_budget_lines: 400
