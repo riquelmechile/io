@@ -1,9 +1,10 @@
 # Apply Progress: Bootstrap Minimum Trust Kernel
 
-> Strict TDD throughout. Slice 1 (Phase 1 + Phase 2) and Slice 2 (Phase 3 + Phase 4)
-> implemented. Boundary/transitional identity + neutral identity/bounded roles +
-> deterministic risk classification complete; `pnpm check` GREEN. Phases 5–10
-> remain for later slices.
+> Strict TDD throughout. Slice 1 (Phase 1 + Phase 2), Slice 2 (Phase 3 + Phase
+> 4), and Slice 3 (Phase 5 + Phase 6) implemented. Boundary/transitional identity
+> + neutral identity/bounded roles + deterministic risk + deny-by-default grant
+> + in-memory SOD complete; `pnpm check` GREEN (84 tests, 0 warnings). Phases
+> 7–10 remain for later slices.
 
 ## Slice 1 outcome
 
@@ -158,8 +159,6 @@ None.
 
 ## Remaining tasks (later slices)
 
-- Phase 5 — Deny-by-default explicit grant
-- Phase 6 — In-memory separation of duties
 - Phase 7 — In-memory evidence & audit
 - Phase 8 — Honest in-memory receipt
 - Phase 9 — Scoped in-memory pipeline
@@ -167,7 +166,87 @@ None.
 
 ## Workload / PR boundary (cumulative)
 
-- Mode: **chained PR slice (Slice 2)** — `stacked-to-main`
-- Current work unit: `slice-2-identity-risk` (Work Unit 2 → PR 2 → main)
-- Boundary: starts from the committed Slice 1 baseline; ends with neutral identity/bounded roles + deterministic risk classification and their RED→GREEN→REFACTOR tests. Slice 1 work is untouched.
-- Estimated review budget impact: 332 changed lines (Slice 2) — within the 400-line budget; no `size:exception` required.
+- Mode: **chained PR slice (Slice 3)** — `stacked-to-main`
+- Current work unit: `slice-3-grant-sod` (Work Unit 3 → PR 3 → main)
+- Boundary: starts from the committed Slice 2 baseline; ends with deny-by-default explicit grant + in-memory separation of duties and their RED→GREEN→REFACTOR tests. Slices 1–2 work is untouched.
+- Estimated review budget impact: **537 changed lines (Slice 3) — OVER the 400-line budget** (`changed_line_budget_exceeded: true`). Grant + SOD are two substantial security requirements (Req 4 + Req 6) with full triangulated coverage (43 new tests); trimming further would sacrifice required strict-TDD triangulation. No `size:exception` recorded; flagged for maintainer budget decision (same disposition as Slice 1 ordinal 1→2 reset).
+
+---
+
+## Slice 3 outcome
+
+| Field | Value |
+|-------|-------|
+| Slices implemented | Slice 3 (Phase 5 tasks 5.1–5.3, Phase 6 tasks 6.1–6.3) |
+| Mode | Strict TDD |
+| Gate | `PATH="/tmp/opencode/node-24.18.1/node-v24.18.1-linux-x64/bin:$PATH" pnpm check` — GREEN (exit 0, 0 warnings) |
+| Test result | 6 test files, 84 tests passing (root 2 + boundary 16 + identity 11 + risk 12 + grant 20 + sod 23) |
+| Changed lines (authored, add+del) | **537** — OVER the 400-line budget (468 new-file lines + 50 add / 19 del tracked) |
+| Exclusions held | Yes — pure in-memory functions only; no persistence/adapters/HTTP/db/daemon/LLM/framework; no ambient authority; no real delegation/policy-version/budget/approval/records/crypto receipts |
+
+## Slice 3 files changed
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `packages/trust-kernel/src/model.ts` | Modified | Added shared `Decision` type, `BoundedWindow` interface, `ValidationOutcome`, and `validateBoundedWindow` (single source of truth for the scope/start/expiry-after-start rule shared by identity + grant). |
+| `packages/trust-kernel/src/identity.ts` | Modified | `validateTemporaryAssignment` now delegates the bounded-window checks to `validateBoundedWindow` (shared helper; behavior identical). |
+| `packages/trust-kernel/src/grant.ts` | Created | `Grant`, `GrantValidation`, `GrantDecision`; `validateGrant` (id/command/authority + shared window); `checkGrant` deny-by-default command-bound authority check re-evaluated per input; `isGrantActive`. |
+| `packages/trust-kernel/src/sod.ts` | Created | `SodRole`/`SodAssignment`/`SodPolicy`/`SodInput`/`SodDecision`; `checkSod` per-tier distinctness (absolute no-self-approve/no-self-verify pairs + medium 4-way / high+critical 5-way / low-4-way-unless-policy); extracted `CORE_ROLES`/`CRITICAL_ROLES`/`ABSOLUTE_PAIRS`/`requiredDistinctRoles`. |
+| `packages/trust-kernel/test/grant.test.ts` | Created | RED-first deny-by-default suite (20 tests): unbounded/wrong-command/expired/revoked/different-principal → DENY; current bounded command grant → ALLOW; per-input re-evaluation; command-bound isolation. |
+| `packages/trust-kernel/test/sod.test.ts` | Created | RED-first SOD suite (23 tests): self-approve/self-verify DENY at every tier; medium 4-way; high/critical 5-way (incl. missing authorizer); low combines only with policy. |
+
+## Slice 3 TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 5.1 | `packages/trust-kernel/test/grant.test.ts` | Unit | ✅ 39/39 (workspace) | ✅ Written — `Cannot find module '../src/grant.js'` | ✅ Passed (20) | ✅ 7 invalid shapes (it.each) + 6 deny cases (it.each) + allow + per-input + command-bound + terminal → 20 | ➖ See 5.3 |
+| 5.2 | `packages/trust-kernel/test/grant.test.ts` | Unit | ✅ 39/39 | ✅ (same RED) | ✅ Passed | ✅ Same | ➖ See 5.3 |
+| 5.3 | `packages/trust-kernel/test/{identity,grant}.test.ts` | Unit | ✅ 39/39 → 31/31 after refactor | ➖ Refactor | ✅ Passed (identity 11 + grant 20 = 31) | ➖ N/A | ✅ Extracted `validateBoundedWindow` to `model.ts`; identity + grant delegate to it; `pnpm check` GREEN |
+| 6.1 | `packages/trust-kernel/test/sod.test.ts` | Unit | ✅ 59/59 (after grant) | ✅ Written — `Cannot find module '../src/sod.js'` | ✅ Passed (23) | ✅ self-approve/self-verify ×4 tiers (it.each) + medium 4 overlap pairs (it.each) + high/critical allow/missing/overlap (it.each) + low policy → 23 | ➖ See 6.3 |
+| 6.2 | `packages/trust-kernel/test/sod.test.ts` | Unit | ✅ 59/59 | ✅ (same RED) | ✅ Passed | ✅ Same | ➖ See 6.3 |
+| 6.3 | `packages/trust-kernel/test/sod.test.ts` | Unit | ✅ 59/59 → 23/23 | ➖ Refactor | ✅ Passed (23) | ➖ N/A | ✅ Tier rules extracted as `CORE_ROLES`/`CRITICAL_ROLES`/`ABSOLUTE_PAIRS`/`requiredDistinctRoles`; removed 2 `noNonNullAssertion` warnings; `pnpm check` GREEN (0 warnings) |
+
+### Slice 3 test summary
+
+- **Total tests written**: 43 (20 grant + 23 sod). Boundary auto-extended +5 (grant.ts/sod.ts "imports nothing forbidden") → 84 workspace-wide.
+- **Total tests passing**: 84.
+- **Layers used**: Unit (43 new).
+- **Approval tests**: None — no refactoring of existing product behavior (identity refactor was behavior-preserving delegation, safety-net proven by 11/11 identity tests staying green).
+- **Pure functions created**: 3 (`validateGrant`, `checkGrant`, `checkSod`) + 1 shared helper (`validateBoundedWindow` in model.ts) + 1 internal (`isGrantActive`).
+
+## Slice 3 RED → GREEN → REFACTOR narrative
+
+1. **RED (5.1)**: `grant.test.ts` imported `{ checkGrant, validateGrant, Grant, GrantDecision }` from `../src/grant.js`, which did not exist. Confirmed: `pnpm vitest run packages/trust-kernel/test/grant.test.ts` → `Failed Suites 1` / `Cannot find module '../src/grant.js'`.
+2. **GREEN (5.2)**: Added `Decision` to `model.ts` and created `grant.ts` (`Grant`/`validateGrant`/`checkGrant`/`isGrantActive`). Triangulation built into the suite: 7 invalid shapes + 6 deny cases via `it.each`, plus allow/per-input/command-bound/terminal cases. One test-fixture bug found and fixed (`grant({ expiry: 2000 })` at `now:1500` is NOT expired — implementation was correct; fixture corrected to `expiry: 1200`). Focused run → 20 passed.
+3. **REFACTOR (5.3)**: Extracted `validateBoundedWindow` into `model.ts`; both `identity.validateTemporaryAssignment` and `grant.validateGrant` now delegate the window checks to it (single source of truth). Identity + grant focused run → 31/31 still green.
+4. **RED (6.1)**: `sod.test.ts` imported from `../src/sod.js`, which did not exist. Confirmed: `Cannot find module '../src/sod.js'`.
+5. **GREEN (6.2)**: Created `sod.ts` (`SodRole`/`SodAssignment`/`SodPolicy`/`SodInput`/`SodDecision`/`checkSod`). Triangulation across all four tiers, four medium overlap pairs, and high/critical five-way forced the tier-rule extraction rather than a fake-it constant. One test-construction bug found and fixed (`FIVE_WAY` incorrectly spread the already-built `FOUR_WAY` objects back into `assign()`; rebuilt explicitly). Focused run → 23 passed.
+6. **REFACTOR (6.3)**: Tier role-count rules formalized as extracted constants/functions; removed 2 `noNonNullAssertion` warnings via guarded locals. `pnpm check` GREEN with 0 warnings.
+
+## Slice 3 Work Unit Evidence
+
+| Evidence | Value |
+|----------|-------|
+| Focused test command + result | `pnpm test packages/trust-kernel/test/grant.test.ts packages/trust-kernel/test/sod.test.ts` → `Test Files 2 passed (2)`, `Tests 43 passed (43)`; full `pnpm check` → exit 0, 0 warnings, `Test Files 6 passed (6)`, `Tests 84 passed (84)` |
+| Runtime harness command/scenario + result | N/A — pure in-memory functions with no transport/daemon/app to exercise (per design Threat Matrix: persistence/adapter/network/framework leakage, routing/shell/subprocess = "No such boundary is introduced"). |
+| Rollback boundary | Remove `packages/trust-kernel/src/{grant,sod}.ts` + `packages/trust-kernel/test/{grant,sod}.test.ts`, and revert the `model.ts`/`identity.ts` window-helper refactor (restore inline checks in `validateTemporaryAssignment`). Slices 1–2 are untouched; `pnpm check` returns to the Slice 2 baseline. |
+
+## Slice 3 exclusion guard (Req 4, Req 6)
+
+- `src/{grant,sod}.ts` import only `./model.js` (relative `.js` specifiers); the Slice 1 boundary scan auto-covers them and reports **no** forbidden imports (proven by the two new `imports nothing forbidden` boundary cases).
+- No ambient authority: `ActiveIdentity.authority` is still `[]`; authority comes ONLY from an explicit, current, bounded, command-matching `Grant` (Req 4). `checkGrant` returns `authority: null` on every DENY.
+- Grants are re-evaluated per input — `checkGrant` takes the grants list each call; nothing is "remembered" across actions.
+- SOD is enforced per risk tier; the absolute no-self-approval/no-self-verification pairs are checked at EVERY tier (including low with policy-permitted combination); medium = 4-way, high/critical = 5-way (distinct authorizer); low combines only when `policy.allowsLowCombination === true`.
+- No pipeline, evidence, receipt, delegation, policy-version, budget, approval, or records behavior implemented (deferred to Slices 4–5).
+
+## Slice 3 deviations from design
+
+- **SOD 5th role 'authorizer' (interpretation)**: The spec names the four medium roles (proposer/approver/executor/verifier) and requires high/critical to use "five distinct principals" without naming the 5th role. A 5th role is structurally required (4 roles cannot yield 5 distinct principals). `src/sod.ts` adds `authorizer` as the critical-tier additional control role. This is an interpretation of an under-specified spec point, not a contradiction — it satisfies "five distinct principals" and is isolated (only high/critical require it; extraction target `approvals/` is recorded).
+- **Absolute SOD pairs (interpretation)**: The spec says "No principal MAY self-approve or self-verify at ANY tier" and the normative scenario pins self-approval to "approver and executor". `ABSOLUTE_PAIRS` is implemented as `(approver, executor)` (self-approval, per the scenario) and `(verifier, executor)` (self-verification). At low with policy-permitted combination, other role pairs (e.g. proposer==executor) MAY combine; the absolute pairs always deny.
+- **Over 400-line budget**: 537 authored lines for two requirements with full triangulated coverage. Flagged `changed_line_budget_exceeded: true`; no `size:exception` recorded. Documented for maintainer budget decision.
+- No other deviations.
+
+## Slice 3 issues found
+
+- Two genuine RED-phase bugs caught by execution and fixed BEFORE declaring GREEN (both test-side, implementation was correct): (a) `grant({ expiry: 2000 })` at `now: 1500` is active, not expired — fixture corrected; (b) `FIVE_WAY` rebuilt explicitly instead of spreading `FOUR_WAY` objects.
+- Source compaction pass (comments/helpers) reduced new-file lines 524 → 468 after GREEN without changing behavior or coverage; full suite re-verified green.

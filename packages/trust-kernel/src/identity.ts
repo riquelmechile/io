@@ -1,4 +1,5 @@
 import type { Authority, PrincipalId, Role, TemporaryAssignment } from './model.js';
+import { validateBoundedWindow } from './model.js';
 
 /** Outcome of structurally validating a temporary assignment. */
 export interface AssignmentValidation {
@@ -28,30 +29,17 @@ export interface ActiveIdentity {
 
 /**
  * Validate a temporary assignment is well-formed: it MUST declare an assignment
- * ID, bounded scope, start, and a non-indefinite expiry after start. Indefinite
- * expiry is INVALID and grants no authority. Revoked assignments may still be
- * structurally valid — revocation strips authority, not validity. [ADR-0001]
+ * ID plus a bounded window (scope, start, non-indefinite expiry after start).
+ * Indefinite expiry is INVALID and grants no authority. Revoked assignments may
+ * still be structurally valid — revocation strips authority, not validity. The
+ * window checks are shared via {@link validateBoundedWindow}. [ADR-0001]
  */
 export function validateTemporaryAssignment(assignment: TemporaryAssignment): AssignmentValidation {
   if (!assignment.assignmentId) {
     return { valid: false, reason: 'temporary assignment must declare an assignment id' };
   }
-  if (!assignment.scope) {
-    return { valid: false, reason: 'temporary assignment must declare a bounded scope' };
-  }
-  if (assignment.start === undefined) {
-    return { valid: false, reason: 'temporary assignment must declare a start' };
-  }
-  if (assignment.expiry === undefined) {
-    return {
-      valid: false,
-      reason: 'temporary assignment must declare an expiry (indefinite is invalid)',
-    };
-  }
-  if (assignment.expiry <= assignment.start) {
-    return { valid: false, reason: 'temporary assignment expiry must be after start' };
-  }
-  return { valid: true, reason: 'ok' };
+  const window = validateBoundedWindow(assignment);
+  return window.valid ? { valid: true, reason: 'ok' } : window;
 }
 
 /**

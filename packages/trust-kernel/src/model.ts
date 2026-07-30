@@ -18,6 +18,49 @@ export type CommandId = string;
 /** An explicit authority claim (deny-by-default; never ambient). */
 export type Authority = string;
 
+/** Authority-evaluation decision. Deny-by-default (Req 4). */
+export type Decision = 'ALLOW' | 'DENY';
+
+/**
+ * A bounded validity window shared by temporary assignments and grants (Req 2,
+ * Req 4). Both records carry scope + start + expiry + revocation; the shared
+ * window validation lives once in {@link validateBoundedWindow}.
+ */
+export interface BoundedWindow {
+  readonly scope?: Scope;
+  readonly start?: number;
+  readonly expiry?: number;
+  readonly revoked?: boolean;
+}
+
+/** Shared structural-validation outcome shape. */
+export interface ValidationOutcome {
+  readonly valid: boolean;
+  readonly reason: string;
+}
+
+/**
+ * Validate the shared bounded window: a scope, a start, and a non-indefinite
+ * expiry after start. Indefinite expiry is INVALID. Shared by identity
+ * (temporary assignments) and grant (authority grants) so the expiry/scope rule
+ * has a single source of truth.
+ */
+export function validateBoundedWindow(window: BoundedWindow): ValidationOutcome {
+  if (!window.scope) {
+    return { valid: false, reason: 'a bounded scope is required' };
+  }
+  if (window.start === undefined) {
+    return { valid: false, reason: 'a start is required' };
+  }
+  if (window.expiry === undefined) {
+    return { valid: false, reason: 'an expiry is required (indefinite is invalid)' };
+  }
+  if (window.expiry <= window.start) {
+    return { valid: false, reason: 'expiry must be after start' };
+  }
+  return { valid: true, reason: 'ok' };
+}
+
 /**
  * A temporary role assignment. A VALID assignment MUST declare an assignment ID,
  * explicit bounded scope, start, and expiry (indefinite is INVALID). Fields are

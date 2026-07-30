@@ -57,15 +57,15 @@ Chain strategy: stacked-to-main
 
 ## Phase 5: Deny-by-Default Explicit Grant — Req 4 (Threat: ambient/expired authority)
 
-- [ ] 5.1 RED `test/grant.test.ts`: no grant→DENY; unbounded/wrong-command/expired grant→DENY; only current bounded command-bound grant allows; any enforced-step failure→terminal DENY.
-- [ ] 5.2 GREEN: create `src/grant.ts` command-bound, re-evaluated-per-input grant check.
-- [ ] 5.3 REFACTOR: share authority/expiry helpers with identity; `pnpm check` GREEN.
+- [x] 5.1 RED `test/grant.test.ts`: no grant→DENY; unbounded/wrong-command/expired grant→DENY; only current bounded command-bound grant allows; any enforced-step failure→terminal DENY.
+- [x] 5.2 GREEN: create `src/grant.ts` command-bound, re-evaluated-per-input grant check.
+- [x] 5.3 REFACTOR: share authority/expiry helpers with identity; `pnpm check` GREEN.
 
 ## Phase 6: In-Memory Separation of Duties — Req 6 (Threat: SOD overlap)
 
-- [ ] 6.1 RED `test/sod.test.ts`: self-approve/self-verify DENY at any tier; medium 4-way distinct (proposer/approver/executor/verifier); high & critical 5-way distinct; low combines only when policy permits.
-- [ ] 6.2 GREEN: create `src/sod.ts` per-tier distinctness check; prohibited overlap→DENY.
-- [ ] 6.3 REFACTOR: extract tier role-count rules; `pnpm check` GREEN.
+- [x] 6.1 RED `test/sod.test.ts`: self-approve/self-verify DENY at any tier; medium 4-way distinct (proposer/approver/executor/verifier); high & critical 5-way distinct; low combines only when policy permits.
+- [x] 6.2 GREEN: create `src/sod.ts` per-tier distinctness check; prohibited overlap→DENY.
+- [x] 6.3 REFACTOR: extract tier role-count rules; `pnpm check` GREEN.
 
 ## Phase 7: In-Memory Evidence & Audit — Req 7
 
