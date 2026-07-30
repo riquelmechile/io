@@ -8,7 +8,10 @@
       "*.json",
       "packages/trust-kernel/src/**/*.ts",
       "packages/trust-kernel/test/**/*.ts",
-      "packages/trust-kernel/package.json"
+      "packages/trust-kernel/package.json",
+      "packages/database/src/**/*.ts",
+      "packages/database/test/**/*.ts",
+      "packages/database/package.json"
     ]
   },
   "formatter": {

@@ -1,0 +1,161 @@
+import type { DbConnection } from '../src/connection.js';
+import { PERSISTENT_PORT_DISCLOSURE } from '../src/disclosure.js';
+
+/**
+ * In-memory test double for {@link DbConnection} (Req 4). Map/array-backed,
+ * fully synchronous, NO database/network/daemon/framework. It does TWO jobs:
+ *
+ * 1. Records EVERY `execute`/`query` call as `{ sql, params }` in call order, so
+ *    adapter tests can assert the exact PG-shaped SQL and `$N` param order.
+ * 2. Stores rows written by `execute` (INSERT) so `query` (SELECT) round-trips
+ *    them synchronously — letting save->get round-trip tests run without PG.
+ *
+ * It parses only the minimal PG-shaped SQL the adapters emit (INSERT ... VALUES
+ * ($1,..) and SELECT ... AS "x" ... [WHERE col = $N] [ORDER BY col ASC|DESC]).
+ * It is NOT durable and NOT real PostgreSQL (scenario 2): it honestly carries
+ * {@link PERSISTENT_PORT_DISCLOSURE}.
+ */
+export class InMemoryDbConnection implements DbConnection {
+  private readonly _operations: DbOperation[] = [];
+  private readonly tables = new Map<string, Row[]>();
+  private readonly idCounters = new Map<string, number>();
+
+  /** Honest disclosure: the in-memory fake is NOT durable / NOT real PostgreSQL. */
+  readonly disclosure = PERSISTENT_PORT_DISCLOSURE;
+
+  /** Ordered, immutable log of every `execute`/`query` call (`{ sql, params }`). */
+  get operations(): readonly DbOperation[] {
+    return this._operations;
+  }
+
+  execute(sql: string, params: readonly unknown[]): unknown {
+    this._operations.push({ sql, params });
+    const insert = parseInsert(sql);
+    if (insert) {
+      const rows = this.table(insert.table);
+      const row: Row = { id: this.nextId(insert.table) };
+      insert.columns.forEach((column, index) => {
+        row[column] = params[index];
+      });
+      rows.push(row);
+    }
+    return undefined;
+  }
+
+  query<T>(sql: string, params: readonly unknown[]): readonly T[] {
+    this._operations.push({ sql, params });
+    const select = parseSelect(sql);
+    if (!select) return [];
+
+    let rows = this.table(select.table);
+    if (select.where) {
+      const where = select.where;
+      const wanted = params[where.param - 1];
+      rows = rows.filter((row) => row[where.column] === wanted);
+    }
+    if (select.orderBy) {
+      const order = select.orderBy;
+      rows = [...rows].sort((a, b) => compareForSort(a[order.column], b[order.column], order.dir));
+    }
+
+    return rows.map((row) => {
+      const out: Record<string, unknown> = {};
+      select.items.forEach((item) => {
+        out[item.alias] = row[item.column];
+      });
+      return out as T;
+    });
+  }
+
+  private table(name: string): Row[] {
+    let rows = this.tables.get(name);
+    if (!rows) {
+      rows = [];
+      this.tables.set(name, rows);
+    }
+    return rows;
+  }
+
+  private nextId(table: string): number {
+    const next = (this.idCounters.get(table) ?? 0) + 1;
+    this.idCounters.set(table, next);
+    return next;
+  }
+}
+
+/** One recorded operation: the SQL string and the bound params, in call order. */
+export interface DbOperation {
+  readonly sql: string;
+  readonly params: readonly unknown[];
+}
+
+type Row = Record<string, unknown>;
+
+interface ParsedInsert {
+  readonly table: string;
+  readonly columns: readonly string[];
+}
+
+interface SelectItem {
+  readonly column: string;
+  readonly alias: string;
+}
+
+interface ParsedSelect {
+  readonly items: readonly SelectItem[];
+  readonly table: string;
+  readonly where?: { readonly column: string; readonly param: number };
+  readonly orderBy?: { readonly column: string; readonly dir: 'ASC' | 'DESC' };
+}
+
+/** Parse `INSERT INTO <table> (c1, c2, ...) VALUES (...)`. Returns the columns. */
+function parseInsert(sql: string): ParsedInsert | undefined {
+  const match = /^INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/i.exec(sql);
+  const table = match?.[1];
+  const columns = match?.[2];
+  if (!table || columns === undefined) return undefined;
+  return { table, columns: columns.split(',').map((column) => column.trim()) };
+}
+
+/** Parse `SELECT <list> FROM <table> [WHERE col = $N] [ORDER BY col ASC|DESC]`. */
+function parseSelect(sql: string): ParsedSelect | undefined {
+  const match =
+    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+))?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
+      sql,
+    );
+  const list = match?.[1];
+  const table = match?.[2];
+  if (!list || !table) return undefined;
+
+  const items: SelectItem[] = list.split(',').map((part) => {
+    const aliased = /^\s*(\w+)\s+AS\s+"([^"]+)"\s*$/i.exec(part);
+    if (aliased) {
+      const column = aliased[1];
+      const alias = aliased[2];
+      if (column && alias) return { column, alias };
+    }
+    const column = part.trim();
+    return { column, alias: column };
+  });
+
+  const whereColumn = match?.[3];
+  const whereParam = match?.[4];
+  const where =
+    whereColumn && whereParam ? { column: whereColumn, param: Number(whereParam) } : undefined;
+
+  const orderColumn = match?.[5];
+  const orderDir = match?.[6];
+  const orderBy =
+    orderColumn && orderDir
+      ? { column: orderColumn, dir: orderDir.toUpperCase() as 'ASC' | 'DESC' }
+      : undefined;
+
+  return { items, table, where, orderBy };
+}
+
+/** Compare two (numeric) row values for ORDER BY; non-numbers sort as 0. */
+function compareForSort(a: unknown, b: unknown, dir: 'ASC' | 'DESC'): number {
+  const left = typeof a === 'number' ? a : 0;
+  const right = typeof b === 'number' ? b : 0;
+  return dir === 'ASC' ? left - right : right - left;
+}
