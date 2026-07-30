@@ -93,3 +93,28 @@ outstanding ports/trust handoff remains for this contract. [INF] [ADR-0002]
 - GIVEN any claim, inferred candidate, or hypotheses H1–H6
 - WHEN inspected or the resolved contract is reviewed
 - THEN claims MUST be labeled, inferred candidates MUST NOT be finalized without design/ADR, H1–H3 MUST be ignored as pure design, and H4/H5/H6 MUST be treated as resolved by `io-ports-trust-contract`
+
+### Requirement: Transitional Package Boundary
+
+`packages/trust-kernel/` is a transitional package that concentrates the minimum
+in-memory authority-evaluation behavior before canonical package extraction. It
+MUST NOT be classified as a 31st canonical package and MUST NOT alter the
+8+12+10=30 partition defined in "Primary-Responsibility Classification." Its
+domain logic (identity, risk classification, authority, SOD, evidence, receipts,
+audit) MUST be extracted into the canonical packages `organization/`, `policy/`,
+`approvals/`, `evidence/`, `receipts/`, and `audit/` at a later increment
+(persistence/first-vertical); the extraction target MUST be recorded and
+re-validated under package change pressure. While transitional, it MUST remain a
+pure in-memory, persistence-free, adapter-free module. [INF]
+
+#### Scenario: Not a canonical package
+
+- GIVEN `packages/trust-kernel/`
+- WHEN the 30-package classification is inspected
+- THEN it MUST be excluded from the canonical partition and documented as transitional
+
+#### Scenario: Extraction target recorded
+
+- GIVEN the transitional package
+- WHEN reviewed
+- THEN the planned extraction into `organization/`, `policy/`, `approvals/`, `evidence/`, `receipts/`, `audit/` MUST be documented and re-validated under change pressure
