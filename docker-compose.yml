@@ -1,0 +1,24 @@
+# Formalizes the dev PostgreSQL for @io/database (design §docker-compose). PG 18.4,
+# io/io_dev/io_dev on 5432. The volume binds the repo-local .pgdata so a developer
+# gets a reproducible instance via `docker compose up -d`. The integration test
+# (Slice 3) connects to this instance over TCP via PgDbConnection — no subprocess
+# in test code (D3).
+services:
+  postgres:
+    image: postgres:18.4
+    container_name: io-postgres
+    environment:
+      POSTGRES_USER: io
+      POSTGRES_PASSWORD: io_dev
+      POSTGRES_DB: io_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      # Mount to the parent so default PGDATA (/var/lib/postgresql/data) initialises
+      # a clean cluster without clobbering the existing .pgdata/18/docker layout.
+      - ./.pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U io -d io_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

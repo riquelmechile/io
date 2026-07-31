@@ -12,11 +12,12 @@ const srcDir = join(pkgRoot, 'src');
 const repoRoot = join(pkgRoot, '..', '..');
 
 /**
- * Boundary & exclusion guards for the database package (Req 5, scenario 2). The
- * package is a driver-free, framework-free adapter slice: no `pg` import, no real
- * PostgreSQL connection, no migrations, `integration: false`, zero runtime deps,
- * and TYPE-ONLY coupling to @io/trust-kernel. It stays excluded from the
- * 8+12+10=30 canonical partition.
+ * Boundary & exclusion guards for the database package (Req 5; Honest Disclosure
+ * & Live-PG Slice). The package now ships ONE allowed runtime dependency (`pg`),
+ * confined to `src/pg-connection.ts` (D4): everywhere else stays driver-free and
+ * framework-free. `pg` opens a `pg.Pool` ONLY in pg-connection.ts. There is still
+ * no migration runner and `integration: false` (flipped in Slice 3). Coupling to
+ * @io/trust-kernel stays TYPE-ONLY. Excluded from the 8+12+10=30 canonical partition.
  */
 const forbiddenSpecifiers: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   {
@@ -40,6 +41,9 @@ const forbiddenSpecifiers: ReadonlyArray<{ label: string; pattern: RegExp }> = [
 
 /** Tokens that would indicate a REAL PostgreSQL connection was opened. */
 const realPgTokens = ['new Client', 'new Pool', '.connect(', 'postgres('];
+
+/** The single src file permitted to import `pg` and own a Pool (D4/D6). */
+const pgDriverOwner = join(srcDir, 'pg-connection.ts');
 
 function listTsFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -74,14 +78,16 @@ function kernelValueImports(source: string): string[] {
 }
 
 describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
-  describe('package.json — zero runtime deps; type-only kernel coupling (D4)', () => {
+  describe('package.json — pg is the single allowed runtime dep; type-only coupling (D4)', () => {
     const pkg = JSON.parse(readFileSync(join(pkgRoot, 'package.json'), 'utf8')) as Record<
       string,
       unknown
     >;
 
-    it('declares zero runtime dependencies', () => {
-      expect(pkg.dependencies ?? {}).toEqual({});
+    it('declares exactly one allowed runtime dependency: pg', () => {
+      // pg is the ONLY runtime dep (D4); it is confined to pg-connection.ts.
+      expect(pkg.dependencies ?? {}).toEqual({ pg: expect.any(String) });
+      expect((pkg.dependencies as Record<string, string>).pg).toMatch(/^\^?8\./);
     });
 
     it('declares zero peer/optional/bundle dependencies', () => {
@@ -90,8 +96,14 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(pkg.bundleDependencies ?? pkg.bundledDependencies ?? {}).toEqual({});
     });
 
-    it('declares @io/trust-kernel only as a devDependency', () => {
-      expect(pkg.devDependencies ?? {}).toEqual({ '@io/trust-kernel': 'workspace:*' });
+    it('declares only the kernel + pg type declarations as devDependencies', () => {
+      // @io/trust-kernel stays a devDependency (type-only coupling, D4). @types/pg
+      // is a TYPE-ONLY devDep because pg 8.x ships no bundled declarations; it
+      // adds NO runtime coupling. No other devDeps.
+      expect(pkg.devDependencies ?? {}).toEqual({
+        '@io/trust-kernel': 'workspace:*',
+        '@types/pg': expect.any(String),
+      });
     });
 
     it('is private strict-ESM', () => {
@@ -100,7 +112,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
     });
   });
 
-  describe('src — no driver/framework/db/daemon/LLM imports (threat: leakage)', () => {
+  describe('src — pg confined to pg-connection.ts; everything else driver-free (D4)', () => {
     const srcFiles = listTsFiles(srcDir);
 
     it('discovers real database src files (scan is non-trivial)', () => {
@@ -115,13 +127,24 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(caught).toEqual(['pg', 'express']);
     });
 
+    it('pg is imported by EXACTLY one src file: pg-connection.ts', () => {
+      const importers = srcFiles
+        .filter((file) =>
+          extractImportSpecifiers(readFileSync(file, 'utf8')).some((spec) => spec === 'pg'),
+        )
+        .map((file) => relative(pkgRoot, file));
+      expect(importers).toEqual(['src/pg-connection.ts']);
+    });
+
     for (const file of srcFiles) {
-      it(`${relative(pkgRoot, file)} imports nothing forbidden`, () => {
-        const violations = extractImportSpecifiers(readFileSync(file, 'utf8')).filter((spec) =>
-          forbiddenSpecifiers.some((rule) => rule.pattern.test(spec)),
-        );
-        expect(violations).toEqual([]);
-      });
+      if (file !== pgDriverOwner) {
+        it(`${relative(pkgRoot, file)} imports nothing forbidden`, () => {
+          const violations = extractImportSpecifiers(readFileSync(file, 'utf8')).filter((spec) =>
+            forbiddenSpecifiers.some((rule) => rule.pattern.test(spec)),
+          );
+          expect(violations).toEqual([]);
+        });
+      }
 
       it(`${relative(pkgRoot, file)} couples to @io/trust-kernel TYPE-ONLY`, () => {
         const valueImports = kernelValueImports(readFileSync(file, 'utf8'));
@@ -129,9 +152,19 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       });
     }
 
-    it('opens no real PostgreSQL connection anywhere in src', () => {
+    it('pg-connection.ts imports only pg + local relative modules (scoped exemption)', () => {
+      const specs = extractImportSpecifiers(readFileSync(pgDriverOwner, 'utf8'));
+      for (const spec of specs) {
+        const isPg = spec === 'pg';
+        const isLocal = spec.startsWith('.') || spec.startsWith('/');
+        expect(isPg || isLocal).toBe(true);
+      }
+    });
+
+    it('opens no real PostgreSQL connection outside pg-connection.ts', () => {
       const present: string[] = [];
       for (const file of srcFiles) {
+        if (file === pgDriverOwner) continue; // exempt: it owns the pool (D6)
         const code = stripComments(readFileSync(file, 'utf8'));
         for (const token of realPgTokens) {
           if (code.includes(token)) present.push(`${relative(pkgRoot, file)}: ${token}`);
@@ -139,24 +172,74 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       }
       expect(present).toEqual([]);
     });
+
+    it('pg-connection.ts owns a Pool but opens NO Client / connect()', () => {
+      const code = stripComments(readFileSync(pgDriverOwner, 'utf8'));
+      expect(code).toContain('new Pool');
+      expect(code).not.toMatch(/new\s+Client/);
+      expect(code).not.toMatch(/\.connect\(/);
+    });
   });
 
-  describe('exclusions — no real PG, no migrations, integration disabled', () => {
-    it('has no migration directory or .sql files', () => {
+  describe('exclusions — no migration runner, integration still disabled this slice', () => {
+    it('ships no migration-runner directory', () => {
       const allFiles = existsSync(pkgRoot)
         ? readdirSync(pkgRoot, { recursive: true }).map((e) => e.toString())
         : [];
-      const sqlFiles = allFiles.filter((path) => path.endsWith('.sql'));
       const migrationsDir = allFiles.some(
         (path) => path.startsWith('migrations') || path.includes('migrations/'),
       );
-      expect(sqlFiles).toEqual([]);
       expect(migrationsDir).toBe(false);
     });
 
-    it('openspec/config.yaml keeps integration tests disabled', () => {
+    it('openspec/config.yaml keeps integration tests disabled (Slice 2; flipped in Slice 3)', () => {
       const config = readFileSync(join(repoRoot, 'openspec', 'config.yaml'), 'utf8');
       expect(config).toMatch(/integration:\s*false/);
+    });
+  });
+
+  describe('schema DDL — evidence & audit tables (Req: Database Schema for Evidence and Audit)', () => {
+    function readSql(): string {
+      const path = join(pkgRoot, 'sql', '001_create_tables.sql');
+      return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    }
+
+    it('ships sql/001_create_tables.sql', () => {
+      expect(existsSync(join(pkgRoot, 'sql', '001_create_tables.sql'))).toBe(true);
+    });
+
+    it('creates evidence and audit tables', () => {
+      const sql = readSql();
+      expect(sql).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+evidence/i);
+      expect(sql).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+audit/i);
+    });
+
+    it('evidence and audit carry an id SERIAL PRIMARY KEY', () => {
+      expect(readSql()).toMatch(/id\s+SERIAL\s+PRIMARY\s+KEY/i);
+    });
+
+    it('covers every PersistentRecord column with $N-compatible types', () => {
+      const sql = readSql();
+      for (const column of [
+        'action_id',
+        'principal_id',
+        'risk_class',
+        'decision',
+        'reason',
+        'timestamp',
+        'persistent',
+        'disclosure',
+      ]) {
+        expect(sql).toContain(column);
+      }
+      expect(sql).toMatch(/timestamp\s+BIGINT/i);
+      expect(sql).toMatch(/persistent\s+BOOLEAN/i);
+    });
+
+    it('indexes evidence(action_id) as idx_evidence_action_id', () => {
+      expect(readSql()).toMatch(
+        /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_evidence_action_id\s+ON\s+evidence\s*\(\s*action_id\s*\)/i,
+      );
     });
   });
 
@@ -171,12 +254,18 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
   });
 
   describe('public surface — structural assertions (no extra prod code)', () => {
-    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository', () => {
+    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository, PgDbConnection', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
       expect(databaseApi.PgAuditRepository).toBeTypeOf('function');
+      expect(databaseApi.PgDbConnection).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
-        ['PERSISTENT_PORT_DISCLOSURE', 'PgAuditRepository', 'PgEvidenceRepository'].sort(),
+        [
+          'PERSISTENT_PORT_DISCLOSURE',
+          'PgAuditRepository',
+          'PgDbConnection',
+          'PgEvidenceRepository',
+        ].sort(),
       );
     });
   });

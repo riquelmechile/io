@@ -41,15 +41,15 @@ Threat matrix: N/A (no routing/shell/subprocess/VCS/exec classification — desi
 
 ## Phase 2 — Slice 2: PgDbConnection, pg Dep, Schema, Boundary Allowlist
 
-- [ ] 2.1 RED — new `test/pg-connection.test.ts`: implements async DbConnection; lazy pool (no Pool at construct); execute/query delegate to `pool.query`; `close()` ends pool, NOT on port; errors propagate. Mocked `pg.Pool`, no real PG. [spec db-connection-port/PgDbConnection; D2/D6]
-- [ ] 2.2 GREEN — `package.json`: `dependencies: { pg }` (pin v8.x, types included). [D4 — pg ONLY in @io/database]
-- [ ] 2.3 GREEN — new `src/pg-connection.ts`: `PgDbConnection` (lazy `getPool()`) + `pgConnectionString()` (DATABASE_URL env-default). Per design code block.
-- [ ] 2.4 GREEN — `src/index.ts`: export `PgDbConnection` (public surface).
-- [ ] 2.5 RED — assert `sql/001_create_tables.sql` exists with evidence+audit columns + `idx_evidence_action_id`. [spec db-connection-port/Schema]
-- [ ] 2.6 GREEN — new `sql/001_create_tables.sql`: evidence + audit tables (8 cols + SERIAL id) + index (design DDL verbatim, D7).
-- [ ] 2.7 RED/GREEN — `test/boundary.test.ts`: dependencies→allowlist `{pg}`; exempt `src/pg-connection.ts` from forbidden-import + realPgTokens; assert sql file exists; public surface adds PgDbConnection. (config `integration:false` assertion STAYS this slice.)
-- [ ] 2.8 — new `docker-compose.yml` (postgres:18.4, io/io_dev, port 5432, healthcheck, .pgdata volume). Design §docker-compose.
-- [ ] 2.9 REFACTOR — `pnpm check` GREEN; `pg` confined to `@io/database`; kernel still driver-free (kernel boundary test unchanged).
+- [x] 2.1 RED — new `test/pg-connection.test.ts`: implements async DbConnection; lazy pool (no Pool at construct); execute/query delegate to `pool.query`; `close()` ends pool, NOT on port; errors propagate. Mocked `pg.Pool`, no real PG. [spec db-connection-port/PgDbConnection; D2/D6]
+- [x] 2.2 GREEN — `package.json`: `dependencies: { pg }` (pin v8.x, types included). [D4 — pg ONLY in @io/database]
+- [x] 2.3 GREEN — new `src/pg-connection.ts`: `PgDbConnection` (lazy `getPool()`) + `pgConnectionString()` (DATABASE_URL env-default). Per design code block.
+- [x] 2.4 GREEN — `src/index.ts`: export `PgDbConnection` (public surface).
+- [x] 2.5 RED — assert `sql/001_create_tables.sql` exists with evidence+audit columns + `idx_evidence_action_id`. [spec db-connection-port/Schema]
+- [x] 2.6 GREEN — new `sql/001_create_tables.sql`: evidence + audit tables (8 cols + SERIAL id) + index (design DDL verbatim, D7).
+- [x] 2.7 RED/GREEN — `test/boundary.test.ts`: dependencies→allowlist `{pg}`; exempt `src/pg-connection.ts` from forbidden-import + realPgTokens; assert sql file exists; public surface adds PgDbConnection. (config `integration:false` assertion STAYS this slice.)
+- [x] 2.8 — new `docker-compose.yml` (postgres:18.4, io/io_dev, port 5432, healthcheck, .pgdata volume). Design §docker-compose.
+- [x] 2.9 REFACTOR — `pnpm check` GREEN; `pg` confined to `@io/database`; kernel still driver-free (kernel boundary test unchanged).
 
 ## Phase 3 — Slice 3: Integration Round-Trip + Config Flip + Final Guard
 
