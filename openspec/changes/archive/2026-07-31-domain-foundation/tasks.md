@@ -70,3 +70,9 @@ Threat matrix: N/A (no routing/shell/subprocess/VCS/exec classification — desi
 - [x] 5.1 RED — `test/business-pg-roundtrip.integration.test.ts`: connect via PgDbConnection; `beforeAll` execute `002` DDL; `beforeEach` TRUNCATE 4 tables RESTART IDENTITY; `afterAll` close(); save→get byte-identical for all 4 types. [business-receipt/Immutable Receipt: persisted; No update path]
 - [x] 5.2 GREEN — implement round-trip; skip/pending when PG unreachable.
 - [x] 5.3 REFACTOR/FINAL — verify all 363 existing tests pass; `pnpm check` + integration GREEN against live PG 18.4.
+
+## Final State (verified 2026-07-31)
+
+- **Completion**: 22/22 tasks complete (all phases green).
+- **Verify**: PASS WITH WARNINGS — verify-report obs #5760 (topic `sdd/domain-foundation/verify-report`). 12/12 requirements, 24/24 scenarios covered (20 COMPLIANT, 4 PARTIAL), 363/363 tests green, 11 live-PG integration tests ran (not skipped), 0 CRITICAL findings.
+- **Archive**: specs synced to `openspec/specs/{company-identity,delegation-lifecycle,work-lifecycle,business-receipt}/spec.md`; change moved to `openspec/changes/archive/2026-07-31-domain-foundation/`.
