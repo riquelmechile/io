@@ -16,8 +16,8 @@ const repoRoot = join(pkgRoot, '..', '..');
  * & Live-PG Slice). The package now ships ONE allowed runtime dependency (`pg`),
  * confined to `src/pg-connection.ts` (D4): everywhere else stays driver-free and
  * framework-free. `pg` opens a `pg.Pool` ONLY in pg-connection.ts. There is still
- * no migration runner and `integration: false` (flipped in Slice 3). Coupling to
- * @io/trust-kernel stays TYPE-ONLY. Excluded from the 8+12+10=30 canonical partition.
+ * no migration runner and `integration: true` (flipped in Slice 3, D8). Coupling
+ * to @io/trust-kernel stays TYPE-ONLY. Excluded from the 8+12+10=30 canonical partition.
  */
 const forbiddenSpecifiers: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   {
@@ -181,7 +181,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
     });
   });
 
-  describe('exclusions — no migration runner, integration still disabled this slice', () => {
+  describe('exclusions — no migration runner; integration enabled (Slice 3)', () => {
     it('ships no migration-runner directory', () => {
       const allFiles = existsSync(pkgRoot)
         ? readdirSync(pkgRoot, { recursive: true }).map((e) => e.toString())
@@ -192,9 +192,9 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(migrationsDir).toBe(false);
     });
 
-    it('openspec/config.yaml keeps integration tests disabled (Slice 2; flipped in Slice 3)', () => {
+    it('openspec/config.yaml enables integration tests (Slice 3; D8)', () => {
       const config = readFileSync(join(repoRoot, 'openspec', 'config.yaml'), 'utf8');
-      expect(config).toMatch(/integration:\s*false/);
+      expect(config).toMatch(/integration:\s*true/);
     });
   });
 

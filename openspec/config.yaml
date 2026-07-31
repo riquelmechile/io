@@ -33,7 +33,7 @@ strict_tdd: true
 testing:
   runner: vitest
   unit: true
-  integration: false
+  integration: true
   e2e: false
   coverage: false
   coverage_threshold: 0
@@ -43,8 +43,10 @@ testing:
   note: |
     Root-only non-product toolchain (TypeScript 6.x strict-ESM on Node 24 LTS).
     Vitest unit harness + Biome format/lint + tsc strict typecheck/no-emit build.
-    strict_tdd enabled after every required+applicable gate passed. Integration,
-    E2E, and coverage remain out of scope (root-only bootstrap); see ADR 0004.
+    strict_tdd enabled after every required+applicable gate passed. Integration
+    tests are enabled for the live-PostgreSQL database adapter slice (real-PG
+    round-trip; skipped when no container is reachable). E2E and coverage remain
+    out of scope (root-only bootstrap); see ADR 0004.
 
 delivery:
   execution_mode: auto

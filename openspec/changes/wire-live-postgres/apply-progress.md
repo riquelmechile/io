@@ -1,8 +1,8 @@
 # Apply Progress: Wire Live PostgreSQL
 
-**Slices**: 1 of 3 (`slice-1-async-port-migration`) ✅ + 2 of 3 (`slice-2-pg-connection-schema`) ✅
+**Slices**: 1 of 3 (`slice-1-async-port-migration`) ✅ + 2 of 3 (`slice-2-pg-connection-schema`) ✅ + 3 of 3 (`slice-3-integration-tests`) ✅
 **Mode**: Strict TDD
-**Overall**: Slices 1–2 complete; Slice 3 (integration round-trip + config flip) NOT started.
+**Overall**: FULL CHANGE complete (Slices 1–3). Ready for verify → review → delivery.
 **Date**: 2026-07-30
 
 ---
@@ -155,13 +155,102 @@ vitest run                → 257 passed (16 files)
 
 ---
 
-# Remaining — Slice 3: Integration Round-Trip + Config Flip (NOT started)
+# Slice 3 — Integration Round-Trip + Config Flip + Final Guard ✅
 
-- **3.1** RED `test/pg-roundtrip.test.ts`: connect via PgDbConnection; beforeAll
-  execute DDL; beforeEach `TRUNCATE evidence, audit RESTART IDENTITY`; afterAll
-  close(); evidence save→get byte-identical; audit append×N→getLog order+immutability.
-- **3.2** GREEN: implement round-trip; skip/pending when PG unreachable (spec MUST).
-- **3.3** RED `boundary.test.ts`: config assertion → `/integration:\s*true/`.
-- **3.4** GREEN `openspec/config.yaml`: `integration: false` → `true` (D8).
-- **3.5** REFACTOR/FINAL: verify deferred items absent (DbSession, migration runner,
-  pool tuning, R1–R17); kernel boundary UNCHANGED; `pnpm check` + integration GREEN.
+**Status**: Complete — `pnpm check` GREEN, 264/264 tests (257 → 264; +7 net, +1 file)
+**Work unit**: `slice-3-integration-tests` — real-PG round-trip integration test + `integration:true` flip + final guard
+
+Added a REAL PostgreSQL round-trip integration test that connects to live PG 18.4
+via `PgDbConnection`, applies the shipped schema, and round-trips a
+`PersistentRecord` through BOTH adapters (evidence save→get; audit append×N
+→getLog), isolated by `TRUNCATE` and SKIPPED when PG is unreachable. Flipped
+`openspec/config.yaml` `integration:false→true` (D8). The integration test
+caught a genuine type-fidelity bug (pg returns BIGINT as a string), fixed in the
+driver owner (`pg-connection.ts`) — exactly the defect an integration test exists
+to surface and the unit fake could never catch.
+
+### Slice 3 Files Changed (4)
+
+| File | Action | What was done |
+|------|--------|---------------|
+| `packages/database/test/pg-roundtrip.integration.test.ts` | Created | 7 integration tests against live PG via `PgDbConnection`: `beforeAll` applies schema DDL (split per-statement); `beforeEach` `TRUNCATE … RESTART IDENTITY`; `afterAll` `close()`; evidence save→get byte-identical (+triangulation + miss→undefined); audit append×N→getLog insertion order + full-record round-trip + prior-log immutability; TRUNCATE isolation. `describe.skipIf(!reachable)` skips the whole suite when PG is unreachable (spec scenario 3). |
+| `packages/database/src/pg-connection.ts` | Modified | Pool `types.getTypeParser` override: parse int8 (OID 20) as a `Number` in the text protocol (timestamp is epoch-millis, always safe-integer) — fixes the BIGINT→string type gap the integration test surfaced. Confined to the driver owner (D4/D6); other OIDs + binary fall through to pg defaults. Imports `types as pgTypes` from `pg` (still the single `pg` specifier). |
+| `packages/database/test/boundary.test.ts` | Modified | Config assertion `/integration:\s*false/` → `/integration:\s*true/`; describe title + header comment updated to "integration enabled (Slice 3, D8)". |
+| `openspec/config.yaml` | Modified | `testing.integration: false → true` (D8); `note` updated to state integration is enabled for the live-PG adapter slice (E2E/coverage still out of scope). |
+
+### Slice 3 TDD Cycle Evidence (Strict TDD)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `test/pg-roundtrip.integration.test.ts` | Integration (live PG) | ✅ 257/257 baseline (full suite) | ✅ `it is not defined` (missing import), then 3 fail: timestamp `BIGINT` returned as **string** (`"1700000000000"` ≠ `1700000000000`) — bug the unit fake could never catch | ✅ after int8→Number pool override: 7/7 pass | ✅ 2nd distinct evidence record (DENY/low/999999) + audit full-record round-trip | ✅ clean |
+| 3.2 | `test/pg-roundtrip.integration.test.ts` | Integration | ✅ | ✅ (same RED) | ✅ skip path verified: `DATABASE_URL=…:9` (dead port) → `7 skipped`, 0 failed | ✅ evidence + audit + isolation scenarios | ✅ clean |
+| 3.3 | `test/boundary.test.ts` | Unit (boundary) | ✅ boundary 32/32 | ✅ 1 fail: `expected config to match /integration:\s*true/` while still `false` | ✅ after config flip | ➖ single assertion | ✅ clean |
+| 3.4 | `openspec/config.yaml` | Config | — | — | ✅ `integration: false → true`; note updated | ➖ single config line | ✅ clean |
+| 3.5 | full suite + manual PG inspection | — | — | — | ✅ deferred items absent; kernel byte-unchanged; schema applied to live DB | — | ✅ `pnpm check` GREEN (264/264) |
+
+RED capture (3.1): `pnpm vitest run pg-roundtrip.integration.test.ts` → first `ReferenceError: it is not defined` (fixed import); then `3 failed | 4 passed` with `expected {...} to deeply equal {...}` diffing `timestamp: "1700000000000"` (received, string) vs `1700000000000` (expected, number).
+RED capture (3.3): `pnpm vitest run boundary.test.ts` → `1 failed | 31 passed`, `expected config to match /integration:\s*true/`.
+Skip-path capture (3.2): `DATABASE_URL="postgresql://io:io_dev@localhost:9/io_dev" pnpm vitest run pg-roundtrip.integration.test.ts` → `7 skipped`, 0 failed.
+
+### Slice 3 Work Unit Evidence
+
+| Evidence | Required value |
+|---|---|
+| Focused test command + result | `pnpm vitest run packages/database/test/pg-roundtrip.integration.test.ts` → **7 passed** (live PG); skip-path → **7 skipped** (dead port). Full `pnpm check` → **264 passed (17 files)**. |
+| Runtime harness command/scenario + result | Live PG 18.4 round-trip via `PgDbConnection`: schema DDL applied in `beforeAll` (verified in DB — `\dt` → evidence+audit; `\d evidence` → id SERIAL PK + 8 cols + `idx_evidence_action_id`); evidence `save→get` byte-identical; audit `append×3→getLog` preserves `['audit-1','audit-2','audit-3']` insertion order; `TRUNCATE … RESTART IDENTITY` isolates each test. |
+| Rollback boundary | Delete `packages/database/test/pg-roundtrip.integration.test.ts`; revert the `types` override in `pg-connection.ts` (one block in `getPool`); revert `boundary.test.ts` assertion to `/integration:\s*false/`; revert `openspec/config.yaml` `integration:true→false`. Kernel untouched; no Slice 1/2 work affected. |
+
+### Slice 3 Deviations from Design
+
+- **Integration test applies the DDL statement-by-statement**, not as one
+  whole-file `execute()`. The design said "runs it through execute() in
+  `beforeAll`"; reading the DDL file whole and calling `execute(ddl, [])` would
+  route through pg's extended-query protocol (`execute` always passes a params
+  array), which rejects multi-statement queries. Splitting on `;`, stripping
+  comments, and executing each statement separately still routes DDL through the
+  `execute()` port — just one statement at a time, with no migration runner.
+- **Pool `types` override added to `pg-connection.ts`** to parse int8 (BIGINT) as
+  a number. The design assumed column mapping via `AS` aliases alone (D7) and
+  flagged "apply-time type work" as an Open Question. Real pg returns BIGINT as a
+  STRING; since `timestamp` is epoch-millis (always safe-integer), parsing int8 as
+  a number at the pool level restores type fidelity WITHOUT a JS mapper in the
+  adapters (keeps D7: adapters still map columns via aliases only; the fix is
+  pool/driver config confined to the driver owner per D4/D6). The boundary test's
+  "pg imported by exactly one src file" + "only pg + local modules" guards still
+  hold (still the single `pg` specifier).
+- **Test file named `pg-roundtrip.integration.test.ts`** (tasks.md said
+  `pg-roundtrip.test.ts`). The `.integration.test.ts` suffix signals the layer
+  and still matches the vitest include glob `packages/**/test/**/*.test.ts`.
+- Everything else matches `design.md` (D8 flip; skip-not-fail on unreachable per
+  spec scenario 3; TRUNCATE isolation; kernel boundary UNCHANGED — git diff empty
+  for `trust-kernel`; deferred items DbSession/migration-runner/pool-tuning/R1–R17
+  confirmed absent).
+
+### Slice 3 Test Counts
+
+- Before: 257 (16 files)
+- After: **264** (17 files) — +7 net (the integration test file). All 257
+  originals still pass; the kernel boundary test is byte-unchanged; the 15
+  Slice-2 `pg-connection` mock tests still pass (the `types` override callback is
+  never invoked by the mock Pool).
+
+### Slice 3 `pnpm check` Result
+
+**GREEN** — all five gates:
+```
+biome format .             → Checked 44 files, No fixes applied
+tsc -p tsconfig.json       → clean
+tsc -p tsconfig.build.json → clean
+biome lint .               → Checked 44 files, No fixes applied
+vitest run                 → 264 passed (17 files)
+```
+
+---
+
+# Change complete — all 3 slices done
+
+- **Slice 1** ✅ async ports + pipeline + fakes + adapters + test awaits
+- **Slice 2** ✅ `PgDbConnection` + `pg` dep + schema DDL + boundary allowlist + docker-compose
+- **Slice 3** ✅ real-PG integration round-trip + `integration:true` + final guard
+
+**Next**: `sdd-verify` → `review` → delivery (chained PR slice 3 of 3, base = PR 2).

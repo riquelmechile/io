@@ -53,8 +53,8 @@ Threat matrix: N/A (no routing/shell/subprocess/VCS/exec classification — desi
 
 ## Phase 3 — Slice 3: Integration Round-Trip + Config Flip + Final Guard
 
-- [ ] 3.1 RED — new `test/pg-roundtrip.test.ts`: connect via PgDbConnection; `beforeAll` execute DDL; `beforeEach` `TRUNCATE evidence, audit RESTART IDENTITY`; `afterAll` close(); evidence save→get byte-identical; audit append×N→getLog insertion order+immutability. [spec db-connection-port/Integration]
-- [ ] 3.2 GREEN — implement round-trip; skip/pending when PG unreachable (spec MUST — see risk note).
-- [ ] 3.3 RED — `test/boundary.test.ts`: config assertion → `/integration:\s*true/`.
-- [ ] 3.4 GREEN — `openspec/config.yaml`: `integration: false` → `true` (D8).
-- [ ] 3.5 REFACTOR/FINAL — verify deferred items absent (DbSession, migration runner, pool tuning, R1–R17); kernel boundary test UNCHANGED (rejects `pg`, ports pass on merit); `pnpm check` + integration GREEN against live PG.
+- [x] 3.1 RED — new `test/pg-roundtrip.test.ts`: connect via PgDbConnection; `beforeAll` execute DDL; `beforeEach` `TRUNCATE evidence, audit RESTART IDENTITY`; `afterAll` close(); evidence save→get byte-identical; audit append×N→getLog insertion order+immutability. [spec db-connection-port/Integration]
+- [x] 3.2 GREEN — implement round-trip; skip/pending when PG unreachable (spec MUST — see risk note).
+- [x] 3.3 RED — `test/boundary.test.ts`: config assertion → `/integration:\s*true/`.
+- [x] 3.4 GREEN — `openspec/config.yaml`: `integration: false` → `true` (D8).
+- [x] 3.5 REFACTOR/FINAL — verify deferred items absent (DbSession, migration runner, pool tuning, R1–R17); kernel boundary test UNCHANGED (rejects `pg`, ports pass on merit); `pnpm check` + integration GREEN against live PG.
