@@ -83,10 +83,13 @@ function stripComments(source: string): string {
 }
 
 describe('DbConnection port interface (Req 1)', () => {
-  describe('synchronous execute and query (scenario 1)', () => {
-    it('execute returns a synchronous value (NOT a Promise)', () => {
-      // `unknown` does not extend Promise<unknown>; an async execute would.
-      expectTypeOf<DbConnection['execute']>().returns.not.toMatchTypeOf<Promise<unknown>>();
+  describe('asynchronous execute and query (scenario 1)', () => {
+    it('execute returns a Promise<unknown> (asynchronous; NOT a synchronous value)', () => {
+      // The real `pg` driver is TCP-based and fundamentally async; a Promise
+      // return is the only honest completion contract.
+      expectTypeOf<DbConnection['execute']>().returns.toMatchTypeOf<Promise<unknown>>();
+      // A sync `unknown` return does NOT satisfy Promise<unknown>.
+      expectTypeOf<DbConnection['execute']>().returns.not.toEqualTypeOf<unknown>();
     });
 
     it('execute accepts a sql string and a readonly params array', () => {
@@ -94,14 +97,14 @@ describe('DbConnection port interface (Req 1)', () => {
       expectTypeOf<DbConnection['execute']>().parameter(1).toEqualTypeOf<readonly unknown[]>();
     });
 
-    it('query returns a synchronous readonly row array (NOT a Promise)', () => {
-      // A sync query<T> is assignable to a sync function returning readonly
-      // rows, and is NOT assignable to one returning a Promise of rows.
+    it('query returns a Promise<readonly row array> (asynchronous; NOT synchronous)', () => {
+      // An async query<T> is assignable to a function returning Promise<rows>,
+      // and is NOT assignable to one returning rows synchronously.
       expectTypeOf<DbConnection['query']>().toMatchTypeOf<
-        (sql: string, params: readonly unknown[]) => readonly DbRow[]
+        (sql: string, params: readonly unknown[]) => Promise<readonly DbRow[]>
       >();
       expectTypeOf<DbConnection['query']>().not.toMatchTypeOf<
-        (sql: string, params: readonly unknown[]) => Promise<readonly DbRow[]>
+        (sql: string, params: readonly unknown[]) => readonly DbRow[]
       >();
     });
 

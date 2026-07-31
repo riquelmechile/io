@@ -1,10 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { AuditEntry, KernelAction, PrincipalId } from '../src/model.js';
 import { NON_PERSISTENT_DISCLOSURE } from '../src/evidence.js';
 import type { Grant } from '../src/grant.js';
 import type { PrincipalIdentity } from '../src/identity.js';
-import { DEFERRED_STEPS, evaluate, type EvaluationInput } from '../src/pipeline.js';
+import {
+  DEFERRED_STEPS,
+  evaluate,
+  type EvaluationInput,
+  type EvaluationResult,
+} from '../src/pipeline.js';
 import { RECEIPT_DISCLOSURE } from '../src/receipt.js';
 import type { RiskThresholds } from '../src/risk.js';
 import type { SodAssignment } from '../src/sod.js';
@@ -82,7 +87,10 @@ function input(overrides: Partial<EvaluationInput> = {}): EvaluationInput {
 
 describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
   describe('fixed 16-step order; classify BEFORE grant (Req 3, Req 5)', () => {
-    const result = evaluate(input());
+    let result: EvaluationResult;
+    beforeAll(async () => {
+      result = await evaluate(input());
+    });
 
     it('runs exactly 16 steps for an allowed evaluation in canonical order', () => {
       expect(result.steps).toHaveLength(16);
@@ -106,16 +114,16 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
   });
 
   describe('classification drives SOD: reserved -> critical -> five-way (Req 3, Req 6)', () => {
-    it('classifies a reserved category as critical and allows with five-way SOD', () => {
-      const result = evaluate(
+    it('classifies a reserved category as critical and allows with five-way SOD', async () => {
+      const result = await evaluate(
         input({ action: action({ category: 'capital' }), sodAssignments: fiveWay }),
       );
       expect(result.risk).toBe('critical');
       expect(result.decision).toBe('ALLOW');
     });
 
-    it('denies critical risk when only four-way SOD is present (missing authorizer)', () => {
-      const result = evaluate(input({ action: action({ category: 'capital' }) }));
+    it('denies critical risk when only four-way SOD is present (missing authorizer)', async () => {
+      const result = await evaluate(input({ action: action({ category: 'capital' }) }));
       expect(result.risk).toBe('critical');
       expect(result.decision).toBe('DENY');
       expect(result.reason).toMatch(/duties|distinct|sod|missing/i);
@@ -123,10 +131,13 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
   });
 
   describe('six deferred steps are documented no-op pass-throughs (Req 5, io-ports)', () => {
-    const result = evaluate(input());
-    const deferred = result.steps.filter((step) => step.deferred);
+    let result: EvaluationResult;
+    beforeAll(async () => {
+      result = await evaluate(input());
+    });
 
     it('has exactly six deferred steps with the canonical names in order', () => {
+      const deferred = result.steps.filter((step) => step.deferred);
       expect(deferred.map((step) => step.name)).toEqual([...DEFERRED_STEPS]);
       expect(deferred).toHaveLength(6);
     });
@@ -182,17 +193,20 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
       ],
       ['expiry', input({ grants: [grant({ expiry: 1200 })] }), /expir|revoke|active/i, 12],
       ['action-scope', input({ grants: [grant({ command: 'purge' })] }), /command|scope/i, 14],
-    ])('denies at %s and terminates there', (_gate, evaluationInput, reasonPattern, stepId) => {
-      const result = evaluate(evaluationInput);
-      expect(result.decision).toBe('DENY');
-      expect(result.reason).toMatch(reasonPattern);
-      const failed = result.steps[result.steps.length - 1];
-      expect(failed?.id).toBe(stepId);
-      expect(failed?.decision).toBe('DENY');
-    });
+    ])(
+      'denies at %s and terminates there',
+      async (_gate, evaluationInput, reasonPattern, stepId) => {
+        const result = await evaluate(evaluationInput);
+        expect(result.decision).toBe('DENY');
+        expect(result.reason).toMatch(reasonPattern);
+        const failed = result.steps[result.steps.length - 1];
+        expect(failed?.id).toBe(stepId);
+        expect(failed?.decision).toBe('DENY');
+      },
+    );
 
-    it('treats a revoked grant as a terminal DENY at expiry', () => {
-      const result = evaluate(input({ grants: [grant({ revoked: true })] }));
+    it('treats a revoked grant as a terminal DENY at expiry', async () => {
+      const result = await evaluate(input({ grants: [grant({ revoked: true })] }));
       expect(result.decision).toBe('DENY');
       expect(result.steps[result.steps.length - 1]?.id).toBe(12);
     });
@@ -200,7 +214,10 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
 
   describe('allow produces decision, evidence, audit, and receipt (Req 7, Req 8)', () => {
     const prior = [priorEntry()];
-    const result = evaluate(input({ priorAuditLog: prior }));
+    let result: EvaluationResult;
+    beforeAll(async () => {
+      result = await evaluate(input({ priorAuditLog: prior }));
+    });
 
     it('decides ALLOW', () => {
       expect(result.decision).toBe('ALLOW');
@@ -229,8 +246,8 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
       expect(result.receipt?.riskClass).toBe('medium');
     });
 
-    it('selects the matching command grant when an earlier grant for the principal differs', () => {
-      const result = evaluate(
+    it('selects the matching command grant when an earlier grant for the principal differs', async () => {
+      const result = await evaluate(
         input({
           grants: [
             grant({ grantId: 'wrong-command', command: 'purge', authority: 'op:purge' }),
@@ -244,7 +261,10 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
   });
 
   describe('deny appends one audit entry and issues no receipt (Req 7, Req 8)', () => {
-    const result = evaluate(input({ grants: [] }));
+    let result: EvaluationResult;
+    beforeAll(async () => {
+      result = await evaluate(input({ grants: [] }));
+    });
 
     it('decides DENY', () => {
       expect(result.decision).toBe('DENY');
@@ -267,16 +287,16 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
   });
 
   describe('pipeline holds no surviving state (Req 1)', () => {
-    it('does not mutate the prior audit log', () => {
+    it('does not mutate the prior audit log', async () => {
       const prior = [priorEntry()];
-      evaluate(input({ priorAuditLog: prior }));
+      await evaluate(input({ priorAuditLog: prior }));
       expect(prior).toHaveLength(1);
     });
 
-    it('repeated evaluations from the same prior log stay independent', () => {
+    it('repeated evaluations from the same prior log stay independent', async () => {
       const prior: AuditEntry[] = [];
-      const a = evaluate(input({ priorAuditLog: prior }));
-      const b = evaluate(input({ priorAuditLog: prior }));
+      const a = await evaluate(input({ priorAuditLog: prior }));
+      const b = await evaluate(input({ priorAuditLog: prior }));
       expect(a.auditLog).not.toBe(b.auditLog);
       expect(a.auditLog).toHaveLength(1);
       expect(b.auditLog).toHaveLength(1);

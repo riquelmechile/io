@@ -15,6 +15,9 @@ build/
 .env.*
 !.env.example
 
+# PostgreSQL local data (Docker volume, not repo content)
+.pgdata/
+
 # OS / editor
 .DS_Store
 Thumbs.db

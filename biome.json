@@ -1,5 +1,10 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
   "files": {
     "includes": [
       "src/**/*.ts",
@@ -11,7 +16,9 @@
       "packages/trust-kernel/package.json",
       "packages/database/src/**/*.ts",
       "packages/database/test/**/*.ts",
-      "packages/database/package.json"
+      "packages/database/package.json",
+      "!.pgdata",
+      "!**/.pgdata"
     ]
   },
   "formatter": {

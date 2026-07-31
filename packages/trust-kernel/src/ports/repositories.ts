@@ -33,26 +33,27 @@ export interface PersistenceOutcome {
  * Outbound port for evidence storage (R7). Generic over the record shape `R`
  * (default {@link PersistentRecord}) and a session/transaction context `S`
  * (default `unknown`) so a downstream real adapter can enforce single-aggregate
- * atomicity. {@link save} persists one record and returns an immutable view;
- * {@link get} retrieves a stored record by its action id, or `undefined`.
+ * atomicity. {@link save} persists one record and resolves an immutable view;
+ * {@link get} retrieves a stored record by its action id, or `undefined`. Both
+ * are ASYNC (D1): a real adapter is I/O-bound, so completion is a `Promise`.
  *
  * MUST NOT import any database driver, ORM, or framework (D3/D4).
  */
 export interface EvidenceRepository<R = PersistentRecord, S = unknown> {
-  save(record: R, session?: S): Readonly<R>;
-  get(actionId: string): R | undefined;
+  save(record: R, session?: S): Promise<Readonly<R>>;
+  get(actionId: string): Promise<R | undefined>;
 }
 
 /**
  * Outbound port for audit storage (R16). Generic over the record shape `R`
  * (default {@link PersistentRecord}). {@link append} appends one entry to the
- * log, preserves insertion order, and returns a NEW log state; it MUST NOT
- * mutate or drop prior entries. {@link getLog} returns the log in insertion
- * order.
+ * log, preserves insertion order, and resolves a NEW log state; it MUST NOT
+ * mutate or drop prior entries. {@link getLog} resolves the log in insertion
+ * order. Both are ASYNC (D1).
  *
  * MUST NOT import any database driver, ORM, or framework (D3/D4).
  */
 export interface AuditRepository<R = PersistentRecord> {
-  append(record: R): readonly R[];
-  getLog(): readonly R[];
+  append(record: R): Promise<readonly R[]>;
+  getLog(): Promise<readonly R[]>;
 }

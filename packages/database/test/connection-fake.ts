@@ -3,14 +3,16 @@ import { PERSISTENT_PORT_DISCLOSURE } from '../src/disclosure.js';
 
 /**
  * In-memory test double for {@link DbConnection} (Req 4). Map/array-backed,
- * fully synchronous, NO database/network/daemon/framework. It does TWO jobs:
+ * NO database/network/daemon/framework. It does TWO jobs:
  *
  * 1. Records EVERY `execute`/`query` call as `{ sql, params }` in call order, so
  *    adapter tests can assert the exact PG-shaped SQL and `$N` param order.
  * 2. Stores rows written by `execute` (INSERT) so `query` (SELECT) round-trips
- *    them synchronously — letting save->get round-trip tests run without PG.
+ *    them — letting save->get round-trip tests run without PG.
  *
- * It parses only the minimal PG-shaped SQL the adapters emit (INSERT ... VALUES
+ * Methods return `Promise` (matching the async port contract, D1) while using
+ * in-memory structures only — no network, no real I/O, instant resolution. It
+ * parses only the minimal PG-shaped SQL the adapters emit (INSERT ... VALUES
  * ($1,..) and SELECT ... AS "x" ... [WHERE col = $N] [ORDER BY col ASC|DESC]).
  * It is NOT durable and NOT real PostgreSQL (scenario 2): it honestly carries
  * {@link PERSISTENT_PORT_DISCLOSURE}.
@@ -28,7 +30,7 @@ export class InMemoryDbConnection implements DbConnection {
     return this._operations;
   }
 
-  execute(sql: string, params: readonly unknown[]): unknown {
+  async execute(sql: string, params: readonly unknown[]): Promise<unknown> {
     this._operations.push({ sql, params });
     const insert = parseInsert(sql);
     if (insert) {
@@ -42,7 +44,7 @@ export class InMemoryDbConnection implements DbConnection {
     return undefined;
   }
 
-  query<T>(sql: string, params: readonly unknown[]): readonly T[] {
+  async query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> {
     this._operations.push({ sql, params });
     const select = parseSelect(sql);
     if (!select) return [];

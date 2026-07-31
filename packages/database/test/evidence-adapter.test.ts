@@ -36,10 +36,10 @@ function lastSql(db: InMemoryDbConnection, prefix: string) {
 
 describe('PgEvidenceRepository (Req 2, R7)', () => {
   describe('save() builds a parameterized INSERT (threat: SQL shape)', () => {
-    it('emits a single INSERT INTO evidence with $1..$8 in record-field order', () => {
+    it('emits a single INSERT INTO evidence with $1..$8 in record-field order', async () => {
       const db = new InMemoryDbConnection();
       const r = new PgEvidenceRepository(db);
-      r.save(record);
+      await r.save(record);
 
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       expect(inserts).toHaveLength(1);
@@ -58,24 +58,24 @@ describe('PgEvidenceRepository (Req 2, R7)', () => {
       ]);
     });
 
-    it('save() returns an immutable view of the routed record', () => {
-      expect(repo().save(record)).toEqual(record);
+    it('save() returns an immutable view of the routed record', async () => {
+      expect(await repo().save(record)).toEqual(record);
     });
 
-    it('does not read or depend on execute() return value (D2)', () => {
+    it('does not read or depend on execute() return value (D2)', async () => {
       // A connection whose execute returns undefined still round-trips via query.
       const r = repo();
-      r.save(record);
-      expect(r.get(record.actionId)).toEqual(record);
+      await r.save(record);
+      expect(await r.get(record.actionId)).toEqual(record);
     });
   });
 
   describe('get() builds an aliased SELECT and round-trips (threat: type confusion)', () => {
-    it('emits SELECT ... AS "actionId" ... WHERE action_id = $1', () => {
+    it('emits SELECT ... AS "actionId" ... WHERE action_id = $1', async () => {
       const db = new InMemoryDbConnection();
       const r = new PgEvidenceRepository(db);
-      r.save(record);
-      r.get(record.actionId);
+      await r.save(record);
+      await r.get(record.actionId);
 
       const select = lastSql(db, 'SELECT');
       expect(select?.sql).toBe(
@@ -84,10 +84,10 @@ describe('PgEvidenceRepository (Req 2, R7)', () => {
       expect(select?.params).toEqual([record.actionId]);
     });
 
-    it('round-trips the record identically, preserving persistent: true', () => {
+    it('round-trips the record identically, preserving persistent: true', async () => {
       const r = repo();
-      r.save(record);
-      const got = r.get(record.actionId);
+      await r.save(record);
+      const got = await r.get(record.actionId);
 
       expect(got).toEqual(record);
       expect(got?.persistent).toBe(true);
@@ -95,8 +95,8 @@ describe('PgEvidenceRepository (Req 2, R7)', () => {
       expect(got?.decision).toBe('ALLOW');
     });
 
-    it('returns undefined for an unknown action id', () => {
-      expect(repo().get('does-not-exist')).toBeUndefined();
+    it('returns undefined for an unknown action id', async () => {
+      expect(await repo().get('does-not-exist')).toBeUndefined();
     });
   });
 

@@ -37,11 +37,11 @@ function lastSql(db: InMemoryDbConnection, prefix: string) {
 
 describe('PgAuditRepository (Req 3, R16)', () => {
   describe('append()/getLog() build parameterized SQL (threat: SQL shape)', () => {
-    it('append() emits an INSERT INTO audit with $1..$8 in record-field order', () => {
+    it('append() emits an INSERT INTO audit with $1..$8 in record-field order', async () => {
       const db = new InMemoryDbConnection();
       const r = new PgAuditRepository(db);
       const record = entry('action-1', 'one');
-      r.append(record);
+      await r.append(record);
 
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       expect(inserts).toHaveLength(1);
@@ -60,10 +60,10 @@ describe('PgAuditRepository (Req 3, R16)', () => {
       ]);
     });
 
-    it('getLog() emits SELECT ... FROM audit ORDER BY id ASC', () => {
+    it('getLog() emits SELECT ... FROM audit ORDER BY id ASC', async () => {
       const db = new InMemoryDbConnection();
       const r = new PgAuditRepository(db);
-      r.append(entry('action-1', 'one'));
+      await r.append(entry('action-1', 'one'));
 
       const select = lastSql(db, 'SELECT');
       expect(select?.sql).toBe(
@@ -73,30 +73,34 @@ describe('PgAuditRepository (Req 3, R16)', () => {
   });
 
   describe('getLog() preserves insertion order immutably (Req 3 scenario)', () => {
-    it('returns entries in insertion order (prior entries first)', () => {
+    it('returns entries in insertion order (prior entries first)', async () => {
       const r = repo();
-      r.append(entry('action-1', 'one'));
-      r.append(entry('action-2', 'two'));
-      r.append(entry('action-3', 'three'));
+      await r.append(entry('action-1', 'one'));
+      await r.append(entry('action-2', 'two'));
+      await r.append(entry('action-3', 'three'));
 
-      expect(r.getLog().map((e) => e.actionId)).toEqual(['action-1', 'action-2', 'action-3']);
+      expect((await r.getLog()).map((e) => e.actionId)).toEqual([
+        'action-1',
+        'action-2',
+        'action-3',
+      ]);
     });
 
-    it('does not drop or reorder earlier entries on later appends', () => {
+    it('does not drop or reorder earlier entries on later appends', async () => {
       const r = repo();
-      r.append(entry('action-1', 'one'));
-      r.append(entry('action-2', 'two'));
-      r.append(entry('action-3', 'three'));
+      await r.append(entry('action-1', 'one'));
+      await r.append(entry('action-2', 'two'));
+      await r.append(entry('action-3', 'three'));
 
-      expect(r.getLog().map((e) => e.reason)).toEqual(['one', 'two', 'three']);
+      expect((await r.getLog()).map((e) => e.reason)).toEqual(['one', 'two', 'three']);
     });
 
-    it('a prior log reference is not mutated by a later append', () => {
+    it('a prior log reference is not mutated by a later append', async () => {
       const r = repo();
-      r.append(entry('action-1', 'one'));
-      const firstLog = r.getLog();
-      r.append(entry('action-2', 'two'));
-      const secondLog = r.getLog();
+      await r.append(entry('action-1', 'one'));
+      const firstLog = await r.getLog();
+      await r.append(entry('action-2', 'two'));
+      const secondLog = await r.getLog();
 
       expect(firstLog).toHaveLength(1);
       expect(firstLog.map((e) => e.actionId)).toEqual(['action-1']);
@@ -104,10 +108,10 @@ describe('PgAuditRepository (Req 3, R16)', () => {
       expect(secondLog.map((e) => e.actionId)).toEqual(['action-1', 'action-2']);
     });
 
-    it('append() returns the full log including the appended entry', () => {
+    it('append() returns the full log including the appended entry', async () => {
       const r = repo();
-      const log1 = r.append(entry('action-1', 'one'));
-      const log2 = r.append(entry('action-2', 'two'));
+      const log1 = await r.append(entry('action-1', 'one'));
+      const log2 = await r.append(entry('action-2', 'two'));
 
       expect(log1).toHaveLength(1);
       expect(log2).toHaveLength(2);

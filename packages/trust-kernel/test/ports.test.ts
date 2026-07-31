@@ -94,46 +94,56 @@ const fakesPath = join(here, '..', 'src', 'ports', 'fakes.ts');
 
 describe('Repository port interfaces (Req 1, 2, 6)', () => {
   describe('EvidenceRepository<R, S = unknown>', () => {
-    it('save -> get round-trips the same record (port contract)', () => {
+    it('save -> get round-trips the same record (port contract)', async () => {
+      // Port contract (D1): save/get are ASYNC, returning Promise<...>.
+      expectTypeOf<EvidenceRepository['save']>().returns.toMatchTypeOf<
+        Promise<Readonly<PersistentRecord>>
+      >();
+      expectTypeOf<EvidenceRepository['get']>().returns.toMatchTypeOf<
+        Promise<PersistentRecord | undefined>
+      >();
       const store = new Map<string, PersistentRecord>();
       const repo: EvidenceRepository = {
-        save: (record) => {
+        save: async (record) => {
           store.set(record.actionId, record);
           return record;
         },
-        get: (actionId) => store.get(actionId),
+        get: async (actionId) => store.get(actionId),
       };
       const record = persistentFixture();
-      const saved = repo.save(record);
+      const saved = await repo.save(record);
 
       expect(saved).toEqual(record);
-      expect(repo.get(record.actionId)).toEqual(record);
+      expect(await repo.get(record.actionId)).toEqual(record);
     });
 
-    it('get returns undefined for an unknown actionId', () => {
-      const repo: EvidenceRepository = { save: (record) => record, get: () => undefined };
+    it('get returns undefined for an unknown actionId', async () => {
+      const repo: EvidenceRepository = {
+        save: async (record) => record,
+        get: async () => undefined,
+      };
 
-      expect(repo.get('missing')).toBeUndefined();
+      expect(await repo.get('missing')).toBeUndefined();
     });
 
-    it('accepts a generic session/transaction context (default unknown, R7)', () => {
+    it('accepts a generic session/transaction context (default unknown, R7)', async () => {
       type DbSession = { readonly tx: string };
       const observed: DbSession[] = [];
       const repo: EvidenceRepository<PersistentRecord, DbSession> = {
-        save: (record, session) => {
+        save: async (record, session) => {
           if (session) observed.push(session);
           return record;
         },
-        get: () => undefined,
+        get: async () => undefined,
       };
       const session: DbSession = { tx: 'tx-1' };
 
       // A typed session is accepted by the port and observable through it.
-      repo.save(persistentFixture(), session);
+      await repo.save(persistentFixture(), session);
       expect(observed).toEqual([session]);
 
       // The session param is OPTIONAL: omitting it still type-checks.
-      repo.save(persistentFixture());
+      await repo.save(persistentFixture());
       expect(observed).toHaveLength(1);
 
       // The default S = unknown specialization is a valid EvidenceRepository.
@@ -143,44 +153,53 @@ describe('Repository port interfaces (Req 1, 2, 6)', () => {
   });
 
   describe('AuditRepository<R>', () => {
-    it('append preserves insertion order', () => {
+    it('append preserves insertion order', async () => {
+      // Port contract (D1): append/getLog are ASYNC, returning Promise<...>.
+      expectTypeOf<AuditRepository['append']>().returns.toMatchTypeOf<
+        Promise<readonly PersistentRecord[]>
+      >();
+      expectTypeOf<AuditRepository['getLog']>().returns.toMatchTypeOf<
+        Promise<readonly PersistentRecord[]>
+      >();
       let log: readonly PersistentRecord[] = [];
       const repo: AuditRepository = {
-        append: (record) => {
+        append: async (record) => {
           log = [...log, record];
           return log;
         },
-        getLog: () => log,
+        getLog: async () => log,
       };
 
-      repo.append(persistentFixture({ actionId: 'a1', reason: 'first' }));
-      const afterSecond = repo.append(persistentFixture({ actionId: 'a2', reason: 'second' }));
+      await repo.append(persistentFixture({ actionId: 'a1', reason: 'first' }));
+      const afterSecond = await repo.append(
+        persistentFixture({ actionId: 'a2', reason: 'second' }),
+      );
 
       expect(afterSecond).toHaveLength(2);
       expect(afterSecond[0]?.actionId).toBe('a1');
       expect(afterSecond[1]?.actionId).toBe('a2');
     });
 
-    it('append returns a NEW state; the prior log reference is unmutated', () => {
+    it('append returns a NEW state; the prior log reference is unmutated', async () => {
       let log: readonly PersistentRecord[] = [];
       const repo: AuditRepository = {
-        append: (record) => {
+        append: async (record) => {
           log = [...log, record];
           return log;
         },
-        getLog: () => log,
+        getLog: async () => log,
       };
 
-      const state1 = repo.append(persistentFixture({ actionId: 'a1' }));
-      const snapshot = repo.getLog();
-      repo.append(persistentFixture({ actionId: 'a2' }));
+      const state1 = await repo.append(persistentFixture({ actionId: 'a1' }));
+      const snapshot = await repo.getLog();
+      await repo.append(persistentFixture({ actionId: 'a2' }));
 
       // The previously returned and snapshotted states are unchanged.
       expect(state1).toHaveLength(1);
       expect(snapshot).toHaveLength(1);
       expect(state1[0]?.actionId).toBe('a1');
       // The current log reflects both entries.
-      expect(repo.getLog()).toHaveLength(2);
+      expect(await repo.getLog()).toHaveLength(2);
     });
   });
 
@@ -214,73 +233,73 @@ describe('Repository port interfaces (Req 1, 2, 6)', () => {
 
 describe('In-memory fake adapters (Req 4, D6)', () => {
   describe('InMemoryEvidenceRepository', () => {
-    it('satisfies EvidenceRepository and store -> read round-trips', () => {
+    it('satisfies EvidenceRepository and store -> read round-trips', async () => {
       const repo = new InMemoryEvidenceRepository();
       const typed: EvidenceRepository = repo;
       const record = persistentFixture({ actionId: 'evidence-1' });
-      const saved = typed.save(record);
+      const saved = await typed.save(record);
 
       expect(saved).toEqual(record);
-      expect(typed.get('evidence-1')).toEqual(record);
+      expect(await typed.get('evidence-1')).toEqual(record);
     });
 
-    it('returns undefined for an unknown actionId', () => {
+    it('returns undefined for an unknown actionId', async () => {
       const repo = new InMemoryEvidenceRepository();
 
-      expect(repo.get('missing')).toBeUndefined();
+      expect(await repo.get('missing')).toBeUndefined();
     });
 
-    it('accepts a session/transaction context (R7) and stores the record', () => {
+    it('accepts a session/transaction context (R7) and stores the record', async () => {
       const repo = new InMemoryEvidenceRepository();
       const record = persistentFixture({ actionId: 'session-action' });
 
-      repo.save(record, { tx: 'tx-9' });
-      expect(repo.get('session-action')).toEqual(record);
+      await repo.save(record, { tx: 'tx-9' });
+      expect(await repo.get('session-action')).toEqual(record);
     });
 
-    it('overwrites a record stored under a repeated actionId', () => {
+    it('overwrites a record stored under a repeated actionId', async () => {
       const repo = new InMemoryEvidenceRepository();
       const first = persistentFixture({ actionId: 'dup', reason: 'first' });
       const second = persistentFixture({ actionId: 'dup', reason: 'second' });
 
-      repo.save(first);
-      repo.save(second);
-      const stored = repo.get('dup');
+      await repo.save(first);
+      await repo.save(second);
+      const stored = await repo.get('dup');
 
       expect(stored?.reason).toBe('second');
     });
   });
 
   describe('InMemoryAuditRepository', () => {
-    it('satisfies AuditRepository and preserves insertion order', () => {
+    it('satisfies AuditRepository and preserves insertion order', async () => {
       const repo = new InMemoryAuditRepository();
       const typed: AuditRepository = repo;
 
-      typed.append(persistentFixture({ actionId: 'a1', reason: 'first' }));
-      const log = typed.append(persistentFixture({ actionId: 'a2', reason: 'second' }));
+      await typed.append(persistentFixture({ actionId: 'a1', reason: 'first' }));
+      const log = await typed.append(persistentFixture({ actionId: 'a2', reason: 'second' }));
 
       expect(log).toHaveLength(2);
       expect(log[0]?.actionId).toBe('a1');
       expect(log[1]?.actionId).toBe('a2');
-      expect(typed.getLog()).toHaveLength(2);
+      expect(await typed.getLog()).toHaveLength(2);
     });
 
-    it('returns a NEW state; the prior log reference is unmutated', () => {
+    it('returns a NEW state; the prior log reference is unmutated', async () => {
       const repo = new InMemoryAuditRepository();
-      const first = repo.append(persistentFixture({ actionId: 'a1' }));
-      const snapshot = repo.getLog();
+      const first = await repo.append(persistentFixture({ actionId: 'a1' }));
+      const snapshot = await repo.getLog();
 
-      repo.append(persistentFixture({ actionId: 'a2' }));
+      await repo.append(persistentFixture({ actionId: 'a2' }));
 
       expect(first).toHaveLength(1);
       expect(snapshot).toHaveLength(1);
-      expect(repo.getLog()).toHaveLength(2);
+      expect(await repo.getLog()).toHaveLength(2);
     });
 
-    it('starts with an empty log', () => {
+    it('starts with an empty log', async () => {
       const repo = new InMemoryAuditRepository();
 
-      expect(repo.getLog()).toEqual([]);
+      expect(await repo.getLog()).toEqual([]);
     });
   });
 
@@ -322,15 +341,15 @@ describe('In-memory fake adapters (Req 4, D6)', () => {
       expect(evidence.disclosure.toLowerCase()).not.toContain('postgresql');
     });
 
-    it('records routed via the fake carry the honest non-durable disclosure', () => {
+    it('records routed via the fake carry the honest non-durable disclosure', async () => {
       const repo = new InMemoryEvidenceRepository();
       const record: PersistentRecord = {
         ...persistentFixture({ actionId: 'honest-1' }),
         disclosure: PERSISTENT_PORT_DISCLOSURE,
       };
 
-      repo.save(record);
-      const stored = repo.get('honest-1');
+      await repo.save(record);
+      const stored = await repo.get('honest-1');
 
       expect(stored?.disclosure).toBe(PERSISTENT_PORT_DISCLOSURE);
       expect(stored?.disclosure.toLowerCase()).not.toContain('postgresql');
@@ -408,22 +427,22 @@ function wireInput(overrides: Partial<EvaluationInput> = {}): EvaluationInput {
 }
 
 describe('Backward-compatible pipeline wiring — no repository (Req 5, D1)', () => {
-  it('produces no persistence field when no repository is injected', () => {
-    const result = evaluate(wireInput());
+  it('produces no persistence field when no repository is injected', async () => {
+    const result = await evaluate(wireInput());
 
     expect(result).not.toHaveProperty('persistence');
   });
 
-  it('keeps evidence and auditLog as InMemoryRecord persistent:false', () => {
-    const result = evaluate(wireInput());
+  it('keeps evidence and auditLog as InMemoryRecord persistent:false', async () => {
+    const result = await evaluate(wireInput());
 
     expect(result.evidence.persistent).toBe(false);
     expect(result.evidence.disclosure).toBe(NON_PERSISTENT_DISCLOSURE);
     expect(result.auditLog.at(-1)?.persistent).toBe(false);
   });
 
-  it('keeps decision, evidence, receipt, and steps identical to the persistence-free kernel', () => {
-    const result = evaluate(wireInput());
+  it('keeps decision, evidence, receipt, and steps identical to the persistence-free kernel', async () => {
+    const result = await evaluate(wireInput());
 
     expect(result.decision).toBe('ALLOW');
     expect(result.reason).toBe('all enforced gates passed');
@@ -442,8 +461,8 @@ describe('Backward-compatible pipeline wiring — no repository (Req 5, D1)', ()
     expect(result.receipt?.terminalState).toBe('ALLOW');
   });
 
-  it('a DENY evaluation also stays byte-identical with no persistence field', () => {
-    const result = evaluate(wireInput({ grants: [] }));
+  it('a DENY evaluation also stays byte-identical with no persistence field', async () => {
+    const result = await evaluate(wireInput({ grants: [] }));
 
     expect(result.decision).toBe('DENY');
     expect(result).not.toHaveProperty('persistence');
@@ -454,8 +473,8 @@ describe('Backward-compatible pipeline wiring — no repository (Req 5, D1)', ()
 });
 
 describe('Pipeline wiring — repositories injected routes through the ports (Req 5, D5)', () => {
-  it('evidence and auditLog STILL carry the captured InMemoryRecord (persistent:false, D5)', () => {
-    const result = evaluate(
+  it('evidence and auditLog STILL carry the captured InMemoryRecord (persistent:false, D5)', async () => {
+    const result = await evaluate(
       wireInput({
         evidenceRepository: new InMemoryEvidenceRepository(),
         auditRepository: new InMemoryAuditRepository(),
@@ -468,8 +487,8 @@ describe('Pipeline wiring — repositories injected routes through the ports (Re
     expect(result.auditLog.at(-1)?.persistent).toBe(false);
   });
 
-  it('persistence.evidenceRecord and auditRecord carry the routed PersistentRecord (persistent:true, D5)', () => {
-    const result = evaluate(
+  it('persistence.evidenceRecord and auditRecord carry the routed PersistentRecord (persistent:true, D5)', async () => {
+    const result = await evaluate(
       wireInput({
         evidenceRepository: new InMemoryEvidenceRepository(),
         auditRepository: new InMemoryAuditRepository(),
@@ -482,66 +501,70 @@ describe('Pipeline wiring — repositories injected routes through the ports (Re
     expect(result.persistence?.evidenceRecord?.disclosure).toBe(PERSISTENT_PORT_DISCLOSURE);
   });
 
-  it('saves the evidence record via the evidence port (R7)', () => {
+  it('saves the evidence record via the evidence port (R7)', async () => {
     const evidenceRepo = new InMemoryEvidenceRepository();
-    evaluate(
+    await evaluate(
       wireInput({
         action: wireAction({ actionId: 'routed-evidence' }),
         evidenceRepository: evidenceRepo,
       }),
     );
 
-    const stored = evidenceRepo.get('routed-evidence');
+    const stored = await evidenceRepo.get('routed-evidence');
     expect(stored).toBeDefined();
     expect(stored?.persistent).toBe(true);
     expect(stored?.decision).toBe('ALLOW');
     expect(stored?.riskClass).toBe('medium');
   });
 
-  it('appends the audit entry via the audit port (R16)', () => {
+  it('appends the audit entry via the audit port (R16)', async () => {
     const auditRepo = new InMemoryAuditRepository();
-    evaluate(
+    await evaluate(
       wireInput({
         action: wireAction({ actionId: 'routed-audit' }),
         auditRepository: auditRepo,
       }),
     );
 
-    expect(auditRepo.getLog()).toHaveLength(1);
-    expect(auditRepo.getLog()[0]?.persistent).toBe(true);
-    expect(auditRepo.getLog()[0]?.actionId).toBe('routed-audit');
+    const log = await auditRepo.getLog();
+    expect(log).toHaveLength(1);
+    expect(log[0]?.persistent).toBe(true);
+    expect(log[0]?.actionId).toBe('routed-audit');
   });
 
-  it('routing never mutates the prior audit log', () => {
+  it('routing never mutates the prior audit log', async () => {
     const prior = [wirePriorEntry()];
     const auditRepo = new InMemoryAuditRepository();
-    evaluate(wireInput({ priorAuditLog: prior, auditRepository: auditRepo }));
+    await evaluate(wireInput({ priorAuditLog: prior, auditRepository: auditRepo }));
 
     // The caller's prior log is untouched; the audit repo received only the one
     // routed entry (it is NOT fed the prior in-memory log).
     expect(prior).toHaveLength(1);
-    expect(auditRepo.getLog()).toHaveLength(1);
-    expect(auditRepo.getLog()[0]?.persistent).toBe(true);
+    const log = await auditRepo.getLog();
+    expect(log).toHaveLength(1);
+    expect(log[0]?.persistent).toBe(true);
   });
 
-  it('routes only evidence when only the evidence repository is present', () => {
-    const result = evaluate(wireInput({ evidenceRepository: new InMemoryEvidenceRepository() }));
+  it('routes only evidence when only the evidence repository is present', async () => {
+    const result = await evaluate(
+      wireInput({ evidenceRepository: new InMemoryEvidenceRepository() }),
+    );
 
     expect(result.persistence?.evidenceRecord).toBeDefined();
     expect(result.persistence?.evidenceRecord?.persistent).toBe(true);
     expect(result.persistence?.auditRecord).toBeUndefined();
   });
 
-  it('routes only audit when only the audit repository is present', () => {
-    const result = evaluate(wireInput({ auditRepository: new InMemoryAuditRepository() }));
+  it('routes only audit when only the audit repository is present', async () => {
+    const result = await evaluate(wireInput({ auditRepository: new InMemoryAuditRepository() }));
 
     expect(result.persistence?.auditRecord).toBeDefined();
     expect(result.persistence?.auditRecord?.persistent).toBe(true);
     expect(result.persistence?.evidenceRecord).toBeUndefined();
   });
 
-  it('the routed PersistentRecord mirrors the captured evidence core fields (D8)', () => {
-    const result = evaluate(
+  it('the routed PersistentRecord mirrors the captured evidence core fields (D8)', async () => {
+    const result = await evaluate(
       wireInput({
         evidenceRepository: new InMemoryEvidenceRepository(),
         auditRepository: new InMemoryAuditRepository(),
@@ -563,10 +586,10 @@ describe('Pipeline wiring — repositories injected routes through the ports (Re
     expect(captured.persistent).toBe(false);
   });
 
-  it('a DENY evaluation also routes through the ports when present (triangulation)', () => {
+  it('a DENY evaluation also routes through the ports when present (triangulation)', async () => {
     const evidenceRepo = new InMemoryEvidenceRepository();
     const auditRepo = new InMemoryAuditRepository();
-    const result = evaluate(
+    const result = await evaluate(
       wireInput({
         grants: [],
         evidenceRepository: evidenceRepo,
@@ -581,8 +604,8 @@ describe('Pipeline wiring — repositories injected routes through the ports (Re
     expect(result.persistence?.evidenceRecord?.persistent).toBe(true);
     expect(result.persistence?.auditRecord?.persistent).toBe(true);
     expect(result.persistence?.evidenceRecord?.decision).toBe('DENY');
-    expect(evidenceRepo.get(result.evidence.actionId)?.persistent).toBe(true);
-    expect(auditRepo.getLog()).toHaveLength(1);
+    expect((await evidenceRepo.get(result.evidence.actionId))?.persistent).toBe(true);
+    expect(await auditRepo.getLog()).toHaveLength(1);
   });
 });
 

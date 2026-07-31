@@ -6,11 +6,12 @@ import { insertPersistentRecord, persistentRecordParams, selectPersistentRecords
 
 /**
  * PostgreSQL-shaped adapter for the audit port (Req 3, R16). Implements the
- * kernel `AuditRepository<PersistentRecord>` over an injected, SYNCHRONOUS
+ * kernel `AuditRepository<PersistentRecord>` over an injected, ASYNC
  * {@link DbConnection}. append() INSERTs one row then returns a FRESH getLog();
  * getLog() builds `SELECT ... FROM audit ORDER BY id ASC`. Because every read
  * reflects the committed store, append preserves insertion order and can never
- * mutate or drop a prior log reference (immutability, Req 3).
+ * mutate or drop a prior log reference (immutability, Req 3). Methods are ASYNC
+ * (D1): they `await` the connection's execute/query.
  *
  * Honest disclosure (D6/Req 5): carries {@link PERSISTENT_PORT_DISCLOSURE}; this
  * slice does NOT satisfy persistent R1-R17.
@@ -23,12 +24,12 @@ export class PgAuditRepository implements AuditRepository<PersistentRecord> {
     this.conn = conn;
   }
 
-  append(record: PersistentRecord): readonly PersistentRecord[] {
-    this.conn.execute(insertPersistentRecord('audit'), persistentRecordParams(record));
+  async append(record: PersistentRecord): Promise<readonly PersistentRecord[]> {
+    await this.conn.execute(insertPersistentRecord('audit'), persistentRecordParams(record));
     return this.getLog();
   }
 
-  getLog(): readonly PersistentRecord[] {
+  async getLog(): Promise<readonly PersistentRecord[]> {
     return this.conn.query<PersistentRecord>(
       selectPersistentRecords('audit', 'ORDER BY id ASC'),
       [],

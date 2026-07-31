@@ -117,8 +117,13 @@ type GateResult = { readonly decision: Decision; readonly reason: string };
  * pass through as documented no-ops. Returns the terminal decision with one
  * captured evidence record, one appended disclosed audit entry, the recorded
  * steps, and (on ALLOW only) an unsigned non-persistent receipt.
+ *
+ * ASYNC (D1): returns `Promise<EvaluationResult>` so the OPTIONAL repository
+ * routing in {@link finalize} can `await` real downstream I/O. The 9
+ * `return finalize(...)` sites need no `await` — returning a `Promise` from an
+ * async function adopts it correctly.
  */
-export function evaluate(input: EvaluationInput): EvaluationResult {
+export async function evaluate(input: EvaluationInput): Promise<EvaluationResult> {
   const steps: StepResult[] = [];
   const ctx: PipelineContext = { risk: 'low', grant: null };
 
@@ -292,15 +297,16 @@ function actionScopeGate(input: EvaluationInput, ctx: PipelineContext): GateResu
  * new immutable audit list; the prior log is never mutated. When OPTIONAL
  * repository ports are injected, routes a durable-capable record through them
  * (Req 5, D1/D5); the no-repo path is byte-identical to the persistence-free
- * kernel.
+ * kernel. ASYNC (D1): `await`s the routed store/append so a real downstream's
+ * completion is honored.
  */
-function finalize(
+async function finalize(
   input: EvaluationInput,
   steps: StepResult[],
   ctx: PipelineContext,
   decision: Decision,
   reason: string,
-): EvaluationResult {
+): Promise<EvaluationResult> {
   const evidenceInput: EvidenceInput = {
     actionId: input.action.actionId,
     principalId: input.principal.principalId,
@@ -334,7 +340,7 @@ function finalize(
   // result carries NO persistence field (byte-identical default path). When a
   // repo IS present, the captured in-memory records stay and a durable-capable
   // PersistentRecord is routed through the port(s).
-  const persistence = routeThroughPorts(input, evidenceInput);
+  const persistence = await routeThroughPorts(input, evidenceInput);
   return persistence === undefined ? base : { ...base, persistence };
 }
 
@@ -363,22 +369,23 @@ function buildPersistentRecord(input: EvidenceInput): PersistentRecord {
  * record and saves it via the evidence port and/or appends it via the audit
  * port. The captured in-memory records in `evidence`/`auditLog` are NEVER
  * replaced; `persistence` carries the routed durable view (D5). Routing never
- * touches the caller's prior audit log.
+ * touches the caller's prior audit log. ASYNC (D1): `await`s the port
+ * store/append operations.
  */
-function routeThroughPorts(
+async function routeThroughPorts(
   input: EvaluationInput,
   evidenceInput: EvidenceInput,
-): PersistenceOutcome | undefined {
+): Promise<PersistenceOutcome | undefined> {
   const { evidenceRepository, auditRepository } = input;
   if (evidenceRepository === undefined && auditRepository === undefined) {
     return undefined;
   }
   const record = buildPersistentRecord(evidenceInput);
   if (evidenceRepository !== undefined) {
-    evidenceRepository.save(record);
+    await evidenceRepository.save(record);
   }
   if (auditRepository !== undefined) {
-    auditRepository.append(record);
+    await auditRepository.append(record);
   }
   return {
     evidenceRecord: evidenceRepository !== undefined ? record : undefined,

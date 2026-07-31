@@ -21,9 +21,10 @@ function withAppended<T>(list: readonly T[], entry: T): readonly T[] {
 
 /**
  * In-memory {@link EvidenceRepository} fake (Req 4, R7). Map-backed; {@link save}
- * stores one record keyed by action id and returns an immutable view; {@link get}
+ * stores one record keyed by action id and resolves an immutable view; {@link get}
  * retrieves it or `undefined`. Accepts the R7 session/transaction context
- * (accepted, not required). No external I/O.
+ * (accepted, not required). Methods return `Promise` (D1 async contract) but
+ * touch only in-memory structures — no external I/O, instant resolution.
  */
 export class InMemoryEvidenceRepository<R extends PersistentRecord = PersistentRecord>
   implements EvidenceRepository<R>
@@ -32,21 +33,22 @@ export class InMemoryEvidenceRepository<R extends PersistentRecord = PersistentR
   /** Honest disclosure: the in-memory adapter is durable-capable but NOT durable. */
   readonly disclosure = PERSISTENT_PORT_DISCLOSURE;
 
-  save(record: R, _session?: unknown): Readonly<R> {
+  async save(record: R, _session?: unknown): Promise<Readonly<R>> {
     this.entries.set(record.actionId, record);
     return record;
   }
 
-  get(actionId: string): R | undefined {
+  async get(actionId: string): Promise<R | undefined> {
     return this.entries.get(actionId);
   }
 }
 
 /**
  * In-memory {@link AuditRepository} fake (Req 4, R16). Array-backed; {@link append}
- * appends one entry preserving insertion order and returns a NEW log state
- * (the prior reference is never mutated); {@link getLog} returns the current log
- * in insertion order. No external I/O.
+ * appends one entry preserving insertion order and resolves a NEW log state
+ * (the prior reference is never mutated); {@link getLog} resolves the current log
+ * in insertion order. Methods return `Promise` (D1 async contract) but touch only
+ * in-memory structures — no external I/O, instant resolution.
  */
 export class InMemoryAuditRepository<R extends PersistentRecord = PersistentRecord>
   implements AuditRepository<R>
@@ -55,12 +57,12 @@ export class InMemoryAuditRepository<R extends PersistentRecord = PersistentReco
   /** Honest disclosure: the in-memory adapter is durable-capable but NOT durable. */
   readonly disclosure = PERSISTENT_PORT_DISCLOSURE;
 
-  append(record: R): readonly R[] {
+  async append(record: R): Promise<readonly R[]> {
     this.log = withAppended(this.log, record);
     return this.log;
   }
 
-  getLog(): readonly R[] {
+  async getLog(): Promise<readonly R[]> {
     return this.log;
   }
 }
