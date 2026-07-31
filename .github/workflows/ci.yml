@@ -15,6 +15,22 @@ jobs:
   check:
     name: Quality gates
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: io
+          POSTGRES_PASSWORD: io_dev
+          POSTGRES_DB: io_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U io -d io_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://io:io_dev@localhost:5432/io_dev
     steps:
       - name: Checkout
         uses: actions/checkout@v4

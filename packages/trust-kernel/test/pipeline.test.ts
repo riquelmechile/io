@@ -191,7 +191,13 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
         /duties|distinct|sod|self/i,
         10,
       ],
-      ['expiry', input({ grants: [grant({ expiry: 1200 })] }), /expir|revoke|active/i, 12],
+      ['expiry', input({ grants: [grant({ expiry: 1200 })] }), /expir|revoke|active|window/i, 12],
+      [
+        'future-start window',
+        input({ grants: [grant({ start: 2000, expiry: 9000 })] }),
+        /window|active|start|expir/i,
+        12,
+      ],
       ['action-scope', input({ grants: [grant({ command: 'purge' })] }), /command|scope/i, 14],
     ])(
       'denies at %s and terminates there',

@@ -3,5 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Transitional pure domain types: Company, Delegation, Work, BusinessReceipt. Not a canonical package."
+  "description": "Transitional pure domain types: Company, Delegation, Work, BusinessReceipt. Not a canonical package.",
+  "devDependencies": {
+    "@io/trust-kernel": "workspace:*"
+  }
 }

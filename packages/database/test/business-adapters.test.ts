@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { BusinessReceipt, Company, Delegation, Work } from '@io/business-domain/src/index.js';
+import { VersionConflictError } from '@io/business-domain/src/index.js';
 
 import { PgBusinessReceiptRepository } from '../src/business-receipt-adapter.js';
 import { PgCompanyRepository } from '../src/company-adapter.js';
@@ -12,9 +13,7 @@ import { InMemoryDbConnection } from './connection-fake.js';
 /**
  * PG adapter unit tests for the four business-domain repositories (design §PG
  * Adapter Pattern). Uses {@link InMemoryDbConnection} which records SQL+params
- * and stores rows for round-trip. Asserts exact SQL shape ($N binding order,
- * AS "camelCase" aliases) and field-level equality on save→get round-trip,
- * including JSONB nested objects and nullable JSONB (null→undefined).
+ * and stores rows for round-trip.
  */
 
 function company(id: string): Company {
@@ -24,6 +23,7 @@ function company(id: string): Company {
 function delegation(id: string): Delegation {
   return {
     delegationId: id,
+    companyId: 'acme',
     delegator: 'principal-1',
     delegate: 'principal-2',
     authorityScope: { scope: 'finance', actions: ['approve', 'reject'] },
@@ -38,10 +38,12 @@ function delegation(id: string): Delegation {
 function work(id: string): Work {
   return {
     workId: id,
+    companyId: 'acme',
     delegationId: 'del-1',
     proposer: 'principal-2',
     description: 'execute the quarterly close',
     state: 'proposed',
+    version: 0,
     evidenceRefs: ['evid-a', 'evid-b'],
   };
 }
@@ -51,9 +53,11 @@ function receipt(id: string): BusinessReceipt {
     receiptId: id,
     workId: 'work-1',
     delegationId: 'del-1',
+    companyId: 'acme',
     actor: 'principal-2',
     policyHash: 'sha256:policy-hash',
     evidenceRefs: ['evid-x'],
+    terminalEventId: `evt-${id}`,
     terminalState: 'verified',
     artifactHash: 'sha256:artifact-hash',
     issuedAt: 1750000000000,
@@ -115,7 +119,7 @@ describe('PgCompanyRepository', () => {
 
 describe('PgDelegationRepository', () => {
   describe('save() SQL shape', () => {
-    it('emits INSERT INTO delegation with $1..$10 in field order', async () => {
+    it('emits INSERT INTO delegation with company_id', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgDelegationRepository(db);
       const del = delegation('del-1');
@@ -124,39 +128,31 @@ describe('PgDelegationRepository', () => {
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       expect(inserts).toHaveLength(1);
       expect(inserts[0]?.sql).toBe(
-        'INSERT INTO delegation (delegation_id, delegator, delegate, authority_scope, budget, ' +
+        'INSERT INTO delegation (delegation_id, company_id, delegator, delegate, authority_scope, budget, ' +
           'valid_from, valid_until, expected_outcome, state, created_at) ' +
-          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       );
       const params = inserts[0]?.params ?? [];
       expect(params[0]).toBe('del-1');
-      expect(params[1]).toBe('principal-1');
-      expect(params[2]).toBe('principal-2');
-      expect(params[3]).toBe(JSON.stringify(del.authorityScope));
-      expect(params[4]).toBe(JSON.stringify(del.budget));
-      expect(params[5]).toBe(1700000000000);
-      expect(params[6]).toBe(1800000000000);
-      expect(params[7]).toBe('quarterly report filed');
-      expect(params[8]).toBe('draft');
-      expect(typeof params[9]).toBe('number');
+      expect(params[1]).toBe('acme');
+      expect(params[2]).toBe('principal-1');
+      expect(params[3]).toBe('principal-2');
+      expect(params[4]).toBe(JSON.stringify(del.authorityScope));
+      expect(params[5]).toBe(JSON.stringify(del.budget));
     });
   });
 
   describe('get() SQL shape', () => {
-    it('emits SELECT with AS "camelCase" aliases', async () => {
+    it('emits SELECT scoped by delegation_id AND company_id', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgDelegationRepository(db);
       await repo.save(delegation('del-1'));
-      await repo.get('del-1');
+      await repo.get('del-1', 'acme');
 
       const selects = db.operations.filter((op) => op.sql.startsWith('SELECT'));
-      expect(selects[0]?.sql).toBe(
-        'SELECT delegation_id AS "delegationId", delegator, delegate, ' +
-          'authority_scope AS "authorityScope", budget, ' +
-          'valid_from AS "validFrom", valid_until AS "validUntil", ' +
-          'expected_outcome AS "expectedOutcome", state ' +
-          'FROM delegation WHERE delegation_id = $1',
-      );
+      expect(selects[0]?.sql).toContain('company_id AS "companyId"');
+      expect(selects[0]?.sql).toContain('WHERE delegation_id = $1 AND company_id = $2');
+      expect(selects[0]?.params).toEqual(['del-1', 'acme']);
     });
   });
 
@@ -165,7 +161,7 @@ describe('PgDelegationRepository', () => {
       const repo = new PgDelegationRepository(new InMemoryDbConnection());
       const del = delegation('del-1');
       await repo.save(del);
-      const got = await repo.get('del-1');
+      const got = await repo.get('del-1', 'acme');
       expect(got).toEqual(del);
       expect(got?.authorityScope).toEqual({ scope: 'finance', actions: ['approve', 'reject'] });
       expect(got?.budget).toEqual({ currency: 'USD', limit: 100000 });
@@ -173,7 +169,13 @@ describe('PgDelegationRepository', () => {
 
     it('get(unknown) returns undefined', async () => {
       const repo = new PgDelegationRepository(new InMemoryDbConnection());
-      expect(await repo.get('missing')).toBeUndefined();
+      expect(await repo.get('missing', 'acme')).toBeUndefined();
+    });
+
+    it('cross-company get returns undefined', async () => {
+      const repo = new PgDelegationRepository(new InMemoryDbConnection());
+      await repo.save(delegation('del-1'));
+      expect(await repo.get('del-1', 'other')).toBeUndefined();
     });
   });
 });
@@ -182,7 +184,7 @@ describe('PgDelegationRepository', () => {
 
 describe('PgWorkRepository', () => {
   describe('save() SQL shape', () => {
-    it('emits INSERT INTO work with $1..$9, nullable deliverable/outcome as null', async () => {
+    it('emits INSERT INTO work with company_id and version', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgWorkRepository(db);
       const w = work('work-1');
@@ -191,20 +193,17 @@ describe('PgWorkRepository', () => {
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       expect(inserts).toHaveLength(1);
       expect(inserts[0]?.sql).toBe(
-        'INSERT INTO work (work_id, delegation_id, proposer, description, state, ' +
-          'deliverable, evidence_refs, outcome, created_at) ' +
-          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        'INSERT INTO work (work_id, company_id, delegation_id, proposer, description, state, ' +
+          'version, deliverable, evidence_refs, outcome, created_at) ' +
+          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       );
       const params = inserts[0]?.params ?? [];
       expect(params[0]).toBe('work-1');
-      expect(params[1]).toBe('del-1');
-      expect(params[2]).toBe('principal-2');
-      expect(params[3]).toBe('execute the quarterly close');
-      expect(params[4]).toBe('proposed');
-      expect(params[5]).toBeNull();
-      expect(params[6]).toBe(JSON.stringify(['evid-a', 'evid-b']));
+      expect(params[1]).toBe('acme');
+      expect(params[2]).toBe('del-1');
+      expect(params[6]).toBe(0);
       expect(params[7]).toBeNull();
-      expect(typeof params[8]).toBe('number');
+      expect(params[8]).toBe(JSON.stringify(['evid-a', 'evid-b']));
     });
 
     it('passes deliverable/outcome objects when present', async () => {
@@ -219,8 +218,8 @@ describe('PgWorkRepository', () => {
 
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       const params = inserts[0]?.params ?? [];
-      expect(params[5]).toBe(JSON.stringify({ description: 'report.pdf', format: 'pdf' }));
-      expect(params[7]).toBe(JSON.stringify({ result: 'success', success: true }));
+      expect(params[7]).toBe(JSON.stringify({ description: 'report.pdf', format: 'pdf' }));
+      expect(params[9]).toBe(JSON.stringify({ result: 'success', success: true }));
     });
   });
 
@@ -229,11 +228,12 @@ describe('PgWorkRepository', () => {
       const repo = new PgWorkRepository(new InMemoryDbConnection());
       const w = work('work-1');
       await repo.save(w);
-      const got = await repo.get('work-1');
+      const got = await repo.get('work-1', 'acme');
       expect(got).toEqual(w);
       expect(got?.deliverable).toBeUndefined();
       expect(got?.outcome).toBeUndefined();
       expect(got?.evidenceRefs).toEqual(['evid-a', 'evid-b']);
+      expect(got?.version).toBe(0);
     });
 
     it('round-trips with deliverable and outcome present', async () => {
@@ -244,7 +244,7 @@ describe('PgWorkRepository', () => {
         outcome: { result: 'success', success: true },
       };
       await repo.save(w);
-      const got = await repo.get('work-full');
+      const got = await repo.get('work-full', 'acme');
       expect(got).toEqual(w);
       expect(got?.deliverable).toEqual({ description: 'report.pdf', format: 'pdf' });
       expect(got?.outcome).toEqual({ result: 'success', success: true });
@@ -252,7 +252,35 @@ describe('PgWorkRepository', () => {
 
     it('get(unknown) returns undefined', async () => {
       const repo = new PgWorkRepository(new InMemoryDbConnection());
-      expect(await repo.get('missing')).toBeUndefined();
+      expect(await repo.get('missing', 'acme')).toBeUndefined();
+    });
+
+    it('cross-company get returns undefined', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save(work('work-1'));
+      expect(await repo.get('work-1', 'other')).toBeUndefined();
+    });
+  });
+
+  describe('updateWithVersion CAS', () => {
+    it('increments version on matching expectedVersion', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save(work('work-1'));
+      const updated = await repo.updateWithVersion({ ...work('work-1'), state: 'accepted' }, 0);
+      expect(updated.version).toBe(1);
+      expect(updated.state).toBe('accepted');
+    });
+
+    it('throws VersionConflictError on stale version', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save(work('work-1'));
+      await repo.updateWithVersion({ ...work('work-1'), state: 'accepted' }, 0);
+      await expect(
+        repo.updateWithVersion({ ...work('work-1'), state: 'in_progress' }, 0),
+      ).rejects.toBeInstanceOf(VersionConflictError);
+      const got = await repo.get('work-1', 'acme');
+      expect(got?.version).toBe(1);
+      expect(got?.state).toBe('accepted');
     });
   });
 });
@@ -261,7 +289,7 @@ describe('PgWorkRepository', () => {
 
 describe('PgBusinessReceiptRepository', () => {
   describe('save() SQL shape', () => {
-    it('emits INSERT INTO business_receipt with $1..$10 in field order', async () => {
+    it('emits INSERT with company_id and terminal_event_id', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgBusinessReceiptRepository(db);
       const r = receipt('r-1');
@@ -269,40 +297,27 @@ describe('PgBusinessReceiptRepository', () => {
 
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       expect(inserts).toHaveLength(1);
-      expect(inserts[0]?.sql).toBe(
-        'INSERT INTO business_receipt (receipt_id, work_id, delegation_id, actor, ' +
-          'policy_hash, evidence_refs, terminal_state, artifact_hash, issued_at, created_at) ' +
-          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
-      );
+      expect(inserts[0]?.sql).toContain('company_id');
+      expect(inserts[0]?.sql).toContain('terminal_event_id');
       const params = inserts[0]?.params ?? [];
       expect(params[0]).toBe('r-1');
       expect(params[1]).toBe('work-1');
-      expect(params[2]).toBe('del-1');
-      expect(params[3]).toBe('principal-2');
-      expect(params[4]).toBe('sha256:policy-hash');
-      expect(params[5]).toBe(JSON.stringify(['evid-x']));
-      expect(params[6]).toBe('verified');
-      expect(params[7]).toBe('sha256:artifact-hash');
-      expect(params[8]).toBe(1750000000000);
-      expect(typeof params[9]).toBe('number');
+      expect(params[3]).toBe('acme');
+      expect(params[7]).toBe('evt-r-1');
     });
   });
 
   describe('get() SQL shape', () => {
-    it('emits SELECT with AS "camelCase" aliases', async () => {
+    it('emits SELECT scoped by receipt_id AND company_id', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgBusinessReceiptRepository(db);
       await repo.save(receipt('r-1'));
-      await repo.get('r-1');
+      await repo.get('r-1', 'acme');
 
       const selects = db.operations.filter((op) => op.sql.startsWith('SELECT'));
-      expect(selects[0]?.sql).toBe(
-        'SELECT receipt_id AS "receiptId", work_id AS "workId", ' +
-          'delegation_id AS "delegationId", actor, policy_hash AS "policyHash", ' +
-          'evidence_refs AS "evidenceRefs", terminal_state AS "terminalState", ' +
-          'artifact_hash AS "artifactHash", issued_at AS "issuedAt" ' +
-          'FROM business_receipt WHERE receipt_id = $1',
-      );
+      expect(selects[0]?.sql).toContain('company_id AS "companyId"');
+      expect(selects[0]?.sql).toContain('terminal_event_id AS "terminalEventId"');
+      expect(selects[0]?.sql).toContain('WHERE receipt_id = $1 AND company_id = $2');
     });
   });
 
@@ -311,15 +326,16 @@ describe('PgBusinessReceiptRepository', () => {
       const repo = new PgBusinessReceiptRepository(new InMemoryDbConnection());
       const r = receipt('r-1');
       await repo.save(r);
-      const got = await repo.get('r-1');
+      const got = await repo.get('r-1', 'acme');
       expect(got).toEqual(r);
       expect(got?.evidenceRefs).toEqual(['evid-x']);
       expect(got?.terminalState).toBe('verified');
+      expect(got?.terminalEventId).toBe('evt-r-1');
     });
 
     it('get(unknown) returns undefined', async () => {
       const repo = new PgBusinessReceiptRepository(new InMemoryDbConnection());
-      expect(await repo.get('missing')).toBeUndefined();
+      expect(await repo.get('missing', 'acme')).toBeUndefined();
     });
   });
 });

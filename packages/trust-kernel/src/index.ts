@@ -35,6 +35,7 @@ export type {
   Scope,
   TemporaryAssignment,
 } from './model.js';
+export { isWindowActive } from './model.js';
 
 // --- Input builder types from each slice ---
 export type { PrincipalIdentity } from './identity.js';

@@ -142,8 +142,8 @@ describe('PgDbConnection (Req: PgDbConnection Implementation; D2/D6)', () => {
       expect(pg.endMock).not.toHaveBeenCalled();
     });
 
-    it('the DbConnection port declares ONLY execute/query — close() is extra', () => {
-      expectTypeOf<keyof DbConnection>().toEqualTypeOf<'execute' | 'query'>();
+    it('the DbConnection port declares execute/query/transaction — close() is extra', () => {
+      expectTypeOf<keyof DbConnection>().toEqualTypeOf<'execute' | 'query' | 'transaction'>();
     });
 
     it('PgDbConnection is assignable to DbConnection (implements the port)', () => {

@@ -22,22 +22,30 @@ export interface DbRow {
   readonly [column: string]: unknown;
 }
 
+/** Raised when `transaction` is invoked inside an active transaction body. */
+export class NestedTransactionError extends Error {
+  constructor(message = 'nested transactions are not supported') {
+    super(message);
+    this.name = 'NestedTransactionError';
+  }
+}
+
 /**
- * Injectable asynchronous SQL connection (Req 1). Exactly two operations.
+ * Injectable asynchronous SQL connection (Req 1). Three operations:
  *
  * - {@link DbConnection.execute} runs a statement that does not return rows
- *   (INSERT/UPDATE/...). It returns `Promise<unknown>` (D2): callers that route
- *   a record via `save()` already hold that record and never read execute's
- *   result, so a richer `DbExecuteResult` would be unused surface. A real
- *   adapter may return a row count or void; the port does not promise either.
+ *   (INSERT/UPDATE/...). It returns `Promise<unknown>` (D2).
  * - {@link DbConnection.query} runs a statement that returns rows and casts each
- *   row to `T` in one step (D5: adapters alias columns so rows already match the
- *   record shape).
+ *   row to `T` in one step.
+ * - {@link DbConnection.transaction} runs `fn` against a single transaction-scoped
+ *   connection; commits on success, rolls back on throw. Nested calls throw
+ *   {@link NestedTransactionError}.
  *
- * Both are ASYNCHRONOUS (return `Promise`) and accept a readonly `params` array
- * bound positionally to `$1`, `$2`, ... placeholders.
+ * All three are ASYNCHRONOUS (return `Promise`) and accept a readonly `params`
+ * array bound positionally to `$1`, `$2`, ... placeholders.
  */
 export interface DbConnection {
   execute(sql: string, params: readonly unknown[]): Promise<unknown>;
   query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]>;
+  transaction<T>(fn: (tx: DbConnection) => Promise<T>): Promise<T>;
 }

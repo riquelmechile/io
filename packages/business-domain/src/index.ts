@@ -1,8 +1,8 @@
 /**
  * Public surface of @io/business-domain — transitional pure domain types for
  * the business vertical. Exports the four domain aggregates (Company,
- * Delegation, Work, BusinessReceipt) and their state machine guards. Zero
- * runtime dependencies, zero cross-aggregate imports.
+ * Delegation, Work, BusinessReceipt), state machine guards, ports, fakes,
+ * validation, and transition use cases.
  */
 
 export type {
@@ -25,6 +25,14 @@ export type {
   DelegationRepository,
   WorkRepository,
   BusinessReceiptRepository,
+  IdempotencyStore,
+  IdempotencyRegisterResult,
+} from './ports/repositories.js';
+
+export {
+  VersionConflictError,
+  NotFoundError,
+  IdempotencyConflictError,
 } from './ports/repositories.js';
 
 export {
@@ -32,4 +40,34 @@ export {
   InMemoryDelegationRepository,
   InMemoryWorkRepository,
   InMemoryBusinessReceiptRepository,
+  InMemoryIdempotencyStore,
 } from './ports/fakes.js';
+
+export { ValidationError } from './validation/errors.js';
+export {
+  assertValidCommand,
+  assertValidWorkRow,
+  assertValidDelegationRow,
+  assertValidReceiptRow,
+  assertValidWorkTransition,
+  assertValidDelegationTransition,
+  assertValidLlmPlan,
+} from './validation/guards.js';
+export type { TransitionCommand, LlmPlan } from './validation/guards.js';
+
+export { proposeWork } from './use-cases/propose-work.js';
+export {
+  acceptWork,
+  startWork,
+  completeWork,
+  verifyWork,
+  rejectWork,
+  transitionWork,
+} from './use-cases/transition-work.js';
+export type {
+  WorkUseCaseDeps,
+  ProposeWorkCommand,
+  TransitionWorkCommand,
+  WorkUseCaseResult,
+  TransactionRunner,
+} from './use-cases/types.js';

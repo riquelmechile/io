@@ -29,6 +29,7 @@ export interface Budget {
 
 export interface Delegation {
   readonly delegationId: string;
+  readonly companyId: string;
   readonly delegator: string;
   readonly delegate: string;
   readonly authorityScope: AuthorityScope;
@@ -61,10 +62,12 @@ export interface WorkOutcome {
 
 export interface Work {
   readonly workId: string;
+  readonly companyId: string;
   readonly delegationId: string;
   readonly proposer: string;
   readonly description: string;
   readonly state: WorkState;
+  readonly version: number;
   readonly deliverable?: Deliverable;
   readonly evidenceRefs: readonly string[];
   readonly outcome?: WorkOutcome;
@@ -76,9 +79,11 @@ export interface BusinessReceipt {
   readonly receiptId: string;
   readonly workId: string;
   readonly delegationId: string;
+  readonly companyId: string;
   readonly actor: string;
   readonly policyHash: string;
   readonly evidenceRefs: readonly string[];
+  readonly terminalEventId: string;
   readonly terminalState: string;
   readonly artifactHash: string;
   readonly issuedAt: number;

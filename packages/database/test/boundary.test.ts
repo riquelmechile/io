@@ -174,11 +174,12 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(present).toEqual([]);
     });
 
-    it('pg-connection.ts owns a Pool but opens NO Client / connect()', () => {
+    it('pg-connection.ts owns a Pool and may checkout a client for transactions', () => {
       const code = stripComments(readFileSync(pgDriverOwner, 'utf8'));
       expect(code).toContain('new Pool');
       expect(code).not.toMatch(/new\s+Client/);
-      expect(code).not.toMatch(/\.connect\(/);
+      // pool.connect() is allowed for transaction-scoped clients (BEGIN/COMMIT).
+      expect(code).toMatch(/getPool\(\)\.connect\(/);
     });
   });
 
@@ -255,17 +256,20 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
   });
 
   describe('public surface — structural assertions (no extra prod code)', () => {
-    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository, PgCompanyRepository, PgDelegationRepository, PgWorkRepository, PgBusinessReceiptRepository, PgDbConnection', () => {
+    it('exports hardened database public surface including transaction + idempotency', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
       expect(databaseApi.PgAuditRepository).toBeTypeOf('function');
       expect(databaseApi.PgCompanyRepository).toBeTypeOf('function');
       expect(databaseApi.PgDelegationRepository).toBeTypeOf('function');
       expect(databaseApi.PgWorkRepository).toBeTypeOf('function');
       expect(databaseApi.PgBusinessReceiptRepository).toBeTypeOf('function');
+      expect(databaseApi.PgIdempotencyStore).toBeTypeOf('function');
       expect(databaseApi.PgDbConnection).toBeTypeOf('function');
+      expect(databaseApi.NestedTransactionError).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
+          'NestedTransactionError',
           'PERSISTENT_PORT_DISCLOSURE',
           'PgAuditRepository',
           'PgBusinessReceiptRepository',
@@ -273,6 +277,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgDbConnection',
           'PgDelegationRepository',
           'PgEvidenceRepository',
+          'PgIdempotencyStore',
           'PgWorkRepository',
         ].sort(),
       );

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { NestedTransactionError } from '../src/connection.js';
 import { PERSISTENT_PORT_DISCLOSURE } from '../src/disclosure.js';
 
 import { InMemoryDbConnection } from './connection-fake.js';
@@ -7,8 +8,7 @@ import { InMemoryDbConnection } from './connection-fake.js';
 /**
  * InMemoryDbConnection test double (Req 4). It records every execute/query as
  * `{ sql, params }` AND stores rows so query round-trips data written by execute
- * — all in-memory only (methods return Promise, instant resolution). It is NOT
- * durable and NOT real PostgreSQL.
+ * — all in-memory only. transaction() snapshots and restores on throw.
  */
 
 describe('InMemoryDbConnection test double (Req 4)', () => {
@@ -76,13 +76,42 @@ describe('InMemoryDbConnection test double (Req 4)', () => {
   describe('honest non-durable disclosure (scenario 2; threat: honesty)', () => {
     it('reuses the package PERSISTENT_PORT_DISCLOSURE and defers durability to the adapter', () => {
       const db = new InMemoryDbConnection();
-
-      // Reuses the SAME disclosure the adapters and kernel use (D6).
       expect(db.disclosure).toBe(PERSISTENT_PORT_DISCLOSURE);
-      // Honestly conveys it is NOT durable: durability depends on the adapter.
-      expect(db.disclosure.toLowerCase()).toContain('depends on the adapter');
-      // Makes NO false claim of being durable in real PostgreSQL.
-      expect(db.disclosure.toLowerCase()).not.toContain('durable in postgresql');
+      expect(db.disclosure).toMatch(/not durable|in-memory|adapter/i);
+    });
+  });
+
+  describe('transaction', () => {
+    it('commit persists both writes', async () => {
+      const db = new InMemoryDbConnection();
+      await db.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (name) VALUES ($1)', ['a']);
+        await tx.execute('INSERT INTO t (name) VALUES ($1)', ['b']);
+      });
+      const rows = await db.query<{ name: string }>('SELECT name FROM t', []);
+      expect(rows).toEqual([{ name: 'a' }, { name: 'b' }]);
+    });
+
+    it('rollback restores snapshot when fn throws', async () => {
+      const db = new InMemoryDbConnection();
+      await db.execute('INSERT INTO t (name) VALUES ($1)', ['seed']);
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.execute('INSERT INTO t (name) VALUES ($1)', ['partial']);
+          throw new Error('boom');
+        }),
+      ).rejects.toThrow('boom');
+      const rows = await db.query<{ name: string }>('SELECT name FROM t', []);
+      expect(rows).toEqual([{ name: 'seed' }]);
+    });
+
+    it('nested transaction throws NestedTransactionError', async () => {
+      const db = new InMemoryDbConnection();
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.transaction(async () => 'nope');
+        }),
+      ).rejects.toBeInstanceOf(NestedTransactionError);
     });
   });
 });

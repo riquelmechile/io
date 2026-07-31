@@ -7,14 +7,16 @@ import {
   InMemoryDelegationRepository,
   InMemoryWorkRepository,
 } from '../src/ports/fakes.js';
+import { VersionConflictError } from '../src/ports/repositories.js';
 
 function sampleCompany(id: string): Company {
   return { companyId: id, purpose: `purpose-${id}` };
 }
 
-function sampleDelegation(id: string): Delegation {
+function sampleDelegation(id: string, companyId = 'acme'): Delegation {
   return {
     delegationId: id,
+    companyId,
     delegator: 'principal-1',
     delegate: 'principal-2',
     authorityScope: { scope: 'finance', actions: ['approve', 'reject'] },
@@ -26,25 +28,29 @@ function sampleDelegation(id: string): Delegation {
   };
 }
 
-function sampleWork(id: string): Work {
+function sampleWork(id: string, companyId = 'acme'): Work {
   return {
     workId: id,
+    companyId,
     delegationId: 'del-1',
     proposer: 'principal-2',
     description: 'execute the quarterly close',
     state: 'proposed',
+    version: 0,
     evidenceRefs: ['evid-a', 'evid-b'],
   };
 }
 
-function sampleReceipt(id: string): BusinessReceipt {
+function sampleReceipt(id: string, companyId = 'acme'): BusinessReceipt {
   return {
     receiptId: id,
     workId: 'work-1',
     delegationId: 'del-1',
+    companyId,
     actor: 'principal-2',
     policyHash: 'sha256:policy-hash',
     evidenceRefs: ['evid-x'],
+    terminalEventId: `evt-${id}`,
     terminalState: 'verified',
     artifactHash: 'sha256:artifact-hash',
     issuedAt: 1750000000000,
@@ -82,7 +88,7 @@ describe('InMemoryDelegationRepository', () => {
     const repo = new InMemoryDelegationRepository();
     const delegation = sampleDelegation('del-99');
     await repo.save(delegation);
-    const got = await repo.get('del-99');
+    const got = await repo.get('del-99', 'acme');
     expect(got).toEqual(delegation);
     expect(got?.authorityScope).toEqual({ scope: 'finance', actions: ['approve', 'reject'] });
     expect(got?.budget).toEqual({ currency: 'USD', limit: 100000 });
@@ -91,7 +97,13 @@ describe('InMemoryDelegationRepository', () => {
 
   it('get(unknownId) returns undefined', async () => {
     const repo = new InMemoryDelegationRepository();
-    expect(await repo.get('missing')).toBeUndefined();
+    expect(await repo.get('missing', 'acme')).toBeUndefined();
+  });
+
+  it('cross-company get returns undefined', async () => {
+    const repo = new InMemoryDelegationRepository();
+    await repo.save(sampleDelegation('del-1', 'acme'));
+    expect(await repo.get('del-1', 'other')).toBeUndefined();
   });
 });
 
@@ -100,10 +112,11 @@ describe('InMemoryWorkRepository', () => {
     const repo = new InMemoryWorkRepository();
     const work = sampleWork('work-42');
     await repo.save(work);
-    const got = await repo.get('work-42');
+    const got = await repo.get('work-42', 'acme');
     expect(got).toEqual(work);
     expect(got?.evidenceRefs).toEqual(['evid-a', 'evid-b']);
     expect(got?.state).toBe('proposed');
+    expect(got?.version).toBe(0);
   });
 
   it('round-trips optional deliverable and outcome', async () => {
@@ -114,7 +127,7 @@ describe('InMemoryWorkRepository', () => {
       outcome: { result: 'success', success: true },
     };
     await repo.save(work);
-    const got = await repo.get('work-full');
+    const got = await repo.get('work-full', 'acme');
     expect(got).toEqual(work);
     expect(got?.deliverable).toEqual({ description: 'report.pdf', format: 'pdf' });
     expect(got?.outcome).toEqual({ result: 'success', success: true });
@@ -122,7 +135,31 @@ describe('InMemoryWorkRepository', () => {
 
   it('get(unknownId) returns undefined', async () => {
     const repo = new InMemoryWorkRepository();
-    expect(await repo.get('nope')).toBeUndefined();
+    expect(await repo.get('nope', 'acme')).toBeUndefined();
+  });
+
+  it('cross-company get returns undefined', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-1', 'acme'));
+    expect(await repo.get('work-1', 'other')).toBeUndefined();
+  });
+
+  it('updateWithVersion increments version on match', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-1'));
+    const updated = await repo.updateWithVersion({ ...sampleWork('work-1'), state: 'accepted' }, 0);
+    expect(updated.version).toBe(1);
+    expect(updated.state).toBe('accepted');
+    expect((await repo.get('work-1', 'acme'))?.version).toBe(1);
+  });
+
+  it('updateWithVersion throws VersionConflictError on stale version', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-1'));
+    await repo.updateWithVersion({ ...sampleWork('work-1'), state: 'accepted' }, 0);
+    await expect(
+      repo.updateWithVersion({ ...sampleWork('work-1'), state: 'in_progress' }, 0),
+    ).rejects.toBeInstanceOf(VersionConflictError);
   });
 });
 
@@ -131,7 +168,7 @@ describe('InMemoryBusinessReceiptRepository', () => {
     const repo = new InMemoryBusinessReceiptRepository();
     const receipt = sampleReceipt('r-1');
     await repo.save(receipt);
-    const got = await repo.get('r-1');
+    const got = await repo.get('r-1', 'acme');
     expect(got).toEqual(receipt);
     expect(got?.terminalState).toBe('verified');
     expect(got?.evidenceRefs).toEqual(['evid-x']);
@@ -139,20 +176,36 @@ describe('InMemoryBusinessReceiptRepository', () => {
 
   it('get(unknownId) returns undefined', async () => {
     const repo = new InMemoryBusinessReceiptRepository();
-    expect(await repo.get('absent')).toBeUndefined();
+    expect(await repo.get('absent', 'acme')).toBeUndefined();
+  });
+
+  it('cross-company get returns undefined', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await repo.save(sampleReceipt('r-1', 'acme'));
+    expect(await repo.get('r-1', 'other')).toBeUndefined();
   });
 
   it('first save succeeds, duplicate receiptId rejected', async () => {
     const repo = new InMemoryBusinessReceiptRepository();
     const receipt = sampleReceipt('r-dup');
     await repo.save(receipt);
-    const first = await repo.get('r-dup');
+    const first = await repo.get('r-dup', 'acme');
     expect(first).toEqual(receipt);
 
     const second = sampleReceipt('r-dup');
     await expect(repo.save(second)).rejects.toThrow();
 
-    const unchanged = await repo.get('r-dup');
+    const unchanged = await repo.get('r-dup', 'acme');
     expect(unchanged).toEqual(receipt);
+  });
+
+  it('duplicate terminal event pair rejected', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await repo.save(sampleReceipt('r-1'));
+    const dup: BusinessReceipt = {
+      ...sampleReceipt('r-2'),
+      terminalEventId: 'evt-r-1',
+    };
+    await expect(repo.save(dup)).rejects.toThrow(/terminal/i);
   });
 });

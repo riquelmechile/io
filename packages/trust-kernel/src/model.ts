@@ -62,6 +62,15 @@ export function validateBoundedWindow(window: BoundedWindow): ValidationOutcome 
 }
 
 /**
+ * Whether a bounded window is currently active at `now`: start has been reached
+ * and expiry has not. Future-start windows are NOT active even when structurally
+ * valid. Shared by grants, temp roles, and pipeline step 12.
+ */
+export function isWindowActive(start: number, now: number, expiry: number): boolean {
+  return start <= now && expiry > now;
+}
+
+/**
  * A temporary role assignment. A VALID assignment MUST declare an assignment ID,
  * explicit bounded scope, start, and expiry (indefinite is INVALID). Fields are
  * optional so invalid fixtures can be constructed and rejected. Revocation is a

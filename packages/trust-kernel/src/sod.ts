@@ -33,6 +33,7 @@ const CORE_ROLES: readonly SodRole[] = ['proposer', 'approver', 'executor', 'ver
 const CRITICAL_ROLES: readonly SodRole[] = [...CORE_ROLES, 'authorizer'];
 // Absolute independence at EVERY tier: no self-approval, no self-verification.
 const ABSOLUTE_PAIRS: ReadonlyArray<readonly [SodRole, SodRole]> = [
+  ['proposer', 'approver'],
   ['approver', 'executor'],
   ['verifier', 'executor'],
 ];

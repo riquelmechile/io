@@ -1,6 +1,6 @@
 import { Pool, types as pgTypes } from 'pg';
 
-import type { DbConnection } from './connection.js';
+import { NestedTransactionError, type DbConnection } from './connection.js';
 
 /**
  * Live PostgreSQL adapter for the ASYNC {@link DbConnection} port (Req: PgDbConnection
@@ -64,6 +64,35 @@ export class PgDbConnection implements DbConnection {
   async query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> {
     const result = await this.getPool().query(sql, [...params]);
     return result.rows as readonly T[]; // SELECT — columns aliased to shape rows to T (D7)
+  }
+
+  async transaction<T>(fn: (tx: DbConnection) => Promise<T>): Promise<T> {
+    const client = await this.getPool().connect();
+    const txConn: DbConnection = {
+      execute: async (sql, params) => client.query(sql, [...params]),
+      query: async <R>(sql: string, params: readonly unknown[]) => {
+        const result = await client.query(sql, [...params]);
+        return result.rows as readonly R[];
+      },
+      transaction: async () => {
+        throw new NestedTransactionError();
+      },
+    };
+    try {
+      await client.query('BEGIN');
+      const result = await fn(txConn);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // ignore rollback errors; surface the original
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async close(): Promise<void> {

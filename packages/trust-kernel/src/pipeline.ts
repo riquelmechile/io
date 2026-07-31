@@ -1,5 +1,5 @@
 import { NON_PERSISTENT_DISCLOSURE, captureEvidence, type EvidenceInput } from './evidence.js';
-import { validateBoundedWindow } from './model.js';
+import { isWindowActive, validateBoundedWindow } from './model.js';
 import type {
   AuditEntry,
   Decision,
@@ -273,11 +273,14 @@ function sodGate(input: EvaluationInput, ctx: PipelineContext): GateResult {
   return checkSod({ risk: ctx.risk, assignments: input.sodAssignments, policy: input.policy });
 }
 
-/** Step 12 — the matched grant must be active (not expired or revoked). */
+/** Step 12 — the matched grant must be active (window gate: start<=now<expiry, not revoked). */
 function expiryGate(input: EvaluationInput, ctx: PipelineContext): GateResult {
   const grant = ctx.grant;
-  if (grant === null || grant.revoked === true || grant.expiry <= input.now) {
+  if (grant === null || grant.revoked === true) {
     return { decision: 'DENY', reason: 'grant expired or revoked' };
+  }
+  if (!isWindowActive(grant.start, input.now, grant.expiry)) {
+    return { decision: 'DENY', reason: 'grant outside activation window' };
   }
   return { decision: 'ALLOW', reason: 'grant active' };
 }

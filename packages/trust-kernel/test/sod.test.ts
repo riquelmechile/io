@@ -54,6 +54,24 @@ describe('In-memory separation of duties (Req 6)', () => {
       expect(decision.reason).toMatch(/self|approv|verif|distinct|overlap|separation/i);
     });
 
+    it.each(ALL_TIERS)(
+      'denies proposer == approver (self-approval) at %s risk even with allowsLowCombination',
+      (risk) => {
+        const assignments = assign(
+          ['proposer', p1],
+          ['approver', p1],
+          ['executor', p2],
+          ['verifier', p3],
+          ['authorizer', p4],
+        );
+        const policy: SodPolicy | undefined =
+          risk === 'low' ? { allowsLowCombination: true } : undefined;
+        const decision = checkSod({ risk, assignments, policy });
+        expect(decision.decision).toBe('DENY');
+        expect(decision.reason).toMatch(/proposer|approver|self|separation/i);
+      },
+    );
+
     it.each(ALL_TIERS)('denies self-verification (verifier == executor) at %s risk', (risk) => {
       const assignments = assign(
         ['proposer', p1],

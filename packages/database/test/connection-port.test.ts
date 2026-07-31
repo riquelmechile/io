@@ -83,7 +83,7 @@ function stripComments(source: string): string {
 }
 
 describe('DbConnection port interface (Req 1)', () => {
-  describe('asynchronous execute and query (scenario 1)', () => {
+  describe('asynchronous execute, query, and transaction (scenario 1)', () => {
     it('execute returns a Promise<unknown> (asynchronous; NOT a synchronous value)', () => {
       // The real `pg` driver is TCP-based and fundamentally async; a Promise
       // return is the only honest completion contract.
@@ -111,6 +111,12 @@ describe('DbConnection port interface (Req 1)', () => {
     it('query accepts a sql string and a readonly params array', () => {
       expectTypeOf<DbConnection['query']>().parameter(0).toEqualTypeOf<string>();
       expectTypeOf<DbConnection['query']>().parameter(1).toEqualTypeOf<readonly unknown[]>();
+    });
+
+    it('transaction returns a Promise and accepts a fn receiving DbConnection', () => {
+      expectTypeOf<DbConnection['transaction']>().toMatchTypeOf<
+        <T>(fn: (tx: DbConnection) => Promise<T>) => Promise<T>
+      >();
     });
   });
 

@@ -5,9 +5,7 @@ import type { DbConnection } from './connection.js';
 /**
  * PostgreSQL-shaped adapter for the Delegation repository port (design §PG
  * Adapter Pattern). Implements `DelegationRepository` over an injected, ASYNC
- * {@link DbConnection}. save() binds fields as `$1..$10` (JSONB objects passed
- * directly for authorityScope and budget); get() aliases columns so rows map
- * straight to Delegation. Methods are ASYNC (D1).
+ * {@link DbConnection}. Scoped by companyId.
  */
 export class PgDelegationRepository {
   private readonly conn: DbConnection;
@@ -18,11 +16,12 @@ export class PgDelegationRepository {
 
   async save(delegation: Delegation): Promise<Readonly<Delegation>> {
     await this.conn.execute(
-      'INSERT INTO delegation (delegation_id, delegator, delegate, authority_scope, budget, ' +
+      'INSERT INTO delegation (delegation_id, company_id, delegator, delegate, authority_scope, budget, ' +
         'valid_from, valid_until, expected_outcome, state, created_at) ' +
-        'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       [
         delegation.delegationId,
+        delegation.companyId,
         delegation.delegator,
         delegation.delegate,
         JSON.stringify(delegation.authorityScope),
@@ -37,14 +36,14 @@ export class PgDelegationRepository {
     return delegation;
   }
 
-  async get(delegationId: string): Promise<Delegation | undefined> {
+  async get(delegationId: string, companyId: string): Promise<Delegation | undefined> {
     const rows = await this.conn.query<Delegation>(
-      'SELECT delegation_id AS "delegationId", delegator, delegate, ' +
+      'SELECT delegation_id AS "delegationId", company_id AS "companyId", delegator, delegate, ' +
         'authority_scope AS "authorityScope", budget, ' +
         'valid_from AS "validFrom", valid_until AS "validUntil", ' +
         'expected_outcome AS "expectedOutcome", state ' +
-        'FROM delegation WHERE delegation_id = $1',
-      [delegationId],
+        'FROM delegation WHERE delegation_id = $1 AND company_id = $2',
+      [delegationId, companyId],
     );
     return rows[0];
   }
