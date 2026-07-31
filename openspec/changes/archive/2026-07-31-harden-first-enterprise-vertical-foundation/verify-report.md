@@ -1,14 +1,14 @@
 ```yaml
 schema: gentle-ai.verify-result/v1
-evidence_revision: sha256:7367d67aa5a3a1c5d0832355947405bdd8636b9595fe0399f4cb1a6a2207e0a7
-verdict: fail
-blockers: 4
-critical_findings: 4
-requirements: 18/21
-scenarios: 42/46
+evidence_revision: sha256:e1e1af9fafdfd100dbdd84c3274685b4b7a4090f13a7f25823b5c9a2ca3f6d8a
+verdict: pass_with_warnings
+blockers: 0
+critical_findings: 0
+requirements: 21/21
+scenarios: 46/46
 test_command: pnpm test
 test_exit_code: 0
-test_output_hash: sha256:e9c93ceeb80c1e963da848f708011b5968105e34884e454f0eefbd93daacf287
+test_output_hash: sha256:c14eba8eecfffd1854104c752cbfb538e87cb9cbbbb6f09b246f5098ec2fd555
 build_command: pnpm build
 build_exit_code: 0
 build_output_hash: sha256:24c42b76aecef2c39c8a5639a3536efb936b03bdac9a8f8be50c0e71ffbc7af8
@@ -19,6 +19,8 @@ build_output_hash: sha256:24c42b76aecef2c39c8a5639a3536efb936b03bdac9a8f8be50c0e
 **Change**: harden-first-enterprise-vertical-foundation
 **Version**: N/A
 **Mode**: Strict TDD
+**Date**: 2026-07-31
+**HEAD**: `4c353fae9df47669dacd5f08be739662b4b7dba6` tree `71d6ec9ee8245c56a28f4bc673f11e4e76e56ed2`
 
 ### Completeness
 | Metric | Value |
@@ -32,12 +34,11 @@ build_output_hash: sha256:24c42b76aecef2c39c8a5639a3536efb936b03bdac9a8f8be50c0e
 
 | Check | Result | Details |
 |-------|--------|---------|
-| `gentle-ai sdd-status` next | `verify` | apply all_done; tasks 37/37; archive blocked pending PASS verify |
-| Lineage | `review-1a05131a48ca7df7` | compact-v2 `state=approved`, receipt present |
-| Receipt terminal | `approved` | final_candidate_tree `e06055bce53f7cbbfcd66de5cd5a402d445f0167` == `HEAD^{tree}` |
-| Working tree | clean | `main...origin/main`, 0 untracked |
-| Store revision | `sha256:5ae3a00a948fac31bf3597bde34fa909e611e4f4182c1a24fae3c4db85ded1dd` | matches receipt-bound state |
-| `review validate --gate final-verification` | ⚠️ inventory noise | CLI returns `authority_corrupted` at receipt-discovery across 42 lineages; per-lineage export + receipt+state are coherent and tree-matched. Substantive verification admitted by sdd-status `next=verify` + approved receipt matching HEAD |
+| Lineage (main harden) | `review-1a05131a48ca7df7` | compact-v2 `state=approved`, receipt `terminal_state=approved` |
+| Lineage (gap fix) | `review-0492be85d042123c` | compact-v2 `state=approved`, receipt `terminal_state=approved` |
+| Fix receipt tree | `71d6ec9ee8245c56a28f4bc673f11e4e76e56ed2` | equals `HEAD^{tree}` |
+| Working tree | clean at verify start | `main...origin/main` before report write |
+| Prior FAIL gaps | closed in `4c353fa` | delegation window + row validation + tests |
 
 ### Build & Tests Execution
 **Build**: ✅ Passed (exit 0)
@@ -47,12 +48,12 @@ $ tsc -p tsconfig.build.json
 (exit 0)
 ```
 
-**Tests**: ✅ 459 passed / ❌ 0 failed / ⚠️ 22 skipped
+**Tests**: ✅ 475 passed / ❌ 0 failed / ⚠️ 22 skipped
 ```text
 pnpm test
  Test Files  29 passed | 3 skipped (32)
-      Tests  459 passed | 22 skipped (481)
- Duration  ~686ms
+      Tests  475 passed | 22 skipped (497)
+ Duration  ~666ms
 ```
 
 **pnpm check**: ✅ Passed (format + typecheck + build + lint + test) exit 0
@@ -73,10 +74,10 @@ pnpm test
 | Mandatory Company Tenant Scope | Unscoped read is impossible | `ports/repositories.ts` required companyId + port tests | ✅ COMPLIANT |
 | Mandatory Company Tenant Scope | Cross-company access rejected | `fakes.test.ts` Work/Delegation/Receipt cross-company undefined | ✅ COMPLIANT |
 | Delegation Company Scope | Delegation carries company scope | `types.test.ts` + `fakes.test.ts` scoped get | ✅ COMPLIANT |
-| Delegation Activation Window | Future-start delegation not active | (none found) | ❌ UNTESTED |
-| Delegation Activation Window | Currently active delegation | (none found) | ❌ UNTESTED |
-| Delegation Authority Fields | Active delegation with all fields | `types.test.ts` > requires companyId plus all authority fields | ✅ COMPLIANT |
-| Delegation Authority Fields | Missing required field rejected | no runtime test; `assertValidDelegationRow` omits budget/authorityScope | ❌ UNTESTED |
+| Delegation Activation Window | Future-start delegation not active | `validation.test.ts` > isDelegationWindowActive future-start + isDelegationActive | ✅ COMPLIANT |
+| Delegation Activation Window | Currently active delegation | `validation.test.ts` > currently active window + active state | ✅ COMPLIANT |
+| Delegation Authority Fields | Active delegation with all fields | `types.test.ts` + `assertValidDelegationRow` accept | ✅ COMPLIANT |
+| Delegation Authority Fields | Missing required field rejected | `validation.test.ts` > rejects missing budget/authorityScope/companyId | ✅ COMPLIANT |
 | Work Company Scope and Version | Work carries company scope and version | `types.test.ts` / `use-cases.test.ts` propose v0 | ✅ COMPLIANT |
 | Work Optimistic Concurrency | Concurrent transition conflicts | `fakes.test.ts` + `business-adapters` + PG CAS match/stale | ✅ COMPLIANT |
 | Work Optimistic Concurrency | Stale write rejected | `fakes.test.ts` / adapters VersionConflictError | ✅ COMPLIANT |
@@ -89,8 +90,8 @@ pnpm test
 | Work Execution Fields | Missing delegation reference rejected | `types.test.ts` empty delegationId + command validation | ✅ COMPLIANT |
 | Work Execution Fields | Missing company scope rejected | `validation.test.ts` rejects missing/empty companyId | ✅ COMPLIANT |
 | Receipt Company Scope | Receipt carries company scope | `types.test.ts` + fakes scoped get | ✅ COMPLIANT |
-| Receipt Links Authority/Work/Outcome | Complete receipt fields | `types.test.ts` > requires companyId, terminalEventId, prior fields | ✅ COMPLIANT |
-| Receipt Links Authority/Work/Outcome | Missing required field rejected | `assertValidReceiptRow` exists; **no covering test** | ❌ UNTESTED |
+| Receipt Links Authority/Work/Outcome | Complete receipt fields | `types.test.ts` + `assertValidReceiptRow` accept | ✅ COMPLIANT |
+| Receipt Links Authority/Work/Outcome | Missing required field rejected | `validation.test.ts` > rejects missing workId/actor/issuedAt/evidenceRefs | ✅ COMPLIANT |
 | Single Issuance | First issuance succeeds | `fakes.test.ts` first save succeeds | ✅ COMPLIANT |
 | Single Issuance | Duplicate terminal event rejected | `fakes.test.ts` + PG integration UNIQUE pair | ✅ COMPLIANT |
 | Atomic Transaction Boundary | Commit persists all statements | `connection-fake.test.ts` + PG integration commit | ✅ COMPLIANT |
@@ -102,17 +103,21 @@ pnpm test
 | DbConnection Port Interface | No driver types or schema knowledge | `connection-port.test.ts` + boundary tests | ✅ COMPLIANT |
 | Validate Command Input Shape | Valid command accepted | `validation.test.ts` | ✅ COMPLIANT |
 | Validate Command Input Shape | Malformed command rejected | `validation.test.ts` | ✅ COMPLIANT |
-| Validate Persisted Row Integrity | Well-formed row accepted | `validation.test.ts` assertValidWorkRow | ✅ COMPLIANT |
-| Validate Persisted Row Integrity | Corrupt row rejected | `validation.test.ts` version string / illegal state | ✅ COMPLIANT |
+| Validate Persisted Row Integrity | Well-formed row accepted | `validation.test.ts` assertValidWorkRow/Delegation/Receipt | ✅ COMPLIANT |
+| Validate Persisted Row Integrity | Corrupt row rejected | `validation.test.ts` version string / illegal state / missing fields | ✅ COMPLIANT |
 | Validate Transition Legality | Legal transition accepted | `validation.test.ts` proposed→accepted | ✅ COMPLIANT |
 | Validate Transition Legality | Illegal transition rejected | `validation.test.ts` accepted→verified | ✅ COMPLIANT |
 | Validate Structured LLM Plan | Well-formed plan accepted | `validation.test.ts` | ✅ COMPLIANT |
 | Validate Structured LLM Plan | Malformed plan rejected | `validation.test.ts` missing description/actions | ✅ COMPLIANT |
 
-**Compliance summary**: 42/46 scenarios compliant (4 UNTESTED CRITICAL)
+**Compliance summary**: 46/46 scenarios compliant
 
-**Requirement rollup**: 18/21 requirements fully scenario-compliant
-- FAIL requirements: Delegation Activation Window (0/2), Delegation Authority Fields (1/2), Receipt Links Authority/Work/Outcome (1/2)
+**Requirement rollup**: 21/21 requirements fully scenario-compliant
+
+**Prior CRITICAL gaps closed** (commit `4c353fa`):
+1. Delegation Activation Window — `isDelegationWindowActive` / `isDelegationActive` + tests
+2. Delegation Authority Fields missing-field — `assertValidDelegationRow` budget/authorityScope/companyId + tests
+3. Receipt missing-field — `assertValidReceiptRow` workId/actor/issuedAt/evidenceRefs + tests
 
 ### Correctness (Static Evidence)
 | Requirement | Status | Notes |
@@ -121,15 +126,15 @@ pnpm test
 | In-Memory Separation of Duties | ✅ Implemented | `['proposer','approver']` in ABSOLUTE_PAIRS |
 | Mandatory Company Tenant Scope | ✅ Implemented | companyId on aggregates; get(id, companyId) |
 | Delegation Company Scope | ✅ Implemented | companyId + scoped repository |
-| Delegation Activation Window | ❌ Incomplete | validFrom/validUntil fields only; no `isWindowActive` evaluation path for Delegation |
-| Delegation Authority Fields | ⚠️ Partial | fields present; missing-field runtime guard incomplete (no budget/scope asserts) |
+| Delegation Activation Window | ✅ Implemented | `isDelegationWindowActive` / `isDelegationActive` in guards.ts |
+| Delegation Authority Fields | ✅ Implemented | full assertValidDelegationRow incl. budget/authorityScope |
 | Work Company Scope and Version | ✅ Implemented | companyId + version on Work |
 | Work Optimistic Concurrency | ✅ Implemented | updateWithVersion CAS + VersionConflictError |
 | Work Transition Use Cases | ✅ Implemented | propose/accept/start/complete/verify/reject |
 | Idempotency for Work Transitions | ✅ Implemented | IdempotencyStore port + fake + PG adapter + use-case wire |
 | Work Execution Fields | ✅ Implemented | types + validation |
 | Receipt Company Scope | ✅ Implemented | companyId + scoped get |
-| Receipt Links + terminalEventId | ⚠️ Partial | fields + assertValidReceiptRow; no dedicated missing-field tests |
+| Receipt Links + terminalEventId | ✅ Implemented | fields + assertValidReceiptRow + missing-field tests |
 | Single Issuance | ✅ Implemented | UNIQUE(work_id, terminal_event_id) + fake rejection |
 | Atomic Transaction Boundary | ✅ Implemented | port + InMemory + PgDbConnection |
 | Business Table Unique Constraints | ✅ Implemented | sql/003 + greenfield 002 |
@@ -146,57 +151,51 @@ pnpm test
 | Work CAS + split insert/update | ✅ Yes | save insert; updateWithVersion CAS |
 | Idempotency journal | ✅ Yes | port + PG table UNIQUE(company,op,key) |
 | Use cases + guards in business-domain | ✅ Yes | use-cases/ + validation/ |
-| TransactionRunner vs DbConnection.tx | ⚠️ Deviates | Design data-flow shows evaluate/evidence/receipt inside DbConnection.transaction; impl uses TransactionRunner without tx handle and runs evaluate/idempotency outside tx (apply-progress + review R2-001/R2-002) |
-| Delegation window reuse isWindowActive | ❌ Not followed | no delegation activation helper wired |
+| Delegation window reuse isWindowActive | ✅ Yes | isDelegationWindowActive mirrors kernel semantics |
+| TransactionRunner vs DbConnection.tx | ⚠️ Deviates | evaluate/idempotency outside tx handle (review R2-001/R2-002 info) — non-blocking |
 
 ### TDD Compliance
 | Check | Result | Details |
 |-------|--------|---------|
-| TDD Evidence reported | ✅ | apply-progress #5785 TDD Cycle Evidence table present |
-| All tasks have tests | ⚠️ | 36/37 task groups have tests; hygiene 9.x structural; **delegation window tasks absent from task list but present in delta specs** |
-| RED confirmed (tests exist) | ✅ | listed test files exist under packages/*/test |
-| GREEN confirmed (tests pass) | ✅ | 459 passed on this run |
-| Triangulation adequate | ✅ | multi-case for SoD tiers, window edges, CAS, validation, idempotency |
-| Safety Net for modified files | ✅ | apply-progress reports safety nets on modified packages |
+| TDD Evidence reported | ✅ | apply-progress TDD Cycle Evidence present |
+| All tasks have tests | ✅ | 37/37 complete; gap-fix tests in validation.test.ts |
+| RED confirmed (tests exist) | ✅ | listed test files under packages/*/test |
+| GREEN confirmed (tests pass) | ✅ | 475 passed on this run |
+| Triangulation adequate | ✅ | multi-case for SoD tiers, window edges, CAS, validation, idempotency, missing fields |
+| Safety Net for modified files | ✅ | apply-progress reports safety nets; gap fix extended validation suite |
 
-**TDD Compliance**: 5/6 checks passed (delegation-window gap is a spec/implementation hole, not a missing TDD evidence row)
+**TDD Compliance**: 6/6 checks passed
 
 ### Test Layer Distribution
 | Layer | Tests | Files | Tools |
 |-------|-------|-------|-------|
-| Unit | majority of 459 | trust-kernel, business-domain, database unit | vitest |
-| Integration | subset (skipped locally when PG down) | `*.integration.test.ts` | vitest + real PG when reachable |
+| Unit | majority of 475 | trust-kernel, business-domain, database unit | vitest |
+| Integration | subset (skipped locally when PG/API down) | `*.integration.test.ts` | vitest + real PG when reachable |
 | E2E | 0 | — | not installed |
-| **Total** | **459 passed + 22 skipped** | **32 files** | |
+| **Total** | **475 passed + 22 skipped** | **32 files** | |
 
 ### Changed File Coverage
 Coverage analysis skipped — no coverage tool detected
 
 ### Assertion Quality
-**Assertion quality**: ✅ All sampled assertions verify real behavior (decision DENY/ALLOW, version bumps, throws ValidationError/VersionConflictError/IdempotencyConflictError, undefined cross-company). No tautologies found in change-related tests.
+**Assertion quality**: ✅ All sampled assertions verify real behavior (decision DENY/ALLOW, version bumps, throws ValidationError/VersionConflictError/IdempotencyConflictError, window boolean edges, missing-field rejections). No tautologies found in change-related tests.
 
 ### Quality Metrics
 **Linter**: ✅ No errors (`biome lint` via pnpm check)
 **Type Checker**: ✅ No errors (`tsc -p tsconfig.json` + build)
 
 ### Issues Found
-**CRITICAL**:
-1. **UNTESTED** — Delegation Activation Window / Future-start delegation not active: no evaluator applies `isWindowActive(validFrom, now, validUntil)` to Delegation; no covering test.
-2. **UNTESTED** — Delegation Activation Window / Currently active delegation: same gap.
-3. **UNTESTED** — Delegation Authority Fields / Missing required field rejected: no runtime test; `assertValidDelegationRow` does not assert budget/authorityScope.
-4. **UNTESTED** — Receipt Links / Missing required field rejected: `assertValidReceiptRow` exists but has zero tests.
+**CRITICAL**: None
 
 **WARNING**:
 1. Local PG unreachable → 22 integration tests skipped via `describe.skipIf(!reachable)`; CI adds postgres:18 service (task 9.1). Not a silent pass.
 2. Design data-flow vs implementation: evaluate/idempotency outside transaction; TransactionRunner erases tx DbConnection handle (review findings R2-001, R2-002 classified info at finalize).
 3. Idempotency `in_progress` → proceed may re-enter side effects (review R2-004) — not a failed scenario under current specs, but durability footgun.
-4. `gentle-ai review validate` inventory CLI reports `authority_corrupted` despite coherent approved receipt for lineage `review-1a05131a48ca7df7` matching HEAD — tool/inventory issue; does not restore missing_review_authority.
 
 **SUGGESTION**:
-1. Add `isDelegationActive(d, now)` reusing kernel `isWindowActive` + unit tests for future-start and active windows.
-2. Extend `assertValidDelegationRow` for budget/authorityScope and add receipt/delegation missing-field validation tests.
-3. After CRITICAL fixes, re-run sdd-verify then archive.
+1. Consider wiring `isDelegationActive` into transition use cases at call sites (evaluator exists and is tested; use-case path may still rely on separate checks).
+2. Harden idempotency journal completion under crash between register and complete.
 
 ### Verdict
-FAIL
-4 CRITICAL untested delta scenarios (delegation activation window ×2, delegation missing-field, receipt missing-field). Runtime suite is green (459 passed) and most hardening is proven, but independent verification cannot PASS while required scenarios lack covering tests.
+PASS WITH WARNINGS
+All 21 requirements / 46 scenarios COMPLIANT with covering tests green (475 passed). Prior 4 CRITICAL UNTESTED gaps closed in `4c353fa` and re-proven. Non-critical warnings remain (local PG skip, tx boundary design deviation, idempotency durability footgun).
