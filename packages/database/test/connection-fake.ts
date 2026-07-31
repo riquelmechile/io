@@ -37,7 +37,7 @@ export class InMemoryDbConnection implements DbConnection {
       const rows = this.table(insert.table);
       const row: Row = { id: this.nextId(insert.table) };
       insert.columns.forEach((column, index) => {
-        row[column] = params[index];
+        row[column] = reviveValue(params[index]);
       });
       rows.push(row);
     }
@@ -160,4 +160,21 @@ function compareForSort(a: unknown, b: unknown, dir: 'ASC' | 'DESC'): number {
   const left = typeof a === 'number' ? a : 0;
   const right = typeof b === 'number' ? b : 0;
   return dir === 'ASC' ? left - right : right - left;
+}
+
+/**
+ * Simulate PG's JSONB auto-deserialization: when a param is a JSON string
+ * (produced by the adapter's `JSON.stringify` for JSONB columns), parse it back
+ * to a JS object so `query` round-trips return objects, matching real PG
+ * behavior. Non-JSON strings, null, and primitives pass through unchanged.
+ */
+function reviveValue(value: unknown): unknown {
+  if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value;
 }

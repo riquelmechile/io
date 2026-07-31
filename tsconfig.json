@@ -21,6 +21,7 @@
     "src/**/*.ts",
     "test/**/*.ts",
     "packages/trust-kernel/**/*.ts",
+    "packages/business-domain/**/*.ts",
     "packages/database/**/*.ts",
     "vitest.config.ts"
   ]

@@ -17,6 +17,9 @@
       "packages/database/src/**/*.ts",
       "packages/database/test/**/*.ts",
       "packages/database/package.json",
+      "packages/business-domain/src/**/*.ts",
+      "packages/business-domain/test/**/*.ts",
+      "packages/business-domain/package.json",
       "!.pgdata",
       "!**/.pgdata"
     ]

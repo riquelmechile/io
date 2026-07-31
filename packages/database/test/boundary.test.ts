@@ -96,11 +96,12 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(pkg.bundleDependencies ?? pkg.bundledDependencies ?? {}).toEqual({});
     });
 
-    it('declares only the kernel + pg type declarations as devDependencies', () => {
-      // @io/trust-kernel stays a devDependency (type-only coupling, D4). @types/pg
-      // is a TYPE-ONLY devDep because pg 8.x ships no bundled declarations; it
-      // adds NO runtime coupling. No other devDeps.
+    it('declares only the kernel + business-domain + pg type declarations as devDependencies', () => {
+      // @io/trust-kernel and @io/business-domain stay devDependencies (type-only
+      // coupling, D4). @types/pg is a TYPE-ONLY devDep because pg 8.x ships no
+      // bundled declarations; it adds NO runtime coupling. No other devDeps.
       expect(pkg.devDependencies ?? {}).toEqual({
+        '@io/business-domain': 'workspace:*',
         '@io/trust-kernel': 'workspace:*',
         '@types/pg': expect.any(String),
       });
@@ -254,17 +255,25 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
   });
 
   describe('public surface — structural assertions (no extra prod code)', () => {
-    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository, PgDbConnection', () => {
+    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository, PgCompanyRepository, PgDelegationRepository, PgWorkRepository, PgBusinessReceiptRepository, PgDbConnection', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
       expect(databaseApi.PgAuditRepository).toBeTypeOf('function');
+      expect(databaseApi.PgCompanyRepository).toBeTypeOf('function');
+      expect(databaseApi.PgDelegationRepository).toBeTypeOf('function');
+      expect(databaseApi.PgWorkRepository).toBeTypeOf('function');
+      expect(databaseApi.PgBusinessReceiptRepository).toBeTypeOf('function');
       expect(databaseApi.PgDbConnection).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
           'PERSISTENT_PORT_DISCLOSURE',
           'PgAuditRepository',
+          'PgBusinessReceiptRepository',
+          'PgCompanyRepository',
           'PgDbConnection',
+          'PgDelegationRepository',
           'PgEvidenceRepository',
+          'PgWorkRepository',
         ].sort(),
       );
     });

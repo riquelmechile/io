@@ -1,4 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts", "packages/trust-kernel/src/**/*.ts", "packages/database/src/**/*.ts"]
+  "include": [
+    "src/**/*.ts",
+    "packages/trust-kernel/src/**/*.ts",
+    "packages/business-domain/src/**/*.ts",
+    "packages/database/src/**/*.ts"
+  ]
 }

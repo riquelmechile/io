@@ -5,6 +5,7 @@
   "type": "module",
   "description": "PostgreSQL-shaped DbConnection port adapters for the trust-kernel persistence ports (first adapter slice). Not a canonical package.",
   "devDependencies": {
+    "@io/business-domain": "workspace:*",
     "@io/trust-kernel": "workspace:*",
     "@types/pg": "^8.20.0"
   },

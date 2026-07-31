@@ -24,12 +24,17 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3))
 
+  packages/business-domain: {}
+
   packages/database:
     dependencies:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
     devDependencies:
+      '@io/business-domain':
+        specifier: workspace:*
+        version: link:../business-domain
       '@io/trust-kernel':
         specifier: workspace:*
         version: link:../trust-kernel
