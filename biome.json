@@ -20,6 +20,9 @@
       "packages/business-domain/src/**/*.ts",
       "packages/business-domain/test/**/*.ts",
       "packages/business-domain/package.json",
+      "packages/llm-client/src/**/*.ts",
+      "packages/llm-client/test/**/*.ts",
+      "packages/llm-client/package.json",
       "!.pgdata",
       "!**/.pgdata"
     ]

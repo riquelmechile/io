@@ -23,6 +23,7 @@
     "packages/trust-kernel/**/*.ts",
     "packages/business-domain/**/*.ts",
     "packages/database/**/*.ts",
+    "packages/llm-client/**/*.ts",
     "vitest.config.ts"
   ]
 }

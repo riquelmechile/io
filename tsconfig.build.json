@@ -4,6 +4,7 @@
     "src/**/*.ts",
     "packages/trust-kernel/src/**/*.ts",
     "packages/business-domain/src/**/*.ts",
-    "packages/database/src/**/*.ts"
+    "packages/database/src/**/*.ts",
+    "packages/llm-client/src/**/*.ts"
   ]
 }

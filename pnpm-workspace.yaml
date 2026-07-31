@@ -7,3 +7,5 @@ packages:
 # enforced by pnpm against the real runtime. Never set nodeVersion here (it
 # makes pnpm assume a Node version and bypasses real-runtime enforcement).
 engineStrict: true
+minimumReleaseAgeExclude:
+  - openai@7.3.0

@@ -1,0 +1,13 @@
+{
+  "name": "@io/llm-client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek V4 chat-completions adapter over the async LlmClient port (thinking, tools, cache-cost). Not a canonical package.",
+  "devDependencies": {
+    "@types/node": "24.13.3"
+  },
+  "dependencies": {
+    "openai": "^7.3.0"
+  }
+}
