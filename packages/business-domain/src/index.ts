@@ -52,6 +52,8 @@ export {
   assertValidWorkTransition,
   assertValidDelegationTransition,
   assertValidLlmPlan,
+  isDelegationWindowActive,
+  isDelegationActive,
 } from './validation/guards.js';
 export type { TransitionCommand, LlmPlan } from './validation/guards.js';
 

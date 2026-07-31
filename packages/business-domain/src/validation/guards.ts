@@ -65,6 +65,28 @@ export function assertValidWorkRow(row: unknown): Work {
   return row as Work;
 }
 
+const DELEGATION_STATES: readonly DelegationState[] = ['draft', 'active', 'revoked', 'expired'];
+
+/**
+ * Single source of truth for delegation window semantics — mirrors trust-kernel
+ * `isWindowActive(start, now, expiry)`: active iff start <= now AND expiry > now.
+ */
+export function isDelegationWindowActive(
+  validFrom: number,
+  now: number,
+  validUntil: number,
+): boolean {
+  return validFrom <= now && validUntil > now;
+}
+
+/** A Delegation is active only when state is `active` AND within [validFrom, validUntil). */
+export function isDelegationActive(delegation: Delegation, now: number): boolean {
+  return (
+    delegation.state === 'active' &&
+    isDelegationWindowActive(delegation.validFrom, now, delegation.validUntil)
+  );
+}
+
 export function assertValidDelegationRow(row: unknown): Delegation {
   if (row === null || typeof row !== 'object') {
     throw new ValidationError('delegation row must be an object');
@@ -74,6 +96,37 @@ export function assertValidDelegationRow(row: unknown): Delegation {
   assertNonEmptyString(r.companyId, 'companyId');
   assertNonEmptyString(r.delegator, 'delegator');
   assertNonEmptyString(r.delegate, 'delegate');
+  assertNonEmptyString(r.expectedOutcome, 'expectedOutcome');
+  if (typeof r.state !== 'string' || !DELEGATION_STATES.includes(r.state as DelegationState)) {
+    throw new ValidationError('invalid or missing field: state');
+  }
+  if (typeof r.validFrom !== 'number' || !Number.isFinite(r.validFrom)) {
+    throw new ValidationError('invalid or missing field: validFrom');
+  }
+  if (typeof r.validUntil !== 'number' || !Number.isFinite(r.validUntil)) {
+    throw new ValidationError('invalid or missing field: validUntil');
+  }
+  if (r.validUntil <= r.validFrom) {
+    throw new ValidationError('invalid window: validUntil must be after validFrom');
+  }
+  const scope = r.authorityScope;
+  if (scope === null || typeof scope !== 'object') {
+    throw new ValidationError('invalid or missing field: authorityScope');
+  }
+  const s = scope as Record<string, unknown>;
+  assertNonEmptyString(s.scope, 'authorityScope.scope');
+  if (!Array.isArray(s.actions) || s.actions.length === 0) {
+    throw new ValidationError('invalid or missing field: authorityScope.actions');
+  }
+  const budget = r.budget;
+  if (budget === null || typeof budget !== 'object') {
+    throw new ValidationError('invalid or missing field: budget');
+  }
+  const b = budget as Record<string, unknown>;
+  assertNonEmptyString(b.currency, 'budget.currency');
+  if (typeof b.limit !== 'number' || !Number.isFinite(b.limit)) {
+    throw new ValidationError('invalid or missing field: budget.limit');
+  }
   return row as Delegation;
 }
 
@@ -83,10 +136,20 @@ export function assertValidReceiptRow(row: unknown): BusinessReceipt {
   }
   const r = row as Record<string, unknown>;
   assertNonEmptyString(r.receiptId, 'receiptId');
+  assertNonEmptyString(r.workId, 'workId');
+  assertNonEmptyString(r.delegationId, 'delegationId');
   assertNonEmptyString(r.companyId, 'companyId');
+  assertNonEmptyString(r.actor, 'actor');
   assertNonEmptyString(r.terminalEventId, 'terminalEventId');
+  assertNonEmptyString(r.terminalState, 'terminalState');
   assertNonEmptyString(r.policyHash, 'policyHash');
   assertNonEmptyString(r.artifactHash, 'artifactHash');
+  if (typeof r.issuedAt !== 'number' || !Number.isFinite(r.issuedAt)) {
+    throw new ValidationError('invalid or missing field: issuedAt');
+  }
+  if (!Array.isArray(r.evidenceRefs)) {
+    throw new ValidationError('invalid or missing field: evidenceRefs');
+  }
   return row as BusinessReceipt;
 }
 
