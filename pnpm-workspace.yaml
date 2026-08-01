@@ -4,6 +4,7 @@
 #   packages/app             — worker-process shell + vertical logic: worker cycle (claim→finalize), sandbox,
 #                              journal marker, and the E2E suite vs live PostgreSQL (packages/app/test/e2e)
 #   packages/business-domain — pure domain types/ports/use-cases/validation (zero @io/*)
+#   packages/context         — pure canonical context compiler: §7.2 segment ordering, prefix/suffix, cohort (BD types only)
 #   packages/database        — PostgreSQL-shaped DbConnection + adapters over live PG 18.4
 #   packages/llm-client      — DeepSeek V4 adapter over the `openai` SDK (confined)
 #   packages/trust-kernel    — authority kernel: SoD, windows, pipeline (in-memory)

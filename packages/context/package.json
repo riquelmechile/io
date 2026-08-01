@@ -1,0 +1,13 @@
+{
+  "name": "@io/context",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure canonical context compiler: §7.2 segment ordering, stable prefix + dynamic suffix, cache cohort. Depends on @io/business-domain types only (design D1/D4). Not a canonical package.",
+  "dependencies": {
+    "@io/business-domain": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.3"
+  }
+}

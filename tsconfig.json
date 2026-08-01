@@ -22,6 +22,7 @@
     "test/**/*.ts",
     "packages/trust-kernel/**/*.ts",
     "packages/business-domain/**/*.ts",
+    "packages/context/**/*.ts",
     "packages/database/**/*.ts",
     "packages/llm-client/**/*.ts",
     "packages/app/**/*.ts",

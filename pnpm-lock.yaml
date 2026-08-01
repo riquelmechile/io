@@ -41,6 +41,16 @@ importers:
 
   packages/business-domain: {}
 
+  packages/context:
+    dependencies:
+      '@io/business-domain':
+        specifier: workspace:*
+        version: link:../business-domain
+    devDependencies:
+      '@types/node':
+        specifier: 24.13.3
+        version: 24.13.3
+
   packages/database:
     dependencies:
       pg:
