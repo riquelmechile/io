@@ -43,10 +43,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Double-Gated Live E2E — ISOLATED complex unit, Reqs 2–6 (deps: Phases 1–3)
 
-- [ ] 4.1 Gate + cost-safety: create `packages/app/test/e2e/deepseek-live.integration.test.ts` with `describe.skipIf(!process.env.DEEPSEEK_API_KEY || process.env.IO_LIVE_LLM !== '1')`; prove plain `pnpm test` (no key / no opt-in) skips + stays green; never print key. [Req 3: both permit / opt-in absent / key absent]
-- [ ] 4.2 Happy-path structure: bootstrap harness with `RecordingLlmClient(new DeepSeekClient())`; assert `result.ok`, work `completed` v3, one receipt, journal `completed`, effect applied + reversible (`undo`), plan shape (`create-document`, non-empty `relativePath`, string `content`) — NO exact path/content/plan. [Req 2 both; Req 4 output-unconstrained]
-- [ ] 4.3 Model echo + KV accounting: assert `lastResponse.model === 'deepseek-v4-flash'`, cache hit/miss present `>= 0`, `promptTokens === hit + miss`, `lastRequest.user === deriveCohort({companyId, process:'low-risk-documents', schemaVersion:CONTEXT_SCHEMA_VERSION})` (cohort `user`). [Req 4 echo + cache; Req 6]
-- [ ] 4.4 Bounded retry (test-only): ≤2 attempts, fresh key `live-${n}-${uuid}`, SQL reset `UPDATE work SET state='accepted', version=1`, retry only `invalid-plan`, no 3rd completion, worker source unchanged. [Req 5 all 3]
-- [ ] 4.5 VERIFY live proof + cost-safety: gate-closed suite green (no spend); deliberate `IO_LIVE_LLM=1 pnpm vitest run …/deepseek-live.integration.test.ts` passes; confirm key never printed/committed; `pnpm check` green.
+- [x] 4.1 Gate + cost-safety: create `packages/app/test/e2e/deepseek-live.integration.test.ts` with `describe.skipIf(!process.env.DEEPSEEK_API_KEY || process.env.IO_LIVE_LLM !== '1')`; prove plain `pnpm test` (no key / no opt-in) skips + stays green; never print key. [Req 3: both permit / opt-in absent / key absent]
+- [x] 4.2 Happy-path structure: bootstrap harness with `RecordingLlmClient(new DeepSeekClient())`; assert `result.ok`, work `completed` v3, one receipt, journal `completed`, effect applied + reversible (`undo`), plan shape (`create-document`, non-empty `relativePath`, string `content`) — NO exact path/content/plan. [Req 2 both; Req 4 output-unconstrained]
+- [x] 4.3 Model echo + KV accounting: assert `lastResponse.model === 'deepseek-v4-flash'`, cache hit/miss present `>= 0`, `promptTokens === hit + miss`, `lastRequest.user === deriveCohort({companyId, process:'low-risk-documents', schemaVersion:CONTEXT_SCHEMA_VERSION})` (cohort `user`). [Req 4 echo + cache; Req 6]
+- [x] 4.4 Bounded retry (test-only): ≤2 attempts, fresh key `live-${n}-${uuid}`, SQL reset `UPDATE work SET state='accepted', version=1`, retry only `invalid-plan`, no 3rd completion, worker source unchanged. [Req 5 all 3]
+- [x] 4.5 VERIFY live proof + cost-safety: gate-closed suite green (no spend); deliberate `IO_LIVE_LLM=1 pnpm vitest run …/deepseek-live.integration.test.ts` passes (ORCHESTRATOR-run, opt-in); confirm key never printed/committed; `pnpm check` green.
 
 Coverage: Req1→1.1/1.2 · Req2→4.2 · Req3→4.1 · Req4→4.2/4.3 · Req5→4.4 · Req6→4.3 (all 6 reqs / 14 scenarios).
