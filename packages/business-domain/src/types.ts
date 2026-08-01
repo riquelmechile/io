@@ -113,3 +113,45 @@ export interface BusinessEvent {
   /** Emitter — 'worker'. */
   readonly source: string;
 }
+
+// ── Skill (versioned, immutable; first-skill capability) ──
+
+/**
+ * Explicit lifecycle of a Skill version (R4): only `draft`, `active`, or
+ * `retired`. A guard MUST reject every other state; only `active` Skills MAY be
+ * selected for a cohort.
+ */
+export type SkillState = 'draft' | 'active' | 'retired';
+
+/**
+ * Cohort discriminators of a Skill (design: `{process, schemaVersion}`). A
+ * Skill is eligible for the cohort whose `process` and `schemaVersion` BOTH
+ * match — selection is a pure function of cohort values and Skill state/scope.
+ */
+export interface SkillScope {
+  readonly process: string;
+  /** ≥1 — the cohort schema version, never 0 (design). */
+  readonly schemaVersion: number;
+}
+
+/**
+ * Immutable versioned Skill (R1). Construction is DETERMINISTIC from
+ * caller-supplied values: every field is supplied by the caller — the type
+ * reads NO clocks and generates NO identifiers. A new version is a NEW record
+ * (append-only, UNIQUE(companyId, skillId, version)); a duplicate identity is
+ * rejected and the original preserved.
+ */
+export interface Skill {
+  readonly skillId: string;
+  /** Non-empty tenant scope (R7) — every read carries it. */
+  readonly companyId: string;
+  readonly name: string;
+  /** ≥1, caller-supplied version of this Skill record. */
+  readonly version: number;
+  readonly body: string;
+  readonly scope: SkillScope;
+  readonly state: SkillState;
+  /** Epoch ms timestamp, caller-supplied (deterministic construction). */
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}

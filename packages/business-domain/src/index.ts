@@ -14,6 +14,7 @@ export {
   InMemoryCompanyRepository,
   InMemoryDelegationRepository,
   InMemoryIdempotencyJournalRepository,
+  InMemorySkillRepository,
   InMemoryWorkRepository,
 } from './ports/fakes.js';
 export type {
@@ -30,8 +31,14 @@ export type {
   CasResult,
   CompanyRepository,
   DelegationRepository,
+  SkillRepository,
   WorkRepository,
 } from './ports/repositories.js';
+export type { SkillCohort } from './skill-activation.js';
+export {
+  activeSkillsFor,
+  isSkillState,
+} from './skill-activation.js';
 export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 export type {
   AuthorityScope,
@@ -42,6 +49,9 @@ export type {
   Delegation,
   DelegationState,
   Deliverable,
+  Skill,
+  SkillScope,
+  SkillState,
   Work,
   WorkOutcome,
   WorkState,

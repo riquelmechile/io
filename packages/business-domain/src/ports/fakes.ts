@@ -1,4 +1,4 @@
-import type { BusinessEvent, BusinessReceipt, Company, Delegation, Work } from '../types.js';
+import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
 import type {
   IdempotencyJournalPort,
   JournalClaimResult,
@@ -12,6 +12,7 @@ import type {
   CasResult,
   CompanyRepository,
   DelegationRepository,
+  SkillRepository,
   WorkRepository,
 } from './repositories.js';
 
@@ -159,6 +160,54 @@ export class InMemoryBusinessEventRepository implements BusinessEventRepository 
   }
 
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
+    requireCompanyId(companyId);
+    return this.entries.filter((entry) => entry.companyId === companyId);
+  }
+}
+
+export class InMemorySkillRepository implements SkillRepository {
+  /**
+   * Ordered array storage — insertion order IS versioned history (R3): a new
+   * version is appended, never overwriting an existing entry. Mirrors the
+   * PostgreSQL adapter's `ORDER BY id ASC` read order.
+   */
+  private readonly entries: Skill[] = [];
+
+  async save(skill: Skill): Promise<Readonly<Skill>> {
+    requireCompanyId(skill.companyId);
+    if (
+      this.entries.some(
+        (entry) =>
+          entry.companyId === skill.companyId &&
+          entry.skillId === skill.skillId &&
+          entry.version === skill.version,
+      )
+    ) {
+      // Versioned append-only (R2/R7): a duplicate (companyId, skillId, version)
+      // identity is rejected and the ORIGINAL entry is preserved — mirrors the
+      // PostgreSQL adapter's uq_skill_company_skill_version UNIQUE constraint.
+      throw new Error(
+        `Skill already exists: ${skill.companyId}/${skill.skillId} v${skill.version}`,
+      );
+    }
+    this.entries.push(skill);
+    return skill;
+  }
+
+  async get(companyId: string, skillId: string): Promise<Skill | undefined> {
+    requireCompanyId(companyId);
+    // Tenant-scoped latest version (R2): newest version for the tenant+skillId,
+    // or undefined when the tenant has no version of that skill.
+    const tenantVersions = this.entries.filter(
+      (entry) => entry.companyId === companyId && entry.skillId === skillId,
+    );
+    if (tenantVersions.length === 0) return undefined;
+    return tenantVersions.reduce((latest, entry) =>
+      entry.version > latest.version ? entry : latest,
+    );
+  }
+
+  async listByCompany(companyId: string): Promise<readonly Skill[]> {
     requireCompanyId(companyId);
     return this.entries.filter((entry) => entry.companyId === companyId);
   }

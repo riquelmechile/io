@@ -1,4 +1,4 @@
-import type { BusinessEvent, BusinessReceipt, Company, Delegation, Work } from '../types.js';
+import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
 
 /**
  * Async, driver-free repository port interfaces for the four business-domain
@@ -69,4 +69,25 @@ export interface BusinessReceiptRepository {
 export interface BusinessEventRepository {
   append(event: BusinessEvent): Promise<Readonly<BusinessEvent>>;
   listByCompany(companyId: string): Promise<readonly BusinessEvent[]>;
+}
+
+/**
+ * Versioned, append-only repository for Skills (R2): `save` appends a NEW
+ * version and rejects a duplicate `(companyId, skillId, version)` identity
+ * WITHOUT altering the original (a new version is a new record — never an
+ * overwrite). The surface is deliberately limited to append-`save`,
+ * tenant-scoped latest-version `get`, and tenant-scoped `listByCompany` of ALL
+ * persisted versions. There is NO update, delete, or overwrite operation. Every
+ * read MUST be scoped by a mandatory, non-empty `companyId` (ADR-0002/R7) and
+ * MUST NOT return another company's Skills. Methods return a `Promise` — a real
+ * adapter is I/O-bound. The port carries ZERO persistence knowledge; a
+ * downstream adapter (PG, file, etc.) supplies the implementation.
+ */
+export interface SkillRepository {
+  /** Append a NEW version; a duplicate (companyId, skillId, version) fails. */
+  save(skill: Skill): Promise<Readonly<Skill>>;
+  /** Latest version for the tenant+skillId, or undefined when none exists. */
+  get(companyId: string, skillId: string): Promise<Skill | undefined>;
+  /** All persisted versions for the tenant, ordered by insertion. */
+  listByCompany(companyId: string): Promise<readonly Skill[]>;
 }
