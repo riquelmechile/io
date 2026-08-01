@@ -5,19 +5,18 @@ import { fileURLToPath } from 'node:url';
 
 import type { Company, Delegation, Work } from '@io/business-domain/src/index.js';
 import {
-  PgBusinessReceiptRepository,
+  type PgBusinessReceiptRepository,
   PgCompanyRepository,
-  PgDelegationRepository,
-  PgIdempotencyJournalRepository,
-  PgWorkRepository,
+  type PgDelegationRepository,
+  type PgIdempotencyJournalRepository,
+  type PgWorkRepository,
 } from '@io/database/src/index.js';
-import type { DbConnection } from '@io/database/src/connection.js';
 import { PgDbConnection, pgConnectionString } from '@io/database/src/pg-connection.js';
-import { FakeLlmClient } from '@io/llm-client/src/index.js';
 import type { LlmClient, LlmResponse } from '@io/llm-client/src/index.js';
+import { FakeLlmClient } from '@io/llm-client/src/index.js';
 
 import { buildWorkerDeps } from '../../src/composition/worker-deps.js';
-import { FileDocumentSandbox } from '../../src/sandbox/file-document-sandbox.js';
+import type { FileDocumentSandbox } from '../../src/sandbox/file-document-sandbox.js';
 import type { WorkerDeps, WorkerPrincipals } from '../../src/worker/types.js';
 
 /**
