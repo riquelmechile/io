@@ -85,6 +85,21 @@ parseCommand → startWork(CAS)
   → finalizeInFlightWorkAtomically(tx) // see CAS-loss
 ```
 
+**Resume-aware claim (realizes the reconciliation intent):** the reconciliation
+table below always assumes the cycle REACHES the pre-effect reconcile, so the
+claim step must let a retry/resume of the cycle's OWN already-claimed Work
+proceed instead of dying at `startWork`'s `invalid-transition` (`in_progress →
+in_progress` is not in the foundation transition table). `runWorker` consults
+the journal BEFORE the CAS claim: a fresh key claims normally (`accepted →
+in_progress`, exactly one concurrent winner — unchanged); a key already holding
+an attempt (`in_flight` | `aborted_retryable`) resumes WITHOUT re-claiming and
+the pre-effect reconcile drives reopen/replay/DENY/recovery; an `in_progress`
+Work with NO journal attempt is never hijacked (the claim fails it closed). The
+Work left `in_progress` by the finalize T2(i) reconciliation is therefore
+resumable — this is what makes the controlled retry / no-brick guarantee hold
+through the PUBLIC entry point. This realizes the design intent; it is not a
+scope change.
+
 ## Finalize CAS-loss — transaction boundary (closes the brick)
 
 ```

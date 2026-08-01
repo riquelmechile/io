@@ -43,6 +43,13 @@ export class DurableSandboxFake implements SandboxPort {
     return this.delegate.wasApplied(handleId);
   }
 
+  /** Every persisted undo-log entry (B9 restart recovery consults the undo log
+   * — the effect SoT, §9.8 — to reconstruct whether the crashed worker's
+   * effect ran). Read-only; the log is persisted by {@link persist}. */
+  snapshotUndoLog(): readonly EffectRecord[] {
+    return this.delegate.snapshotUndoLog();
+  }
+
   private persist(): void {
     const state: DurableSandboxState = {
       effects: this.delegate.snapshotEffects(),

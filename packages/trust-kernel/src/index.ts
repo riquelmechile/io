@@ -43,6 +43,14 @@ export type { Grant } from './grant.js';
 export type { RiskThresholds } from './risk.js';
 export type { SodAssignment, SodPolicy, SodRole } from './sod.js';
 
+// --- Authority evaluation functions (worker-cycle: deny-at-action) ---
+// The worker (Slice B) verifies authority at action time through these EXPORTED
+// checks: `checkSod` enforces the ABSOLUTE_PAIRS (verifier≠executor,
+// proposer≠approver) and `checkGrant` enforces deny-by-default command grants.
+// `ABSOLUTE_PAIRS` itself stays module-private — no implied export.
+export { checkSod } from './sod.js';
+export { checkGrant } from './grant.js';
+
 // --- Persistence port boundary (Increment 2, Req 1-5) ---
 // Generic outbound port interfaces + honest disclosure + in-memory fakes.
 // import type keeps the package dependency-free (D3/D4); the disclosure value
