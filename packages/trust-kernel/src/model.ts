@@ -22,6 +22,18 @@ export type Authority = string;
 export type Decision = 'ALLOW' | 'DENY';
 
 /**
+ * Activation window gate (Req 2, Req 4; ADR-0001): temporal authority is active
+ * ONLY inside `start <= now < expiry`. A future `start` (start > now) confers no
+ * authority; an expired window (now >= expiry) confers none. The lower bound is
+ * inclusive (`start == now` is active); the upper bound is exclusive (`now ==
+ * expiry` is inactive). Applied wherever grant or assignment activity is
+ * decided (grant checks, active-identity resolution, the expiry gate).
+ */
+export function isWindowActive(start: number, now: number, expiry: number): boolean {
+  return start <= now && now < expiry;
+}
+
+/**
  * A bounded validity window shared by temporary assignments and grants (Req 2,
  * Req 4). Both records carry scope + start + expiry + revocation; the shared
  * window validation lives once in {@link validateBoundedWindow}.

@@ -36,11 +36,12 @@ describe('Company type', () => {
 });
 
 describe('Delegation type', () => {
-  it('requires all fields (delegationId, delegator, delegate, authorityScope, budget, validFrom, validUntil, expectedOutcome, state)', () => {
+  it('requires all fields including a non-empty companyId', () => {
     const authorityScope: AuthorityScope = { scope: 'finance', actions: ['approve'] };
     const budget: Budget = { currency: 'USD', limit: 50000 };
     const delegation: Delegation = {
       delegationId: 'del-1',
+      companyId: 'acme',
       delegator: 'principal-1',
       delegate: 'principal-2',
       authorityScope,
@@ -51,6 +52,7 @@ describe('Delegation type', () => {
       state: 'draft',
     };
     expect(delegation.delegationId).toBe('del-1');
+    expect(delegation.companyId).toBe('acme');
     expect(delegation.authorityScope).toEqual(authorityScope);
     expect(delegation.budget).toEqual(budget);
     expect(delegation.state).toBe('draft');
@@ -58,18 +60,37 @@ describe('Delegation type', () => {
 });
 
 describe('Work type', () => {
-  it('requires workId, delegationId, proposer, description, state, evidenceRefs', () => {
+  it('requires workId, companyId, delegationId, proposer, description, state, version, evidenceRefs', () => {
     const work: Work = {
       workId: 'work-1',
+      companyId: 'acme',
       delegationId: 'del-1',
       proposer: 'principal-2',
       description: 'execute the quarterly close',
       state: 'proposed',
+      version: 1,
       evidenceRefs: ['evid-1', 'evid-2'],
     };
     expect(work.workId).toBe('work-1');
+    expect(work.companyId).toBe('acme');
     expect(work.delegationId).toBe('del-1');
+    expect(work.version).toBe(1);
     expect(work.evidenceRefs).toEqual(['evid-1', 'evid-2']);
+  });
+
+  it('version is a numeric optimistic-concurrency counter initialized to 1 on creation', () => {
+    const work: Work = {
+      workId: 'work-ver',
+      companyId: 'acme',
+      delegationId: 'del-1',
+      proposer: 'principal-2',
+      description: 'execute task',
+      state: 'proposed',
+      version: 1,
+      evidenceRefs: [],
+    };
+    expect(work.version).toBe(1);
+    expect(typeof work.version).toBe('number');
   });
 
   it('accepts optional deliverable and outcome', () => {
@@ -77,10 +98,12 @@ describe('Work type', () => {
     const outcome: WorkOutcome = { result: 'success', success: true };
     const work: Work = {
       workId: 'work-2',
+      companyId: 'acme',
       delegationId: 'del-1',
       proposer: 'principal-2',
       description: 'execute task',
       state: 'completed',
+      version: 1,
       evidenceRefs: [],
       deliverable,
       outcome,
@@ -94,10 +117,12 @@ describe('Work type', () => {
     // At runtime an empty string is the closest to "missing".
     const work: Work = {
       workId: 'work-3',
+      companyId: 'acme',
       delegationId: '',
       proposer: 'p1',
       description: 'd',
       state: 'proposed',
+      version: 1,
       evidenceRefs: [],
     };
     expect(work.delegationId).toBe('');
@@ -105,9 +130,10 @@ describe('Work type', () => {
 });
 
 describe('BusinessReceipt type', () => {
-  it('requires all 9 fields (receiptId, workId, delegationId, actor, policyHash, evidenceRefs, terminalState, artifactHash, issuedAt)', () => {
+  it('requires all 10 fields including a non-empty companyId', () => {
     const receipt: BusinessReceipt = {
       receiptId: 'receipt-1',
+      companyId: 'acme',
       workId: 'work-1',
       delegationId: 'del-1',
       actor: 'principal-2',
@@ -118,8 +144,9 @@ describe('BusinessReceipt type', () => {
       issuedAt: 1750000000000,
     };
     expect(receipt.receiptId).toBe('receipt-1');
+    expect(receipt.companyId).toBe('acme');
     expect(receipt.terminalState).toBe('verified');
     expect(receipt.evidenceRefs).toEqual(['evid-1']);
-    expect(Object.keys(receipt)).toHaveLength(9);
+    expect(Object.keys(receipt)).toHaveLength(10);
   });
 });

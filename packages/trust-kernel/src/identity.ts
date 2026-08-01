@@ -1,5 +1,5 @@
 import type { Authority, PrincipalId, Role, TemporaryAssignment } from './model.js';
-import { validateBoundedWindow } from './model.js';
+import { isWindowActive, validateBoundedWindow } from './model.js';
 
 /** Outcome of structurally validating a temporary assignment. */
 export interface AssignmentValidation {
@@ -52,7 +52,10 @@ export function resolveActiveIdentity(identity: PrincipalIdentity, now: number):
   const activeAssignments = identity.temporaryAssignments.filter((assignment) => {
     if (!validateTemporaryAssignment(assignment).valid) return false;
     if (assignment.revoked === true) return false;
-    return (assignment.expiry ?? now) > now;
+    // Valid assignments always declare start and expiry (validateBoundedWindow);
+    // the window gate makes a future start confer no authority (ADR-0001).
+    if (assignment.start === undefined || assignment.expiry === undefined) return false;
+    return isWindowActive(assignment.start, now, assignment.expiry);
   });
 
   return {

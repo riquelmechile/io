@@ -72,6 +72,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
   function sampleDelegation(): Delegation {
     return {
       delegationId: 'del-001',
+      companyId: 'acme-corp',
       delegator: 'principal-1',
       delegate: 'principal-2',
       authorityScope: { scope: 'finance', actions: ['approve', 'reject', 'view'] },
@@ -86,10 +87,12 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
   function sampleWork(): Work {
     return {
       workId: 'work-001',
+      companyId: 'acme-corp',
       delegationId: 'del-001',
       proposer: 'principal-2',
       description: 'execute the Q4 financial close',
       state: 'completed',
+      version: 1,
       evidenceRefs: ['evid-1', 'evid-2', 'evid-3'],
       deliverable: { description: 'q4-close-report.pdf', format: 'pdf' },
       outcome: { result: 'closed successfully', success: true },
@@ -99,6 +102,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
   function sampleReceipt(): BusinessReceipt {
     return {
       receiptId: 'receipt-001',
+      companyId: 'acme-corp',
       workId: 'work-001',
       delegationId: 'del-001',
       actor: 'principal-2',
@@ -127,7 +131,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     it('round-trips byte-identically including nested JSONB', async () => {
       const delegation = sampleDelegation();
       await delegationRepo.save(delegation);
-      const got = await delegationRepo.get(delegation.delegationId);
+      const got = await delegationRepo.get(delegation.companyId, delegation.delegationId);
       expect(got).toEqual(delegation);
       expect(got?.authorityScope).toEqual({
         scope: 'finance',
@@ -136,8 +140,8 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       expect(got?.budget).toEqual({ currency: 'USD', limit: 250000 });
     });
 
-    it('get(unknown) returns undefined', async () => {
-      expect(await delegationRepo.get('nonexistent')).toBeUndefined();
+    it('get(companyId, unknownId) returns undefined', async () => {
+      expect(await delegationRepo.get('acme-corp', 'nonexistent')).toBeUndefined();
     });
   });
 
@@ -145,7 +149,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     it('round-trips with deliverable and outcome present', async () => {
       const w = sampleWork();
       await workRepo.save(w);
-      const got = await workRepo.get(w.workId);
+      const got = await workRepo.get(w.companyId, w.workId);
       expect(got).toEqual(w);
       expect(got?.deliverable).toEqual({ description: 'q4-close-report.pdf', format: 'pdf' });
       expect(got?.outcome).toEqual({ result: 'closed successfully', success: true });
@@ -155,21 +159,23 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     it('round-trips without deliverable/outcome (nullable JSONB → undefined)', async () => {
       const w: Work = {
         workId: 'work-minimal',
+        companyId: 'acme-corp',
         delegationId: 'del-001',
         proposer: 'principal-2',
         description: 'minimal work item',
         state: 'proposed',
+        version: 1,
         evidenceRefs: [],
       };
       await workRepo.save(w);
-      const got = await workRepo.get('work-minimal');
+      const got = await workRepo.get('acme-corp', 'work-minimal');
       expect(got).toEqual(w);
       expect(got?.deliverable).toBeUndefined();
       expect(got?.outcome).toBeUndefined();
     });
 
-    it('get(unknown) returns undefined', async () => {
-      expect(await workRepo.get('nonexistent')).toBeUndefined();
+    it('get(companyId, unknownId) returns undefined', async () => {
+      expect(await workRepo.get('acme-corp', 'nonexistent')).toBeUndefined();
     });
   });
 
@@ -177,7 +183,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     it('round-trips byte-identically', async () => {
       const receipt = sampleReceipt();
       await receiptRepo.save(receipt);
-      const got = await receiptRepo.get(receipt.receiptId);
+      const got = await receiptRepo.get(receipt.companyId, receipt.receiptId);
       expect(got).toEqual(receipt);
       expect(got?.evidenceRefs).toEqual(['evid-1', 'evid-2', 'evid-3']);
       expect(got?.terminalState).toBe('verified');
@@ -186,21 +192,21 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     it('has no update path — re-save with same ID creates duplicate (immutability is port-level)', async () => {
       const receipt = sampleReceipt();
       await receiptRepo.save(receipt);
-      const original = await receiptRepo.get(receipt.receiptId);
+      const original = await receiptRepo.get(receipt.companyId, receipt.receiptId);
       expect(original).toEqual(receipt);
     });
 
-    it('get(unknown) returns undefined', async () => {
-      expect(await receiptRepo.get('nonexistent')).toBeUndefined();
+    it('get(companyId, unknownId) returns undefined', async () => {
+      expect(await receiptRepo.get('acme-corp', 'nonexistent')).toBeUndefined();
     });
   });
 
   describe('TRUNCATE isolation', () => {
     it('starts each test with empty tables', async () => {
       expect(await companyRepo.get('acme-corp')).toBeUndefined();
-      expect(await delegationRepo.get('del-001')).toBeUndefined();
-      expect(await workRepo.get('work-001')).toBeUndefined();
-      expect(await receiptRepo.get('receipt-001')).toBeUndefined();
+      expect(await delegationRepo.get('acme-corp', 'del-001')).toBeUndefined();
+      expect(await workRepo.get('acme-corp', 'work-001')).toBeUndefined();
+      expect(await receiptRepo.get('acme-corp', 'receipt-001')).toBeUndefined();
     });
   });
 });

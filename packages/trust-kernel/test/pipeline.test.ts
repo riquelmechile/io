@@ -143,12 +143,12 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
     });
 
     it.each([...DEFERRED_STEPS])(
-      '%s is an ALLOW no-op pass-through documenting harden-downstream',
+      '%s is a DEFERRED no-op pass-through documenting harden-downstream (never silent ALLOW)',
       (name) => {
         const step = result.steps.find((entry) => entry.name === name);
         expect(step?.deferred).toBe(true);
         expect(step?.passThrough).toBe(true);
-        expect(step?.decision).toBe('ALLOW');
+        expect(step?.decision).toBe('DEFERRED');
         expect(step?.reason).toMatch(/deferred|harden|pass-through|downstream/i);
       },
     );
@@ -156,7 +156,15 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
     it('never implements real deferred behavior: pass-throughs never gate the decision', () => {
       for (const name of DEFERRED_STEPS) {
         const step = result.steps.find((entry) => entry.name === name);
-        expect(step?.decision).toBe('ALLOW');
+        expect(step?.decision).toBe('DEFERRED');
+      }
+      expect(result.decision).toBe('ALLOW');
+    });
+
+    it('records a non-ALLOW marker on every deferred step (no silent ALLOW)', () => {
+      for (const step of result.steps.filter((entry) => entry.deferred)) {
+        expect(step.decision).not.toBe('ALLOW');
+        expect(step.decision).toBe('DEFERRED');
       }
     });
   });
@@ -209,6 +217,18 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
       const result = await evaluate(input({ grants: [grant({ revoked: true })] }));
       expect(result.decision).toBe('DENY');
       expect(result.steps[result.steps.length - 1]?.id).toBe(12);
+    });
+
+    it('denies a grant whose window has not started (future start) at the expiry gate', async () => {
+      const result = await evaluate(input({ grants: [grant({ start: 2000 })] }));
+      expect(result.decision).toBe('DENY');
+      expect(result.steps[result.steps.length - 1]?.id).toBe(12);
+      expect(result.steps[result.steps.length - 1]?.decision).toBe('DENY');
+    });
+
+    it('allows a grant on the boundary start == now', async () => {
+      const result = await evaluate(input({ grants: [grant({ start: 1500 })], now: 1500 }));
+      expect(result.decision).toBe('ALLOW');
     });
   });
 
@@ -283,6 +303,18 @@ describe('Scoped in-memory evaluation pipeline (Req 5)', () => {
     it('captures a DENY evidence record', () => {
       expect(result.evidence.decision).toBe('DENY');
       expect(result.evidence.persistent).toBe(false);
+    });
+  });
+
+  describe('callers must await evaluate (Req 5)', () => {
+    it('returns a Promise whose resolution carries the decision', async () => {
+      const promise = evaluate(input());
+      expect(promise).toBeInstanceOf(Promise);
+      await expect(promise).resolves.toMatchObject({ decision: 'ALLOW' });
+    });
+
+    it('a denied evaluation is obtained only after awaiting the Promise', async () => {
+      await expect(evaluate(input({ grants: [] }))).resolves.toMatchObject({ decision: 'DENY' });
     });
   });
 

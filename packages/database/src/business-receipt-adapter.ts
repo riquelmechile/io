@@ -7,7 +7,10 @@ import type { DbConnection } from './connection.js';
  * Adapter Pattern). Implements `BusinessReceiptRepository` over an injected,
  * ASYNC {@link DbConnection}. Receipts are immutable (write-once): save()
  * INSERTs and there is NO update method. JSONB objects (evidenceRefs) pass
- * directly as params. Methods are ASYNC (D1).
+ * directly as params. `company_id` (tenant scope, ADR-0002) is written on save
+ * and carried on every receipt; get() is a SCOPED read:
+ * `WHERE company_id = $1 AND receipt_id = $2` so a lookup under the wrong
+ * tenant returns no rows (not-found). Methods are ASYNC (D1).
  */
 export class PgBusinessReceiptRepository {
   private readonly conn: DbConnection;
@@ -18,11 +21,12 @@ export class PgBusinessReceiptRepository {
 
   async save(receipt: BusinessReceipt): Promise<Readonly<BusinessReceipt>> {
     await this.conn.execute(
-      'INSERT INTO business_receipt (receipt_id, work_id, delegation_id, actor, ' +
+      'INSERT INTO business_receipt (receipt_id, company_id, work_id, delegation_id, actor, ' +
         'policy_hash, evidence_refs, terminal_state, artifact_hash, issued_at, created_at) ' +
-        'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
       [
         receipt.receiptId,
+        receipt.companyId,
         receipt.workId,
         receipt.delegationId,
         receipt.actor,
@@ -37,14 +41,14 @@ export class PgBusinessReceiptRepository {
     return receipt;
   }
 
-  async get(receiptId: string): Promise<BusinessReceipt | undefined> {
+  async get(companyId: string, receiptId: string): Promise<BusinessReceipt | undefined> {
     const rows = await this.conn.query<BusinessReceipt>(
-      'SELECT receipt_id AS "receiptId", work_id AS "workId", ' +
+      'SELECT receipt_id AS "receiptId", company_id AS "companyId", work_id AS "workId", ' +
         'delegation_id AS "delegationId", actor, policy_hash AS "policyHash", ' +
         'evidence_refs AS "evidenceRefs", terminal_state AS "terminalState", ' +
         'artifact_hash AS "artifactHash", issued_at AS "issuedAt" ' +
-        'FROM business_receipt WHERE receipt_id = $1',
-      [receiptId],
+        'FROM business_receipt WHERE company_id = $1 AND receipt_id = $2',
+      [companyId, receiptId],
     );
     return rows[0];
   }

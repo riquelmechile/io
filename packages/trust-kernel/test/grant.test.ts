@@ -102,5 +102,23 @@ describe('Deny-by-default explicit grant (Req 4)', () => {
       expect(failed.decision).toBe('DENY');
       expect(failed.authority).toBeNull();
     });
+
+    it('denies a future-start grant (start > now) so it confers no authority', () => {
+      const decision = checkGrant(action(), principalId, [grant({ start: 2000 })], 1500);
+      expect(decision.decision).toBe('DENY');
+      expect(decision.authority).toBeNull();
+    });
+
+    it('treats start == now as active (window lower bound inclusive)', () => {
+      const decision = checkGrant(action(), principalId, [grant({ start: 1500 })], 1500);
+      expect(decision.decision).toBe('ALLOW');
+      expect(decision.authority).toBe(authority);
+    });
+
+    it('treats now == expiry as inactive (window upper bound exclusive)', () => {
+      const decision = checkGrant(action(), principalId, [grant({ expiry: 1500 })], 1500);
+      expect(decision.decision).toBe('DENY');
+      expect(decision.authority).toBeNull();
+    });
   });
 });

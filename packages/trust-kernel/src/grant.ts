@@ -1,4 +1,4 @@
-import { validateBoundedWindow } from './model.js';
+import { isWindowActive, validateBoundedWindow } from './model.js';
 import type {
   Authority,
   CommandId,
@@ -70,7 +70,13 @@ export function checkGrant(
   return { decision: 'DENY', authority: null, reason: 'no current bounded command grant' };
 }
 
-/** A grant is active when structurally valid, not revoked, and not expired. */
+/** A grant is active when structurally valid, not revoked, and inside its
+ * activation window `start <= now < expiry` (ADR-0001): a future start or an
+ * expired window confers no authority. */
 function isGrantActive(grant: Grant, now: number): boolean {
-  return validateGrant(grant).valid && grant.revoked !== true && grant.expiry > now;
+  return (
+    validateGrant(grant).valid &&
+    grant.revoked !== true &&
+    isWindowActive(grant.start, now, grant.expiry)
+  );
 }

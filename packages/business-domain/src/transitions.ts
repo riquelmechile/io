@@ -1,4 +1,4 @@
-import type { DelegationState, WorkState } from './types.js';
+import type { Delegation, DelegationState, WorkState } from './types.js';
 
 /**
  * Transition tables + pure guard functions for Delegation and Work state
@@ -28,6 +28,18 @@ const WORK_TRANSITIONS: Readonly<Record<WorkState, readonly WorkState[]>> = {
 
 export function canTransitionDelegation(from: DelegationState, to: DelegationState): boolean {
   return DELEGATION_TRANSITIONS[from].includes(to);
+}
+
+/**
+ * Temporal activity of a delegation (ADR-0002): active ONLY inside its window
+ * `validFrom <= now < validUntil`. A future `validFrom` (validFrom > now) is NOT
+ * active and confers no authority; a delegation past `validUntil` (now >=
+ * validUntil) is NOT active. This is the SAME window rule the trust kernel
+ * applies (`isWindowActive(start, now, expiry)`); business-domain implements it
+ * locally because the package stays `@io/*`-free (no cross-aggregate import).
+ */
+export function isDelegationActive(delegation: Delegation, now: number): boolean {
+  return delegation.validFrom <= now && now < delegation.validUntil;
 }
 
 export function canTransitionWork(from: WorkState, to: WorkState): boolean {

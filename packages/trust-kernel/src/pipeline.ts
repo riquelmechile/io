@@ -1,5 +1,5 @@
 import { NON_PERSISTENT_DISCLOSURE, captureEvidence, type EvidenceInput } from './evidence.js';
-import { validateBoundedWindow } from './model.js';
+import { isWindowActive, validateBoundedWindow } from './model.js';
 import type {
   AuditEntry,
   Decision,
@@ -51,13 +51,21 @@ export const DEFERRED_STEPS: readonly DeferredStep[] = [
   'records',
 ];
 
+/**
+ * A step's recorded decision. Enforced gates and the final step carry a real
+ * {@link Decision}; deferred pass-throughs carry the explicit non-ALLOW marker
+ * `DEFERRED` so unimplemented behavior is honestly surfaced and never masked as
+ * a silent ALLOW (Req 5).
+ */
+export type StepDecision = Decision | 'DEFERRED';
+
 /** One recorded pipeline step (enforced gate or deferred pass-through). */
 export interface StepResult {
   readonly id: number;
   readonly name: string;
   readonly deferred: boolean;
   readonly passThrough?: boolean;
-  readonly decision: Decision;
+  readonly decision: StepDecision;
   readonly reason: string;
 }
 
@@ -193,14 +201,18 @@ function gate(steps: StepResult[], id: number, name: string, result: GateResult)
   return result.decision === 'ALLOW';
 }
 
-/** Push a documented no-op pass-through deferred step (never gates). */
+/**
+ * Push a documented no-op pass-through deferred step (never gates). Honest
+ * marker: the step records `DEFERRED`, never a silent `ALLOW`, so unimplemented
+ * behavior is surfaced instead of masked (Req 5).
+ */
 function passThrough(steps: StepResult[], id: number, name: DeferredStep): void {
   steps.push({
     id,
     name,
     deferred: true,
     passThrough: true,
-    decision: 'ALLOW',
+    decision: 'DEFERRED',
     reason: `${name} deferred: harden downstream; no-op pass-through`,
   });
 }
@@ -273,11 +285,16 @@ function sodGate(input: EvaluationInput, ctx: PipelineContext): GateResult {
   return checkSod({ risk: ctx.risk, assignments: input.sodAssignments, policy: input.policy });
 }
 
-/** Step 12 — the matched grant must be active (not expired or revoked). */
+/** Step 12 — the matched grant must be active (inside its activation window,
+ * not revoked, not future-start, not expired). */
 function expiryGate(input: EvaluationInput, ctx: PipelineContext): GateResult {
   const grant = ctx.grant;
-  if (grant === null || grant.revoked === true || grant.expiry <= input.now) {
-    return { decision: 'DENY', reason: 'grant expired or revoked' };
+  if (
+    grant === null ||
+    grant.revoked === true ||
+    !isWindowActive(grant.start, input.now, grant.expiry)
+  ) {
+    return { decision: 'DENY', reason: 'grant expired, not yet started, or revoked' };
   }
   return { decision: 'ALLOW', reason: 'grant active' };
 }

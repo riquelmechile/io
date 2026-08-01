@@ -27,17 +27,17 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 
 ## Phase 1: Slice A — Authority + Scope (PR1)
 
-- [ ] 1.1 RED trust-kernel/sod.test.ts: self-approve, self-verify, low proposer=approver DENY, distinct-ok (SoD ×4).
-- [ ] 1.2 GREEN trust-kernel/sod.ts: append `['proposer','approver']` to ABSOLUTE_PAIRS (D2).
-- [ ] 1.3 RED trust-kernel/{model,grant,identity,pipeline}.test.ts: future-start inactive, active passes, expired fails, start==now active, now==expiry inactive (Window ×5).
-- [ ] 1.4 GREEN trust-kernel/model.ts: add `isWindowActive(start,now,expiry)=start<=now<expiry`; wire into grant.ts, identity.ts, pipeline.ts expiryGate.
-- [ ] 1.5 RED trust-kernel/pipeline.test.ts: deferred steps carry non-ALLOW marker (DEFERRED), no silent ALLOW; pass-through documented; any-failure→DENY; evaluate awaited (Pipeline ×4).
-- [ ] 1.6 GREEN trust-kernel/pipeline.ts: passThrough records non-ALLOW marker (widen StepResult if needed).
-- [ ] 1.7 RED business-domain/{types,fakes}.test.ts: non-empty companyId required (Delegation/Work/Receipt), Work version init 1, empty companyId rejected, scoped get wrong-company→not-found (Company ×3, Delegation-fields ×3, Work-fields ×3).
-- [ ] 1.8 GREEN business-domain/types.ts: add companyId (×3) + Work.version; ports/repositories.ts scoped get(companyId,id); ports/fakes.ts enforce scope + reject empty companyId.
-- [ ] 1.9 RED+GREEN business-domain delegation-window tests: future inactive, in-window active, expired inactive, validFrom==now active (Delegation-window ×4).
-- [ ] 1.10 RED+GREEN database/business-adapters.test.ts + {delegation,work,business-receipt}-adapter.ts: company_id INSERT/SELECT, scoped get WHERE company_id=$N, receipt carries companyId (scope ×adapters).
-- [ ] 1.11 Verify A: `pnpm check` green; no cross-aggregate import.
+- [x] 1.1 RED trust-kernel/sod.test.ts: self-approve, self-verify, low proposer=approver DENY, distinct-ok (SoD ×4).
+- [x] 1.2 GREEN trust-kernel/sod.ts: append `['proposer','approver']` to ABSOLUTE_PAIRS (D2).
+- [x] 1.3 RED trust-kernel/{model,grant,identity,pipeline}.test.ts: future-start inactive, active passes, expired fails, start==now active, now==expiry inactive (Window ×5).
+- [x] 1.4 GREEN trust-kernel/model.ts: add `isWindowActive(start,now,expiry)=start<=now<expiry`; wire into grant.ts, identity.ts, pipeline.ts expiryGate.
+- [x] 1.5 RED trust-kernel/pipeline.test.ts: deferred steps carry non-ALLOW marker (DEFERRED), no silent ALLOW; pass-through documented; any-failure→DENY; evaluate awaited (Pipeline ×4).
+- [x] 1.6 GREEN trust-kernel/pipeline.ts: passThrough records non-ALLOW marker (widen StepResult if needed).
+- [x] 1.7 RED business-domain/{types,fakes}.test.ts: non-empty companyId required (Delegation/Work/Receipt), Work version init 1, empty companyId rejected, scoped get wrong-company→not-found (Company ×3, Delegation-fields ×3, Work-fields ×3).
+- [x] 1.8 GREEN business-domain/types.ts: add companyId (×3) + Work.version; ports/repositories.ts scoped get(companyId,id); ports/fakes.ts enforce scope + reject empty companyId.
+- [x] 1.9 RED+GREEN business-domain delegation-window tests: future inactive, in-window active, expired inactive, validFrom==now active (Delegation-window ×4).
+- [x] 1.10 RED+GREEN database/business-adapters.test.ts + {delegation,work,business-receipt}-adapter.ts: company_id INSERT/SELECT, scoped get WHERE company_id=$N, receipt carries companyId (scope ×adapters).
+- [x] 1.11 Verify A: `pnpm check` green; no cross-aggregate import.
 
 ## Phase 2: Slice B — Persistence + Concurrency (PR2)
 
@@ -51,7 +51,8 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 - [ ] 2.8 RED business-domain/fakes.test.ts + database/business-adapters.test.ts: CAS success N→N+1; stale→{ok:false,reason:'version-conflict',current?}; concurrent single winner (CAS ×3).
 - [ ] 2.9 GREEN business-domain/ports/{repositories,fakes}.ts + database/work-adapter.ts: updateIfVersion (PG `UPDATE … version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3`, 0 rows→conflict); fake compares version; save insert-only.
 - [ ] 2.10 RED+GREEN business-domain/types.ts + database/business-receipt-adapter.ts: terminalEventId; INSERT/SELECT terminal_event_id+company_id; UNIQUE(work_id,terminal_event_id) — first ok, dup receiptId rejected, dup work×terminal rejected (Receipt ×5).
-- [ ] 2.11 Verify B: `pnpm vitest run packages/database` + PG integration green (not skipped).
+- [ ] 2.11 GREEN database/{delegation,work,business-receipt}-adapter.ts: reject empty companyId (PG/fake validation parity) — follow-up from Slice A adversarial review WARNING.
+- [ ] 2.12 Verify B: `pnpm vitest run packages/database` + PG integration green (not skipped).
 
 ## Phase 3: Slice C — Use Cases + Idempotency + Validation (PR3)
 

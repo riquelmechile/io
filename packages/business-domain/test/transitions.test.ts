@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DelegationState, WorkState } from '../src/types.js';
-import { canTransitionDelegation, canTransitionWork } from '../src/transitions.js';
+import type { Delegation } from '../src/types.js';
+import {
+  canTransitionDelegation,
+  canTransitionWork,
+  isDelegationActive,
+} from '../src/transitions.js';
+
+/** A delegation valid for the temporal-window tests (window 1000..9000). */
+function delegation(overrides: Partial<Delegation> = {}): Delegation {
+  return {
+    delegationId: 'del-1',
+    companyId: 'acme',
+    delegator: 'principal-1',
+    delegate: 'principal-2',
+    authorityScope: { scope: 'finance', actions: ['approve'] },
+    budget: { currency: 'USD', limit: 100000 },
+    validFrom: 1000,
+    validUntil: 9000,
+    expectedOutcome: 'quarterly report filed',
+    state: 'active',
+    ...overrides,
+  };
+}
 
 describe('Delegation state machine', () => {
   describe('valid transitions', () => {
@@ -116,5 +138,27 @@ describe('Work state machine', () => {
     expect(canTransitionWork(state, 'completed')).toBe(true);
     state = 'completed';
     expect(canTransitionWork(state, 'verified')).toBe(true);
+  });
+});
+
+describe('Window-active delegation (ADR-0002)', () => {
+  it('is NOT active when validFrom is in the future (validFrom > now)', () => {
+    expect(isDelegationActive(delegation({ validFrom: 2000 }), 1500)).toBe(false);
+  });
+
+  it('is active inside the window (validFrom <= now < validUntil)', () => {
+    expect(isDelegationActive(delegation(), 1500)).toBe(true);
+  });
+
+  it('is NOT active when expired (now >= validUntil)', () => {
+    expect(isDelegationActive(delegation(), 9500)).toBe(false);
+  });
+
+  it('is active on the boundary validFrom == now', () => {
+    expect(isDelegationActive(delegation({ validFrom: 1500 }), 1500)).toBe(true);
+  });
+
+  it('is NOT active on the boundary now == validUntil', () => {
+    expect(isDelegationActive(delegation(), 9000)).toBe(false);
   });
 });

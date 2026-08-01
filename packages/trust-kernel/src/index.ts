@@ -16,6 +16,7 @@ export type {
 } from './pipeline.js';
 
 // --- Base neutral model types needed to build inputs / read outputs ---
+export { isWindowActive } from './model.js';
 export type {
   AuditEntry,
   Authority,

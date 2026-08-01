@@ -31,10 +31,14 @@ export interface SodDecision {
 // Tier role-count rules — single source of truth (Req 6).
 const CORE_ROLES: readonly SodRole[] = ['proposer', 'approver', 'executor', 'verifier'];
 const CRITICAL_ROLES: readonly SodRole[] = [...CORE_ROLES, 'authorizer'];
-// Absolute independence at EVERY tier: no self-approval, no self-verification.
+// Absolute independence at EVERY tier: no self-approval, no self-verification,
+// and proposer MUST never equal approver (ADR-0003). The absolute pairs are
+// checked first at every tier — even low + allowsLowCombination still DENIES
+// proposer==approver; only OTHER role combinations may be relaxed by policy.
 const ABSOLUTE_PAIRS: ReadonlyArray<readonly [SodRole, SodRole]> = [
   ['approver', 'executor'],
   ['verifier', 'executor'],
+  ['proposer', 'approver'],
 ];
 
 /** Roles that MUST be mutually distinct for the tier, or null when the tier
@@ -80,7 +84,7 @@ export function checkSod(input: SodInput): SodDecision {
     if (share(a, b)) {
       return {
         decision: 'DENY',
-        reason: `separation of duties violated: ${a}/${b} share a principal (no self-approval/self-verification)`,
+        reason: `separation of duties violated: ${a}/${b} share a principal (absolute pair: no self-approval, no self-verification, proposer !== approver)`,
       };
     }
   }

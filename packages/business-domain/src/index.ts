@@ -18,7 +18,7 @@ export type {
   WorkState,
 } from './types.js';
 
-export { canTransitionDelegation, canTransitionWork } from './transitions.js';
+export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 
 export type {
   CompanyRepository,

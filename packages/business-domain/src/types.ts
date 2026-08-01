@@ -29,6 +29,7 @@ export interface Budget {
 
 export interface Delegation {
   readonly delegationId: string;
+  readonly companyId: string;
   readonly delegator: string;
   readonly delegate: string;
   readonly authorityScope: AuthorityScope;
@@ -61,10 +62,14 @@ export interface WorkOutcome {
 
 export interface Work {
   readonly workId: string;
+  readonly companyId: string;
   readonly delegationId: string;
   readonly proposer: string;
   readonly description: string;
   readonly state: WorkState;
+  /** Numeric optimistic-concurrency counter; initialized to 1 on creation
+   * (ADR-0002). CAS bumps it by one on each successful transition. */
+  readonly version: number;
   readonly deliverable?: Deliverable;
   readonly evidenceRefs: readonly string[];
   readonly outcome?: WorkOutcome;
@@ -74,6 +79,7 @@ export interface Work {
 
 export interface BusinessReceipt {
   readonly receiptId: string;
+  readonly companyId: string;
   readonly workId: string;
   readonly delegationId: string;
   readonly actor: string;

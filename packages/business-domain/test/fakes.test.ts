@@ -12,9 +12,10 @@ function sampleCompany(id: string): Company {
   return { companyId: id, purpose: `purpose-${id}` };
 }
 
-function sampleDelegation(id: string): Delegation {
+function sampleDelegation(id: string, companyId = 'acme'): Delegation {
   return {
     delegationId: id,
+    companyId,
     delegator: 'principal-1',
     delegate: 'principal-2',
     authorityScope: { scope: 'finance', actions: ['approve', 'reject'] },
@@ -26,20 +27,23 @@ function sampleDelegation(id: string): Delegation {
   };
 }
 
-function sampleWork(id: string): Work {
+function sampleWork(id: string, companyId = 'acme'): Work {
   return {
     workId: id,
+    companyId,
     delegationId: 'del-1',
     proposer: 'principal-2',
     description: 'execute the quarterly close',
     state: 'proposed',
+    version: 1,
     evidenceRefs: ['evid-a', 'evid-b'],
   };
 }
 
-function sampleReceipt(id: string): BusinessReceipt {
+function sampleReceipt(id: string, companyId = 'acme'): BusinessReceipt {
   return {
     receiptId: id,
+    companyId,
     workId: 'work-1',
     delegationId: 'del-1',
     actor: 'principal-2',
@@ -75,35 +79,70 @@ describe('InMemoryCompanyRepository', () => {
     expect(await repo.get('c1')).toEqual(sampleCompany('c1'));
     expect(await repo.get('c2')).toEqual(sampleCompany('c2'));
   });
+
+  it('rejects save with an empty companyId', async () => {
+    const repo = new InMemoryCompanyRepository();
+    await expect(repo.save(sampleCompany(''))).rejects.toThrow(/companyId/i);
+  });
+
+  it('rejects get with an empty companyId', async () => {
+    const repo = new InMemoryCompanyRepository();
+    await expect(repo.get('')).rejects.toThrow(/companyId/i);
+  });
 });
 
 describe('InMemoryDelegationRepository', () => {
-  it('save → get round-trips all fields including nested objects', async () => {
+  it('save → get round-trips all fields including nested objects and companyId', async () => {
     const repo = new InMemoryDelegationRepository();
     const delegation = sampleDelegation('del-99');
     await repo.save(delegation);
-    const got = await repo.get('del-99');
+    const got = await repo.get('acme', 'del-99');
     expect(got).toEqual(delegation);
+    expect(got?.companyId).toBe('acme');
     expect(got?.authorityScope).toEqual({ scope: 'finance', actions: ['approve', 'reject'] });
     expect(got?.budget).toEqual({ currency: 'USD', limit: 100000 });
     expect(got?.state).toBe('draft');
   });
 
-  it('get(unknownId) returns undefined', async () => {
+  it('get(companyId, unknownId) returns undefined', async () => {
     const repo = new InMemoryDelegationRepository();
-    expect(await repo.get('missing')).toBeUndefined();
+    expect(await repo.get('acme', 'missing')).toBeUndefined();
+  });
+
+  it('scoped get for the wrong company resolves to not-found', async () => {
+    const repo = new InMemoryDelegationRepository();
+    await repo.save(sampleDelegation('del-1', 'company-a'));
+    expect(await repo.get('company-b', 'del-1')).toBeUndefined();
+    expect(await repo.get('company-a', 'del-1')).toEqual(sampleDelegation('del-1', 'company-a'));
+  });
+
+  it('rejects save with an empty companyId', async () => {
+    const repo = new InMemoryDelegationRepository();
+    await expect(repo.save(sampleDelegation('del-x', ''))).rejects.toThrow(/companyId/i);
+  });
+
+  it('rejects scoped get with an empty companyId', async () => {
+    const repo = new InMemoryDelegationRepository();
+    await expect(repo.get('', 'del-1')).rejects.toThrow(/companyId/i);
   });
 });
 
 describe('InMemoryWorkRepository', () => {
-  it('save → get round-trips all fields including evidenceRefs', async () => {
+  it('save → get round-trips all fields including evidenceRefs, companyId, and version', async () => {
     const repo = new InMemoryWorkRepository();
     const work = sampleWork('work-42');
     await repo.save(work);
-    const got = await repo.get('work-42');
+    const got = await repo.get('acme', 'work-42');
     expect(got).toEqual(work);
+    expect(got?.companyId).toBe('acme');
     expect(got?.evidenceRefs).toEqual(['evid-a', 'evid-b']);
     expect(got?.state).toBe('proposed');
+  });
+
+  it('version initializes to 1 on creation and round-trips', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-ver'));
+    expect((await repo.get('acme', 'work-ver'))?.version).toBe(1);
   });
 
   it('round-trips optional deliverable and outcome', async () => {
@@ -114,45 +153,80 @@ describe('InMemoryWorkRepository', () => {
       outcome: { result: 'success', success: true },
     };
     await repo.save(work);
-    const got = await repo.get('work-full');
+    const got = await repo.get('acme', 'work-full');
     expect(got).toEqual(work);
     expect(got?.deliverable).toEqual({ description: 'report.pdf', format: 'pdf' });
     expect(got?.outcome).toEqual({ result: 'success', success: true });
   });
 
-  it('get(unknownId) returns undefined', async () => {
+  it('get(companyId, unknownId) returns undefined', async () => {
     const repo = new InMemoryWorkRepository();
-    expect(await repo.get('nope')).toBeUndefined();
+    expect(await repo.get('acme', 'nope')).toBeUndefined();
+  });
+
+  it('scoped get for the wrong company resolves to not-found', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-1', 'company-a'));
+    expect(await repo.get('company-b', 'work-1')).toBeUndefined();
+    expect(await repo.get('company-a', 'work-1')).toEqual(sampleWork('work-1', 'company-a'));
+  });
+
+  it('rejects save with an empty companyId', async () => {
+    const repo = new InMemoryWorkRepository();
+    await expect(repo.save(sampleWork('work-x', ''))).rejects.toThrow(/companyId/i);
+  });
+
+  it('rejects scoped get with an empty companyId', async () => {
+    const repo = new InMemoryWorkRepository();
+    await expect(repo.get('', 'work-1')).rejects.toThrow(/companyId/i);
   });
 });
 
 describe('InMemoryBusinessReceiptRepository', () => {
-  it('save → get round-trips all fields', async () => {
+  it('save → get round-trips all fields including companyId', async () => {
     const repo = new InMemoryBusinessReceiptRepository();
     const receipt = sampleReceipt('r-1');
     await repo.save(receipt);
-    const got = await repo.get('r-1');
+    const got = await repo.get('acme', 'r-1');
     expect(got).toEqual(receipt);
+    expect(got?.companyId).toBe('acme');
     expect(got?.terminalState).toBe('verified');
     expect(got?.evidenceRefs).toEqual(['evid-x']);
   });
 
-  it('get(unknownId) returns undefined', async () => {
+  it('get(companyId, unknownId) returns undefined', async () => {
     const repo = new InMemoryBusinessReceiptRepository();
-    expect(await repo.get('absent')).toBeUndefined();
+    expect(await repo.get('acme', 'absent')).toBeUndefined();
+  });
+
+  it('scoped get for the wrong company resolves to not-found', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await repo.save(sampleReceipt('r-1', 'company-a'));
+    expect(await repo.get('company-b', 'r-1')).toBeUndefined();
+    expect(await repo.get('company-a', 'r-1')).toEqual(sampleReceipt('r-1', 'company-a'));
+  });
+
+  it('rejects save with an empty companyId', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await expect(repo.save(sampleReceipt('r-x', ''))).rejects.toThrow(/companyId/i);
+  });
+
+  it('rejects scoped get with an empty companyId', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await expect(repo.get('', 'r-1')).rejects.toThrow(/companyId/i);
   });
 
   it('first save succeeds, duplicate receiptId rejected', async () => {
     const repo = new InMemoryBusinessReceiptRepository();
     const receipt = sampleReceipt('r-dup');
     await repo.save(receipt);
-    const first = await repo.get('r-dup');
+    const first = await repo.get('acme', 'r-dup');
     expect(first).toEqual(receipt);
 
     const second = sampleReceipt('r-dup');
     await expect(repo.save(second)).rejects.toThrow();
 
-    const unchanged = await repo.get('r-dup');
+    const unchanged = await repo.get('acme', 'r-dup');
     expect(unchanged).toEqual(receipt);
   });
 });

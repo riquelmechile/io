@@ -13,7 +13,8 @@ import { PERSISTENT_PORT_DISCLOSURE } from '../src/disclosure.js';
  * Methods return `Promise` (matching the async port contract, D1) while using
  * in-memory structures only — no network, no real I/O, instant resolution. It
  * parses only the minimal PG-shaped SQL the adapters emit (INSERT ... VALUES
- * ($1,..) and SELECT ... AS "x" ... [WHERE col = $N] [ORDER BY col ASC|DESC]).
+ * ($1,..) and SELECT ... AS "x" ... [WHERE col = $N (AND col = $M)?]
+ * [ORDER BY col ASC|DESC]).
  * It is NOT durable and NOT real PostgreSQL (scenario 2): it honestly carries
  * {@link PERSISTENT_PORT_DISCLOSURE}.
  */
@@ -50,10 +51,9 @@ export class InMemoryDbConnection implements DbConnection {
     if (!select) return [];
 
     let rows = this.table(select.table);
-    if (select.where) {
-      const where = select.where;
-      const wanted = params[where.param - 1];
-      rows = rows.filter((row) => row[where.column] === wanted);
+    for (const condition of select.where) {
+      const wanted = params[condition.param - 1];
+      rows = rows.filter((row) => row[condition.column] === wanted);
     }
     if (select.orderBy) {
       const order = select.orderBy;
@@ -106,7 +106,7 @@ interface SelectItem {
 interface ParsedSelect {
   readonly items: readonly SelectItem[];
   readonly table: string;
-  readonly where?: { readonly column: string; readonly param: number };
+  readonly where: readonly { readonly column: string; readonly param: number }[];
   readonly orderBy?: { readonly column: string; readonly dir: 'ASC' | 'DESC' };
 }
 
@@ -119,10 +119,14 @@ function parseInsert(sql: string): ParsedInsert | undefined {
   return { table, columns: columns.split(',').map((column) => column.trim()) };
 }
 
-/** Parse `SELECT <list> FROM <table> [WHERE col = $N] [ORDER BY col ASC|DESC]`. */
+/**
+ * Parse `SELECT <list> FROM <table> [WHERE col = $N (AND col = $M)?]
+ * [ORDER BY col ASC|DESC]`. Supports up to two equality WHERE conditions so
+ * scoped reads (`WHERE company_id = $1 AND <id> = $2`, ADR-0002) round-trip.
+ */
 function parseSelect(sql: string): ParsedSelect | undefined {
   const match =
-    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+))?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
+    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?)?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
       sql,
     );
   const list = match?.[1];
@@ -140,13 +144,16 @@ function parseSelect(sql: string): ParsedSelect | undefined {
     return { column, alias: column };
   });
 
-  const whereColumn = match?.[3];
-  const whereParam = match?.[4];
-  const where =
-    whereColumn && whereParam ? { column: whereColumn, param: Number(whereParam) } : undefined;
+  const where: Array<{ readonly column: string; readonly param: number }> = [];
+  const firstColumn = match?.[3];
+  const firstParam = match?.[4];
+  if (firstColumn && firstParam) where.push({ column: firstColumn, param: Number(firstParam) });
+  const secondColumn = match?.[5];
+  const secondParam = match?.[6];
+  if (secondColumn && secondParam) where.push({ column: secondColumn, param: Number(secondParam) });
 
-  const orderColumn = match?.[5];
-  const orderDir = match?.[6];
+  const orderColumn = match?.[7];
+  const orderDir = match?.[8];
   const orderBy =
     orderColumn && orderDir
       ? { column: orderColumn, dir: orderDir.toUpperCase() as 'ASC' | 'DESC' }

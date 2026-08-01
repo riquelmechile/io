@@ -73,6 +73,33 @@ describe('Neutral identity & bounded roles (Req 2)', () => {
       expect(active.activeRoles).toEqual(['operator', 'auditor']);
       expect(active.activeAssignments).toHaveLength(1);
     });
+
+    it('strips a temporary role whose start is in the future (start > now)', () => {
+      const active = resolveActiveIdentity(
+        identityWith([temp({ role: 'auditor', start: 2000, expiry: 9000 })]),
+        1500,
+      );
+      expect(active.primaryRole).toBe('operator');
+      expect(active.activeRoles).toEqual(['operator']);
+      expect(active.activeAssignments).toEqual([]);
+    });
+
+    it('keeps a temporary role on the boundary start == now', () => {
+      const active = resolveActiveIdentity(
+        identityWith([temp({ role: 'auditor', start: 1500, expiry: 9000 })]),
+        1500,
+      );
+      expect(active.activeRoles).toEqual(['operator', 'auditor']);
+    });
+
+    it('strips a temporary role on the boundary now == expiry', () => {
+      const active = resolveActiveIdentity(
+        identityWith([temp({ role: 'auditor', start: 1000, expiry: 1500 })]),
+        1500,
+      );
+      expect(active.activeRoles).toEqual(['operator']);
+      expect(active.activeAssignments).toEqual([]);
+    });
   });
 
   describe('temporary roles carry no ambient authority', () => {

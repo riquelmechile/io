@@ -169,4 +169,44 @@ describe('In-memory separation of duties (Req 6)', () => {
       expect(checkSod({ risk: 'low', assignments }).decision).toBe('DENY');
     });
   });
+
+  describe('proposer ≠ approver is an ABSOLUTE pair at EVERY tier (ADR-0003)', () => {
+    it.each(ALL_TIERS)('denies proposer == approver at %s risk', (risk) => {
+      const assignments = assign(
+        ['proposer', p1],
+        ['approver', p1],
+        ['executor', p3],
+        ['verifier', p4],
+        ['authorizer', p5],
+      );
+      const policy: SodPolicy | undefined =
+        risk === 'low' ? { allowsLowCombination: true } : undefined;
+      const decision = checkSod({ risk, assignments, policy });
+      expect(decision.decision).toBe('DENY');
+      expect(decision.reason).toMatch(/self|approv|distinct|overlap|separation/i);
+    });
+
+    it('denies low-risk proposer == approver even with allowsLowCombination', () => {
+      const assignments = assign(
+        ['proposer', p1],
+        ['approver', p1],
+        ['executor', p3],
+        ['verifier', p4],
+      );
+      const input: SodInput = { risk: 'low', assignments, policy: { allowsLowCombination: true } };
+      expect(checkSod(input).decision).toBe('DENY');
+    });
+
+    it('allows low-risk with distinct proposer and approver when policy permits combination', () => {
+      const assignments = assign(
+        ['proposer', p1],
+        ['approver', p2],
+        ['executor', p1],
+        ['verifier', p3],
+      );
+      const input: SodInput = { risk: 'low', assignments, policy: { allowsLowCombination: true } };
+      const decision = checkSod(input);
+      expect(decision.decision).toBe('ALLOW');
+    });
+  });
 });
