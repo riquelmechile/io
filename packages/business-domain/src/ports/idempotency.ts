@@ -8,7 +8,7 @@
  * port. Pure interface — zero @io/* imports, no driver or table knowledge.
  */
 
-export type JournalStatus = 'in_flight' | 'completed';
+export type JournalStatus = 'in_flight' | 'completed' | 'aborted_retryable';
 
 export interface JournalEntry {
   readonly companyId: string;
@@ -34,4 +34,13 @@ export interface IdempotencyJournalPort {
   insertInFlight(entry: NewJournalEntry): Promise<void>;
   /** Close the attempt: status completed + the stored result for replay. */
   complete(attemptId: string, resultJson: unknown): Promise<void>;
+  /**
+   * Finalize CAS-loss recovery: in_flight → aborted_retryable (a durable
+   * retryable marker distinct from in_flight and completed, so a controlled
+   * retry can reopen the key instead of bricking it). Clears resultJson.
+   * Rejects when the attempt is missing or its status is not in_flight.
+   * MUST be invoked in its OWN committed write (not inside a rolling-back
+   * finalize tx).
+   */
+  markRetryable(attemptId: string): Promise<void>;
 }

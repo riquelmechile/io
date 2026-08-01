@@ -130,4 +130,113 @@ describe('PgIdempotencyJournalRepository', () => {
       );
     });
   });
+
+  describe('markRetryable() SQL shape (IJ marker, adapter)', () => {
+    it('emits UPDATE ... SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3 (in_flight guard)', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgIdempotencyJournalRepository(db);
+      await repo.insertInFlight(entry());
+      await repo.markRetryable('att:acme:key-1');
+
+      const updates = db.operations.filter((op) => op.sql.startsWith('UPDATE'));
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.sql).toBe(
+        'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3',
+      );
+      const params = updates[0]?.params ?? [];
+      expect(params[0]).toBe('att:acme:key-1');
+      expect(params[1]).toBe('aborted_retryable');
+      expect(params[2]).toBe('in_flight'); // only an in-flight attempt may be marked
+      expect(params[3]).toBeNull(); // result_json cleared
+    });
+
+    it('round-trips in_flight → aborted_retryable with resultJson cleared', async () => {
+      const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+      await repo.insertInFlight(entry());
+
+      await repo.markRetryable('att:acme:key-1');
+
+      const marked = await repo.lookup('acme', 'key-1');
+      expect(marked?.status).toBe('aborted_retryable');
+      expect(marked?.attemptId).toBe('att:acme:key-1');
+      expect(marked?.resultJson).toBeUndefined();
+    });
+
+    it('throws when the attempt is missing (0 rows updated)', async () => {
+      const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+      await expect(repo.markRetryable('att:never-recorded')).rejects.toThrow(/in_flight|attempt/i);
+    });
+
+    it('throws when the attempt is completed (0 rows updated — never regresses completed)', async () => {
+      const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+      await repo.insertInFlight(entry());
+      await repo.complete('att:acme:key-1', { ok: true });
+
+      await expect(repo.markRetryable('att:acme:key-1')).rejects.toThrow(/in_flight|attempt/i);
+      const done = await repo.lookup('acme', 'key-1');
+      expect(done?.status).toBe('completed');
+    });
+  });
+
+  describe('insertInFlight() reopen on aborted_retryable (acceptance note 1)', () => {
+    async function seededRetryable(): Promise<{
+      db: InMemoryDbConnection;
+      repo: PgIdempotencyJournalRepository;
+    }> {
+      const db = new InMemoryDbConnection();
+      const repo = new PgIdempotencyJournalRepository(db);
+      await repo.insertInFlight(entry());
+      await repo.markRetryable('att:acme:key-1');
+      return { db, repo };
+    }
+
+    it('reopens via a CONDITIONAL UPDATE (never a fresh INSERT), keeping the attemptId', async () => {
+      const { db, repo } = await seededRetryable();
+
+      await repo.insertInFlight(entry());
+
+      const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
+      const reopenUpdate = db.operations.filter((op) => op.sql.startsWith('UPDATE')).at(-1);
+      expect(inserts).toHaveLength(1); // the original insert only — reopen is NOT an INSERT
+      expect(reopenUpdate?.sql).toBe(
+        'UPDATE idempotency_journal SET status=$4, result_json=$5 WHERE company_id=$1 AND idempotency_key=$2 AND status=$3 AND request_hash=$6',
+      );
+      const params = reopenUpdate?.params ?? [];
+      expect(params[0]).toBe('acme');
+      expect(params[1]).toBe('key-1');
+      expect(params[2]).toBe('aborted_retryable'); // status guard
+      expect(params[3]).toBe('in_flight'); // new status
+      expect(params[4]).toBeNull(); // result_json cleared
+      expect(params[5]).toBe('hash-1'); // request hash guard
+
+      const reopened = await repo.lookup('acme', 'key-1');
+      expect(reopened?.status).toBe('in_flight');
+      expect(reopened?.attemptId).toBe('att:acme:key-1'); // preserved
+      expect(reopened?.resultJson).toBeUndefined();
+    });
+
+    it('a different request hash under the marker is a conflict (DENY)', async () => {
+      const { repo } = await seededRetryable();
+
+      await expect(
+        repo.insertInFlight({ ...entry(), requestHash: 'hash-DIFFERENT' }),
+      ).rejects.toThrow(/conflict|hash/i);
+
+      const unchanged = await repo.lookup('acme', 'key-1');
+      expect(unchanged?.status).toBe('aborted_retryable');
+    });
+
+    it('an existing in_flight row is rejected (duplicate attempt)', async () => {
+      const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+      await repo.insertInFlight(entry());
+      await expect(repo.insertInFlight(entry())).rejects.toThrow(/already recorded/i);
+    });
+
+    it('an existing completed row is rejected (replay/DENY only — never reopened)', async () => {
+      const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+      await repo.insertInFlight(entry());
+      await repo.complete('att:acme:key-1', { ok: true });
+      await expect(repo.insertInFlight(entry())).rejects.toThrow(/already recorded/i);
+    });
+  });
 });

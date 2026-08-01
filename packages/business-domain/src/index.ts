@@ -43,7 +43,9 @@ export {
   InMemoryWorkRepository,
   InMemoryBusinessReceiptRepository,
   InMemoryIdempotencyJournalRepository,
+  DurableJournalFake,
 } from './ports/fakes.js';
+export type { JournalFakePersistence } from './ports/fakes.js';
 
 export type {
   CompleteWorkCommand,

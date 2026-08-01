@@ -1,13 +1,21 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import type { BusinessReceipt, Company, Delegation, Work } from '../src/types.js';
 import type { CasResult } from '../src/ports/repositories.js';
+import type { JournalEntry } from '../src/ports/idempotency.js';
 import {
+  DurableJournalFake,
   InMemoryBusinessReceiptRepository,
   InMemoryCompanyRepository,
   InMemoryDelegationRepository,
+  InMemoryIdempotencyJournalRepository,
   InMemoryWorkRepository,
 } from '../src/ports/fakes.js';
+import type { JournalFakePersistence } from '../src/ports/fakes.js';
 
 function sampleCompany(id: string): Company {
   return { companyId: id, purpose: `purpose-${id}` };
@@ -343,5 +351,278 @@ describe('InMemoryBusinessReceiptRepository', () => {
       terminalEventId: 'attempt-2',
     };
     await expect(repo.save(second)).resolves.toEqual(second);
+  });
+});
+
+describe('InMemoryIdempotencyJournalRepository — markRetryable (IJ marker-distinct)', () => {
+  async function seedInFlight(): Promise<InMemoryIdempotencyJournalRepository> {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    return journal;
+  }
+
+  it('in_flight → aborted_retryable, a status distinct from in_flight and completed, with resultJson cleared', async () => {
+    const journal = await seedInFlight();
+
+    await journal.markRetryable('att:acme:key-1');
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('aborted_retryable');
+    expect(entry?.status).not.toBe('in_flight');
+    expect(entry?.status).not.toBe('completed');
+    expect(entry?.resultJson).toBeUndefined();
+  });
+
+  it('rejects a missing attemptId', async () => {
+    const journal = await seedInFlight();
+    await expect(journal.markRetryable('att:missing')).rejects.toThrow(/attempt/i);
+  });
+
+  it('rejects a completed attempt (the marker never overwrites completed)', async () => {
+    const journal = await seedInFlight();
+    await journal.complete('att:acme:key-1', { ok: true });
+    await expect(journal.markRetryable('att:acme:key-1')).rejects.toThrow(/not in_flight/i);
+  });
+
+  it('rejects an already-retryable attempt (only in_flight can be marked)', async () => {
+    const journal = await seedInFlight();
+    await journal.markRetryable('att:acme:key-1');
+    await expect(journal.markRetryable('att:acme:key-1')).rejects.toThrow(/not in_flight/i);
+  });
+});
+
+describe('InMemoryIdempotencyJournalRepository — lookup decision data (IJ replay/DENY/in-flight/tenant)', () => {
+  it('completed lookup returns the stored resultJson + requestHash so the caller REPLAYS', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    await journal.complete('att:acme:key-1', { result: 'closed', success: true });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('completed');
+    expect(entry?.requestHash).toBe('hash-1');
+    expect(entry?.resultJson).toEqual({ result: 'closed', success: true });
+  });
+
+  it('in_flight lookup returns the attempt WITHOUT resultJson (never replayed)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('in_flight');
+    expect(entry?.resultJson).toBeUndefined();
+  });
+
+  it('no row for a fresh key resolves to undefined (record a fresh attempt)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    expect(await journal.lookup('acme', 'never-recorded')).toBeUndefined();
+  });
+
+  it('tenant scope: a wrong-company lookup resolves to no row; empty companyId/key reject', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+
+    expect(await journal.lookup('other-company', 'key-1')).toBeUndefined();
+    expect(await journal.lookup('acme', 'other-key')).toBeUndefined();
+    await expect(journal.lookup('', 'key-1')).rejects.toThrow(/companyId/i);
+    await expect(journal.lookup('acme', '')).rejects.toThrow(/idempotencyKey/i);
+  });
+});
+
+describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (IJ retryable-no-replay)', () => {
+  async function seedRetryable(): Promise<InMemoryIdempotencyJournalRepository> {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    await journal.markRetryable('att:acme:key-1');
+    return journal;
+  }
+
+  it('aborted_retryable + same request hash reopens in_flight, KEEPING the same attemptId and clearing resultJson', async () => {
+    const journal = await seedRetryable();
+
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-NEW',
+    });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('in_flight');
+    expect(entry?.attemptId).toBe('att:acme:key-1'); // preserved — receipt never issued on prior CAS loss
+    expect(entry?.resultJson).toBeUndefined();
+  });
+
+  it('aborted_retryable + DIFFERENT request hash is a conflict; the marker is NOT overwritten', async () => {
+    const journal = await seedRetryable();
+
+    await expect(
+      journal.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-DIFFERENT',
+        attemptId: 'att:acme:key-2',
+      }),
+    ).rejects.toThrow(/hash|conflict/i);
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('aborted_retryable');
+  });
+
+  it('an in_flight row is never reopened (duplicate attempt rejected)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+
+    await expect(
+      journal.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-2',
+      }),
+    ).rejects.toThrow(/already recorded/i);
+  });
+
+  it('a completed row is never reopened (replay/DENY only)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    await journal.complete('att:acme:key-1', { ok: true });
+
+    await expect(
+      journal.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-2',
+      }),
+    ).rejects.toThrow(/already recorded/i);
+  });
+});
+
+/** JSON-file-backed persistence for the durable fake (fs lives in the test —
+ * business-domain src stays pure). */
+function jsonFilePersistence(path: string): JournalFakePersistence {
+  return {
+    load() {
+      return existsSync(path)
+        ? (JSON.parse(readFileSync(path, 'utf8')) as readonly JournalEntry[])
+        : [];
+    },
+    save(entries) {
+      writeFileSync(path, JSON.stringify(entries));
+    },
+  };
+}
+
+describe('DurableJournalFake — JSON durability across a simulated restart (IJ marker-durable)', () => {
+  function tmpJournalFile(): { dir: string; path: string } {
+    const dir = mkdtempSync(join(tmpdir(), 'io-journal-fake-'));
+    return { dir, path: join(dir, 'journal.json') };
+  }
+
+  it('a retryable marker written before the restart survives it with full row shape', async () => {
+    const { dir, path } = tmpJournalFile();
+    try {
+      const first = new DurableJournalFake(jsonFilePersistence(path));
+      await first.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-1',
+      });
+      await first.markRetryable('att:acme:key-1');
+
+      // Simulated restart: a FRESH fake over the same JSON file.
+      const second = new DurableJournalFake(jsonFilePersistence(path));
+      const entry = await second.lookup('acme', 'key-1');
+      expect(entry?.status).toBe('aborted_retryable');
+      expect(entry?.requestHash).toBe('hash-1');
+      expect(entry?.attemptId).toBe('att:acme:key-1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a completed resultJson survives the restart for replay', async () => {
+    const { dir, path } = tmpJournalFile();
+    try {
+      const first = new DurableJournalFake(jsonFilePersistence(path));
+      await first.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-1',
+      });
+      await first.complete('att:acme:key-1', { result: 'closed', success: true });
+
+      const second = new DurableJournalFake(jsonFilePersistence(path));
+      const entry = await second.lookup('acme', 'key-1');
+      expect(entry?.status).toBe('completed');
+      expect(entry?.resultJson).toEqual({ result: 'closed', success: true });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a reopen after restart still works (restored rows are fully functional)', async () => {
+    const { dir, path } = tmpJournalFile();
+    try {
+      const first = new DurableJournalFake(jsonFilePersistence(path));
+      await first.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-1',
+      });
+      await first.markRetryable('att:acme:key-1');
+
+      const second = new DurableJournalFake(jsonFilePersistence(path));
+      await second.insertInFlight({
+        companyId: 'acme',
+        idempotencyKey: 'key-1',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme:key-2',
+      });
+
+      const reopened = await second.lookup('acme', 'key-1');
+      expect(reopened?.status).toBe('in_flight');
+      expect(reopened?.attemptId).toBe('att:acme:key-1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

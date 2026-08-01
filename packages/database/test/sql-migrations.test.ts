@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
+const SCHEMA_005 = join(pkgRoot, 'sql', '005_journal_retryable_status.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -86,5 +87,41 @@ describe('sql/004_harden_constraints.sql (Slice B constraints migration)', () =>
     for (const statement of statements) {
       expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
     }
+  });
+});
+
+describe('sql/005_journal_retryable_status.sql (retryable marker CHECK)', () => {
+  function read005(): string {
+    return existsSync(SCHEMA_005) ? readFileSync(SCHEMA_005, 'utf8') : '';
+  }
+
+  it('ships sql/005_journal_retryable_status.sql', () => {
+    expect(existsSync(SCHEMA_005)).toBe(true);
+  });
+
+  it('idempotently DROPs any existing status CHECK before re-adding (DROP CONSTRAINT IF EXISTS)', () => {
+    expect(read005()).toMatch(
+      /ALTER\s+TABLE\s+idempotency_journal\s+DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+idempotency_journal_status_check/i,
+    );
+  });
+
+  it('ADDs the three-value status CHECK (in_flight | completed | aborted_retryable)', () => {
+    expect(read005()).toMatch(
+      /ALTER\s+TABLE\s+idempotency_journal\s+ADD\s+CONSTRAINT\s+idempotency_journal_status_check\s+CHECK\s*\(\s*status\s+IN\s*\(\s*'in_flight'\s*,\s*'completed'\s*,\s*'aborted_retryable'\s*\)\s*\)/i,
+    );
+  });
+
+  it('rollback DROPS the CHECK and does NOT restore a two-value CHECK (acceptance note 2)', () => {
+    const sql = read005();
+    // The rollback contract is documented: drop the constraint.
+    expect(sql).toMatch(/DROP\s+CONSTRAINT\s+IF\s+EXISTS\s+idempotency_journal_status_check/i);
+    // A two-value CHECK would brick existing aborted_retryable rows on rollback.
+    expect(sql).not.toMatch(/status\s+IN\s*\(\s*'in_flight'\s*,\s*'completed'\s*\)/i);
+  });
+
+  it('targets the idempotency_journal table (004) that carries status TEXT NOT NULL', () => {
+    const sql = read005();
+    expect(sql).toMatch(/idempotency_journal/i);
+    expect(SCHEMA_004 && readFileSync(SCHEMA_004, 'utf8')).toMatch(/status\s+TEXT\s+NOT\s+NULL/i);
   });
 });

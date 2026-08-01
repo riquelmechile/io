@@ -198,14 +198,16 @@ function parseInsert(sql: string): ParsedInsert | undefined {
 
 /**
  * Parse `UPDATE <table> SET col = $N, ..., col = col + 1
- * WHERE col = $N (AND col = $M (AND col = $K)?)?`. Supports plain `$N` SET
- * assignments plus the CAS increment form (`version = version + 1`), and up to
- * three equality WHERE conditions so CAS updates
- * (`WHERE work_id = $1 AND company_id = $2 AND version = $3`) round-trip.
+ * WHERE col = $N (AND col = $M (AND col = $K (AND col = $L)?)?)?`. Supports
+ * plain `$N` SET assignments plus the CAS increment form (`version = version +
+ * 1`), and up to FOUR equality WHERE conditions so CAS updates
+ * (`WHERE work_id = $1 AND company_id = $2 AND version = $3`) and the journal
+ * reopen (`WHERE company_id = $1 AND idempotency_key = $2 AND status = $3 AND
+ * request_hash = $6`) round-trip.
  */
 function parseUpdate(sql: string): ParsedUpdate | undefined {
   const match =
-    /^UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?\s*$/i.exec(
+    /^UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?\s*$/i.exec(
       sql,
     );
   const table = match?.[1];
@@ -233,6 +235,7 @@ function parseUpdate(sql: string): ParsedUpdate | undefined {
     [match?.[3], match?.[4]],
     [match?.[5], match?.[6]],
     [match?.[7], match?.[8]],
+    [match?.[9], match?.[10]],
   ] as const) {
     if (column && param) where.push({ column, param: Number(param) });
   }

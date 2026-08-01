@@ -168,9 +168,27 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       throw new Error('a non-empty attemptId is required');
     }
     const key = InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey);
-    if (this.byKey.has(key)) {
+    const existing = this.byKey.get(key);
+    if (existing !== undefined) {
       // Mirrors UNIQUE(company_id, idempotency_key): one attempt per key.
-      throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+      // EXCEPTION (design §Journal Port Change): a row marked aborted_retryable
+      // with the SAME request hash reopens the attempt (controlled retry) —
+      // status → in_flight, the ORIGINAL attemptId is kept (a receipt was never
+      // issued on the prior CAS loss, and the att: scheme is stable), resultJson
+      // is cleared. A different hash under the marker is a DENY conflict; any
+      // other existing status (in_flight | completed) stays rejected.
+      if (existing.status !== 'aborted_retryable') {
+        throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+      }
+      if (existing.requestHash !== entry.requestHash) {
+        throw new Error(
+          `idempotency conflict: request hash differs for retryable attempt: ${entry.idempotencyKey}`,
+        );
+      }
+      const reopened: JournalEntry = { ...existing, status: 'in_flight', resultJson: undefined };
+      this.byKey.set(key, reopened);
+      this.byAttempt.set(existing.attemptId, reopened);
+      return;
     }
     if (this.byAttempt.has(entry.attemptId)) {
       // Mirrors UNIQUE(attempt_id): one row per attempt.
@@ -192,5 +210,96 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey),
       updated,
     );
+  }
+
+  async markRetryable(attemptId: string): Promise<void> {
+    const entry = this.byAttempt.get(attemptId);
+    if (entry === undefined) {
+      throw new Error(`no journal entry for attempt: ${attemptId}`);
+    }
+    if (entry.status !== 'in_flight') {
+      // Only an in-flight attempt can be marked retryable: a completed attempt
+      // must never regress to a marker, and a marker is never re-marked.
+      throw new Error(`attempt is not in_flight: ${attemptId} (status: ${entry.status})`);
+    }
+    const updated: JournalEntry = { ...entry, status: 'aborted_retryable', resultJson: undefined };
+    this.byAttempt.set(attemptId, updated);
+    this.byKey.set(
+      InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey),
+      updated,
+    );
+  }
+
+  /**
+   * Snapshot every stored row (durable-fake persistence hook — pure map logic,
+   * zero I/O). Restore with {@link restoreSnapshot}.
+   */
+  snapshot(): readonly JournalEntry[] {
+    return [...this.byAttempt.values()];
+  }
+
+  /** Replace the stored state from a snapshot (durable-fake restart). */
+  restoreSnapshot(entries: readonly JournalEntry[]): void {
+    this.byKey.clear();
+    this.byAttempt.clear();
+    for (const entry of entries) {
+      this.byAttempt.set(entry.attemptId, entry);
+      this.byKey.set(
+        InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey),
+        entry,
+      );
+    }
+  }
+}
+
+/**
+ * Persistence seam for {@link DurableJournalFake} — injected so the fake stays
+ * pure (zero infra imports, all map logic). A JSON-file-backed implementation
+ * is supplied by the app/test layer (à la `DurableSandboxFake`'s
+ * durabilityPath); live-PostgreSQL durability is proven in Slice C.
+ */
+export interface JournalFakePersistence {
+  /** Every persisted journal row, or [] when nothing has been persisted. */
+  load(): readonly JournalEntry[];
+  /** Persist ALL rows (full-state snapshot). */
+  save(entries: readonly JournalEntry[]): void;
+}
+
+/**
+ * JSON-durable journal fake for restart tests (acceptance note 3): wraps
+ * {@link InMemoryIdempotencyJournalRepository} (same status domain, markRetryable
+ * and reopen logic) and persists a full-state snapshot through the injected
+ * {@link JournalFakePersistence} after every mutation. A fresh instance over the
+ * same persistence simulates a process restart — the rows survive.
+ */
+export class DurableJournalFake implements IdempotencyJournalPort {
+  private readonly delegate: InMemoryIdempotencyJournalRepository;
+
+  constructor(private readonly persistence: JournalFakePersistence) {
+    this.delegate = new InMemoryIdempotencyJournalRepository();
+    this.delegate.restoreSnapshot(persistence.load());
+  }
+
+  async lookup(companyId: string, idempotencyKey: string): Promise<JournalEntry | undefined> {
+    return this.delegate.lookup(companyId, idempotencyKey);
+  }
+
+  async insertInFlight(entry: NewJournalEntry): Promise<void> {
+    await this.delegate.insertInFlight(entry);
+    this.persist();
+  }
+
+  async complete(attemptId: string, resultJson: unknown): Promise<void> {
+    await this.delegate.complete(attemptId, resultJson);
+    this.persist();
+  }
+
+  async markRetryable(attemptId: string): Promise<void> {
+    await this.delegate.markRetryable(attemptId);
+    this.persist();
+  }
+
+  private persist(): void {
+    this.persistence.save(this.delegate.snapshot());
   }
 }

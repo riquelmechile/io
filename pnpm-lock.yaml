@@ -24,6 +24,21 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.1.5(@types/node@24.13.3))
 
+  packages/app:
+    dependencies:
+      '@io/business-domain':
+        specifier: workspace:*
+        version: link:../business-domain
+      '@io/database':
+        specifier: workspace:*
+        version: link:../database
+      '@io/llm-client':
+        specifier: workspace:*
+        version: link:../llm-client
+      '@io/trust-kernel':
+        specifier: workspace:*
+        version: link:../trust-kernel
+
   packages/business-domain: {}
 
   packages/database:

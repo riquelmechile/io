@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { evidenceId } from '../src/evidence-id.js';
+import type { JournalStatus } from '../src/ports/idempotency.js';
 import type { Work } from '../src/types.js';
 import type { CompleteWorkCommand, CompleteWorkDeps } from '../src/use-cases/index.js';
 import { completeWork } from '../src/use-cases/index.js';
@@ -140,6 +141,15 @@ describe('idempotent completeWork — DENY (D6)', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('attempt-in-flight');
+  });
+});
+
+describe('JournalStatus domain (IJ marker-distinct)', () => {
+  it('the port type admits exactly in_flight | completed | aborted_retryable (compile-time)', () => {
+    // Compile-time RED until the port adds the third value: tsc rejects the
+    // assignment while the union has only two statuses (pnpm typecheck gate).
+    const marker: JournalStatus = 'aborted_retryable';
+    expect(marker).toBe('aborted_retryable');
   });
 });
 

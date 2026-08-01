@@ -24,6 +24,7 @@
     "packages/business-domain/**/*.ts",
     "packages/database/**/*.ts",
     "packages/llm-client/**/*.ts",
+    "packages/app/**/*.ts",
     "vitest.config.ts"
   ]
 }

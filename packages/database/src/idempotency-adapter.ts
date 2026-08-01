@@ -16,8 +16,12 @@ import type { DbConnection } from './connection.js';
  * rejects. `insertInFlight` records the attempt BEFORE the effect (pre-effect,
  * D6); `complete` closes it with the stored result so a retry can REPLAY it.
  * Empty-companyId guards match the fake's requireCompanyId parity contract.
- * The journal LOGIC (replay/DENY and the atomic terminal close in one
- * transaction) lives in the business-domain use cases + the
+ * `markRetryable` records the durable retryable marker (finalize CAS-loss
+ * recovery, first-enterprise-vertical) and `insertInFlight` reopens an
+ * `aborted_retryable` row via a CONDITIONAL UPDATE (never a fresh INSERT — the
+ * 004 UNIQUE(company_id, idempotency_key) forbids a second row; the original
+ * attempt_id is kept). The journal LOGIC (replay/DENY and the atomic terminal
+ * close in one transaction) lives in the business-domain use cases + the
  * completeWorkAtomically wiring; this adapter is a dumb row store.
  */
 export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
@@ -58,6 +62,43 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
     if (!entry.attemptId) {
       throw new Error('a non-empty attemptId is required');
     }
+    const existing = await this.lookup(entry.companyId, entry.idempotencyKey);
+    if (existing !== undefined && existing.status === 'aborted_retryable') {
+      if (existing.requestHash !== entry.requestHash) {
+        // Controlled retry only under the SAME request hash — a different hash
+        // under the marker is an idempotency-conflict (DENY, no overwrite).
+        throw new Error(
+          `idempotency conflict: request hash differs for retryable attempt: ${entry.idempotencyKey}`,
+        );
+      }
+      // Reopen = CONDITIONAL UPDATE (acceptance note 1) — NEVER a fresh INSERT,
+      // which would violate UNIQUE(company_id, idempotency_key). The original
+      // attempt_id is kept (a receipt was never issued on the prior CAS loss).
+      const result = (await this.conn.execute(
+        'UPDATE idempotency_journal SET status=$4, result_json=$5 WHERE company_id=$1 AND ' +
+          'idempotency_key=$2 AND status=$3 AND request_hash=$6',
+        [
+          entry.companyId,
+          entry.idempotencyKey,
+          'aborted_retryable',
+          'in_flight',
+          null,
+          entry.requestHash,
+        ],
+      )) as { rowCount?: number };
+      if ((result.rowCount ?? 0) === 0) {
+        // The marker vanished or its hash changed concurrently: deny the reopen.
+        throw new Error(
+          `idempotency conflict: retryable attempt changed concurrently: ${entry.idempotencyKey}`,
+        );
+      }
+      return;
+    }
+    if (existing !== undefined) {
+      // Mirrors UNIQUE(company_id, idempotency_key): in_flight and completed
+      // attempts are never re-opened.
+      throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+    }
     await this.conn.execute(
       'INSERT INTO idempotency_journal (company_id, idempotency_key, request_hash, attempt_id, status, created_at) ' +
         'VALUES ($1,$2,$3,$4,$5,$6)',
@@ -80,5 +121,22 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
       'UPDATE idempotency_journal SET status=$2, result_json=$3 WHERE attempt_id=$1',
       [attemptId, 'completed', resultJson === undefined ? null : JSON.stringify(resultJson)],
     );
+  }
+
+  async markRetryable(attemptId: string): Promise<void> {
+    if (!attemptId) {
+      throw new Error('a non-empty attemptId is required');
+    }
+    // Finalize CAS-loss recovery: in_flight → aborted_retryable, result_json
+    // cleared. The status guard makes it a no-op-safe conditional write: a
+    // missing or completed (or already-marked) attempt updates 0 rows and is
+    // rejected — parity with the fake's contract.
+    const result = (await this.conn.execute(
+      'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3',
+      [attemptId, 'aborted_retryable', 'in_flight', null],
+    )) as { rowCount?: number };
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error(`attempt is not in_flight (or missing): ${attemptId}`);
+    }
   }
 }
