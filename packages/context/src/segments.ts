@@ -37,7 +37,13 @@ export interface CompileContextInput {
   readonly companyId: string;
   /** Business process (design D3) — the cohort discriminator, never the role. */
   readonly process: string;
-  /** Optional delegation (seg 5 role-contract source; absent when undefined). */
+  /**
+   * Optional delegation. Per-delegation detail (expectedOutcome/actions/scope)
+   * is per-request DYNAMIC content — NOT a cohort discriminator (deriveCohort
+   * reads only companyId/process/version) — so the STABLE prefix MUST NOT read
+   * it (Req R2). Reserved for future dynamic-suffix role-contract content; the
+   * prefix never touches it this slice.
+   */
   readonly delegation?: Delegation;
   /** Current work — the ONLY dynamic input this slice consumes (seg 11). */
   readonly work: Work;
@@ -81,35 +87,139 @@ function renderCurrentWork({ work }: CompileContextInput): SegmentRender {
   };
 }
 
+/** Segment 8 — business process (design D3: process token, never the role). */
+function renderBusinessProcess({ process }: CompileContextInput): SegmentRender {
+  return { present: true, text: `Business process: ${process}.` };
+}
+
+/**
+ * Stable-prefix builder (Req R3 / design: buildStablePrefix). Concatenates the
+ * text of PRESENT segments 1–9 in canonical order; dynamic segments 10–13 are
+ * structurally excluded, so forbidden leading content (date/id/nonce/heartbeat/
+ * snapshot/variable message/tool result) can NEVER lead — the first byte always
+ * comes from the lowest-numbered present STABLE segment. The optional `segments`
+ * table defaults to the canonical SEGMENTS and exists so the R3 edge cases
+ * (segs 1–2 absent) can be exercised without mutating the constant table.
+ */
+export function buildStablePrefix(
+  input: CompileContextInput,
+  segments: readonly Segment[] = SEGMENTS,
+): string {
+  return segments
+    .filter((segment) => segment.position >= 1 && segment.position <= 9)
+    .map((segment) => segment.render(input))
+    .filter((rendered) => rendered.present)
+    .map((rendered) => rendered.text ?? '')
+    .join('');
+}
+
+/**
+ * Dynamic-suffix builder (design: buildDynamicSuffix). Concatenates the text of
+ * PRESENT segments 10–13 in canonical order → messages[1] (role user). The
+ * suffix MAY vary per request (work/evidence/tools); it NEVER enters the stable
+ * prefix bytes (Req R2). The optional `segments` table defaults to SEGMENTS and
+ * mirrors buildStablePrefix for testability.
+ */
+export function buildDynamicSuffix(
+  input: CompileContextInput,
+  segments: readonly Segment[] = SEGMENTS,
+): string {
+  return segments
+    .filter((segment) => segment.position >= 10 && segment.position <= 13)
+    .map((segment) => segment.render(input))
+    .filter((rendered) => rendered.present)
+    .map((rendered) => rendered.text ?? '')
+    .join('');
+}
+
 /**
  * The 13 canonical segments in §7.2 order (Req R1). Rows are immutable data:
  * the same cohort MUST always see the same prefix bytes, so the table is a
- * constant — a stable-segment change is a CONTEXT_SCHEMA_VERSION bump (R6),
- * never an edit in place. This slice sources only seg 1 (always) and seg 11
- * (work); every other segment elides to ABSENT (R4).
+ * frozen constant — a stable-segment change is a CONTEXT_SCHEMA_VERSION bump
+ * (R6), never an edit in place. This slice sources seg 1 (protocol, always),
+ * seg 8 (business-process, from the cohort discriminator `process`), and seg 11
+ * (current work, dynamic); every other segment elides to ABSENT (R4).
+ *
+ * Segment 5 (role-contract) is ABSENT this slice: its rich content source is
+ * per-delegation detail (expectedOutcome/actions/scope), which is per-request
+ * DYNAMIC content, NOT cohort-stable. Rendering it in the stable prefix made the
+ * prefix vary with delegation while the cohort stayed fixed — an R2 violation
+ * (DeepSeek KV-cache poisoning). The legacy prompts (STABLE_SYSTEM_PREFIX +
+ * buildUserTail) never contained a role contract, so ABSENT matches legacy and
+ * restores R2: the prefix is a pure function of {companyId, process, version}.
  */
-export const SEGMENTS: readonly Segment[] = [
-  {
+export const SEGMENTS: readonly Segment[] = Object.freeze([
+  Object.freeze({
     id: 'protocol',
     position: 1,
     kind: 'stable',
     render: () => ({ present: true, text: STABLE_PROTOCOL_TEXT }),
-  },
-  { id: 'constitution', position: 2, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'corporate-policies', position: 3, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'company-and-department', position: 4, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'role-contract', position: 5, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'certified-competencies', position: 6, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'active-skills', position: 7, kind: 'stable', render: () => ({ present: false }) },
-  { id: 'business-process', position: 8, kind: 'stable', render: () => ({ present: false }) },
-  {
+  }),
+  Object.freeze({
+    id: 'constitution',
+    position: 2,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'corporate-policies',
+    position: 3,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'company-and-department',
+    position: 4,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'role-contract',
+    position: 5,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'certified-competencies',
+    position: 6,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'active-skills',
+    position: 7,
+    kind: 'stable',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'business-process',
+    position: 8,
+    kind: 'stable',
+    render: renderBusinessProcess,
+  }),
+  Object.freeze({
     id: 'product-project-baseline',
     position: 9,
     kind: 'stable',
     render: () => ({ present: false }),
-  },
-  { id: 'recovered-memory', position: 10, kind: 'dynamic', render: () => ({ present: false }) },
-  { id: 'current-work', position: 11, kind: 'dynamic', render: renderCurrentWork },
-  { id: 'recent-evidence', position: 12, kind: 'dynamic', render: () => ({ present: false }) },
-  { id: 'tool-results', position: 13, kind: 'dynamic', render: () => ({ present: false }) },
-];
+  }),
+  Object.freeze({
+    id: 'recovered-memory',
+    position: 10,
+    kind: 'dynamic',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({ id: 'current-work', position: 11, kind: 'dynamic', render: renderCurrentWork }),
+  Object.freeze({
+    id: 'recent-evidence',
+    position: 12,
+    kind: 'dynamic',
+    render: () => ({ present: false }),
+  }),
+  Object.freeze({
+    id: 'tool-results',
+    position: 13,
+    kind: 'dynamic',
+    render: () => ({ present: false }),
+  }),
+]);

@@ -1,8 +1,8 @@
+import type { Work } from '@io/business-domain/src/index.js';
 import { describe, expect, it } from 'vitest';
 
-import type { Work } from '@io/business-domain/src/index.js';
-
-import { SEGMENTS } from '../src/index.js';
+import type { CompileContextInput, Segment } from '../src/index.js';
+import { buildStablePrefix, SEGMENTS } from '../src/index.js';
 
 /** A fully-sourced Work fixture: drives segment 11 (current-work) rendering. */
 const work: Work = {
@@ -76,8 +76,12 @@ describe('absent-segment rendering — fixed-position elide (R4)', () => {
     return segment.render(input);
   }
 
-  it('unsourced stable segments 2–10 render ABSENT with zero bytes', () => {
-    for (const position of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+  it('unsourced stable segments render ABSENT with zero bytes', () => {
+    // Compiler slice sources seg 1 (protocol) and 8 (business-process). Segs
+    // 2,3,4,6,7,9 are unsourced in every configuration; seg 5 (role-contract)
+    // is ABSENT this slice — its content source is per-delegation detail, which
+    // is NOT cohort-stable, so rendering it in the prefix would violate R2.
+    for (const position of [2, 3, 4, 5, 6, 7, 9, 10]) {
       const rendered = renderAt(position);
       expect(rendered.present).toBe(false);
       expect(rendered.text).toBeUndefined();
@@ -108,15 +112,121 @@ describe('absent-segment rendering — fixed-position elide (R4)', () => {
     const presentOrder = SEGMENTS.filter((candidate) => candidate.render(input).present).map(
       (candidate) => candidate.position,
     );
-    expect(presentOrder).toEqual([1, 11]);
+    // Compiler slice: seg 1 (protocol), 8 (business-process from process), 11 (work).
+    expect(presentOrder).toEqual([1, 8, 11]);
   });
 
-  it('concatenating present renders yields exactly seg 1 + seg 11 bytes (nothing injected)', () => {
+  it('concatenating present renders yields exactly seg 1 + seg 8 + seg 11 bytes (nothing injected)', () => {
     const protocolText = renderAt(1).text ?? '';
+    const processText = renderAt(8).text ?? '';
     const currentWorkText = renderAt(11).text ?? '';
     const concatenated = SEGMENTS.filter((candidate) => candidate.render(input).present)
       .map((candidate) => candidate.render(input).text ?? '')
       .join('');
-    expect(concatenated).toBe(`${protocolText}${currentWorkText}`);
+    expect(concatenated).toBe(`${protocolText}${processText}${currentWorkText}`);
+  });
+});
+
+/**
+ * Stable-prefix construction (Req R3 / design: buildStablePrefix). The prefix
+ * MUST be built ONLY from stable segments 1–9, and its first byte MUST come
+ * from the LOWEST-numbered present stable segment. Forbidden leading content
+ * (current date, random id, nonce, heartbeat, recent snapshot, variable
+ * message, tool result) lives in DYNAMIC segments 10–13 and can therefore
+ * never lead. buildStablePrefix takes an optional segments table so the R3
+ * edge cases (segs 1–2 absent) can be exercised without mutating the
+ * canonical SEGMENTS table.
+ */
+describe('buildStablePrefix — forbidden-leading guard (R3)', () => {
+  /** A protocol fixture rich enough to render every present stable segment. */
+  const richInput: CompileContextInput = { companyId: 'acme', process: 'planning', work };
+
+  /** Synthetic dynamic segments carrying every forbidden leading category. */
+  const forbiddenSuffix: Segment[] = [
+    {
+      id: 'recovered-memory',
+      position: 10,
+      kind: 'dynamic',
+      render: () => ({ present: true, text: '2026-08-01 recent snapshot' }),
+    },
+    {
+      id: 'current-work',
+      position: 11,
+      kind: 'dynamic',
+      render: () => ({ present: true, text: 'random-id-1234 nonce-abc heartbeat 12:00:00' }),
+    },
+    {
+      id: 'recent-evidence',
+      position: 12,
+      kind: 'dynamic',
+      render: () => ({ present: true, text: 'variable message #42' }),
+    },
+    {
+      id: 'tool-results',
+      position: 13,
+      kind: 'dynamic',
+      render: () => ({ present: true, text: 'tool result: create-document' }),
+    },
+  ];
+
+  it('forbidden categories cannot lead — prefix starts with the protocol, not date/id/nonce', () => {
+    const prefix = buildStablePrefix(richInput);
+    expect(prefix.startsWith('You are the IO worker cycle planner.')).toBe(true);
+  });
+
+  it('dynamic forbidden values never appear ahead of the first stable segment', () => {
+    // A full synthetic table: stable segs 1 and 3 present; dynamic 10–13 carry
+    // every forbidden category. The prefix must still lead with the lowest
+    // present STABLE segment and contain none of the forbidden content.
+    const synthetic: Segment[] = [
+      {
+        id: 'protocol',
+        position: 1,
+        kind: 'stable',
+        render: () => ({ present: true, text: 'PROTOCOL' }),
+      },
+      { id: 'constitution', position: 2, kind: 'stable', render: () => ({ present: false }) },
+      {
+        id: 'corporate-policies',
+        position: 3,
+        kind: 'stable',
+        render: () => ({ present: true, text: 'POLICIES' }),
+      },
+      ...forbiddenSuffix,
+    ];
+    const prefix = buildStablePrefix(richInput, synthetic);
+    expect(prefix).toBe('PROTOCOLPOLICIES');
+  });
+
+  it('lowest present stable segment leads when segs 1–2 are ABSENT', () => {
+    const synthetic: Segment[] = [
+      { id: 'protocol', position: 1, kind: 'stable', render: () => ({ present: false }) },
+      { id: 'constitution', position: 2, kind: 'stable', render: () => ({ present: false }) },
+      {
+        id: 'corporate-policies',
+        position: 3,
+        kind: 'stable',
+        render: () => ({ present: true, text: 'POLICIES' }),
+      },
+      {
+        id: 'company-and-department',
+        position: 4,
+        kind: 'stable',
+        render: () => ({ present: true, text: 'COMPANY' }),
+      },
+      ...forbiddenSuffix,
+    ];
+    const prefix = buildStablePrefix(richInput, synthetic);
+    expect(prefix.startsWith('POLICIES')).toBe(true);
+    expect(prefix[0]).toBe('P');
+  });
+
+  it('empty prefix when every stable segment is ABSENT (nothing to lead with)', () => {
+    const synthetic: Segment[] = [
+      { id: 'protocol', position: 1, kind: 'stable', render: () => ({ present: false }) },
+      { id: 'constitution', position: 2, kind: 'stable', render: () => ({ present: false }) },
+      ...forbiddenSuffix,
+    ];
+    expect(buildStablePrefix(richInput, synthetic)).toBe('');
   });
 });
