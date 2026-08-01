@@ -1,4 +1,5 @@
 import type {
+  BusinessEvent,
   BusinessReceipt,
   Deliverable,
   Work,
@@ -137,6 +138,57 @@ export function parseBusinessReceiptRow(input: unknown): RowGuardResult<Business
       terminalEventId: row.terminalEventId as string,
       artifactHash: row.artifactHash as string,
       issuedAt: row.issuedAt,
+    },
+  };
+}
+
+/** A `business_event` payload read from PG: a plain (non-null, non-array) object. */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Validate a `business_event` table row (as aliased by the adapter) before use.
+ * The six identity/kind/source strings must be non-empty, `occurredAt` a number,
+ * and `payload` a plain object (PG JSONB — never null/array). Rows read from PG
+ * are UNTRUSTED bytes (D7): a corrupt row is an integrity violation — fail loudly.
+ */
+export function parseBusinessEventRow(input: unknown): RowGuardResult<BusinessEvent> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return fail('business event row must be an object');
+  }
+  const row = input as Record<string, unknown>;
+
+  for (const field of [
+    'eventId',
+    'companyId',
+    'aggregateKind',
+    'aggregateId',
+    'eventType',
+    'source',
+  ] as const) {
+    if (!isNonEmptyString(row[field])) {
+      return fail(`business event row ${field} must be a non-empty string`);
+    }
+  }
+  if (typeof row.occurredAt !== 'number') {
+    return fail('business event row occurredAt must be a number');
+  }
+  if (!isPlainObject(row.payload)) {
+    return fail('business event row payload must be a plain object');
+  }
+
+  return {
+    ok: true,
+    value: {
+      eventId: row.eventId as string,
+      companyId: row.companyId as string,
+      aggregateKind: row.aggregateKind as string,
+      aggregateId: row.aggregateId as string,
+      eventType: row.eventType as string,
+      occurredAt: row.occurredAt,
+      payload: row.payload as Readonly<Record<string, unknown>>,
+      source: row.source as string,
     },
   };
 }

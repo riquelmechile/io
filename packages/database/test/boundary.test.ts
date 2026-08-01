@@ -258,6 +258,45 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
     });
   });
 
+  describe('business_event adapter — INSERT-only (R4 mutation guard)', () => {
+    function readEventAdapterSource(): string {
+      const path = join(srcDir, 'business-event-adapter.ts');
+      return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    }
+
+    /** Concatenated string literals are the adapter style: strip quotes and
+     * whitespace so the full SQL text reads as one continuous token. */
+    function normalizedSql(source: string): string {
+      return source.replace(/[\s'"`+]/g, '');
+    }
+
+    it('ships src/business-event-adapter.ts', () => {
+      expect(existsSync(join(srcDir, 'business-event-adapter.ts'))).toBe(true);
+    });
+
+    it('adapter SQL contains an INSERT INTO business_event statement with all 9 columns', () => {
+      expect(normalizedSql(readEventAdapterSource())).toMatch(
+        /INSERTINTObusiness_event\(event_id,company_id,aggregate_kind,aggregate_id,event_type,occurred_at,payload,source,created_at\)VALUES/i,
+      );
+    });
+
+    it('adapter SQL contains NO UPDATE or DELETE statement (append-only)', () => {
+      const normalized = normalizedSql(readEventAdapterSource());
+      expect(normalized).not.toMatch(/UPDATEbusiness_event/i);
+      expect(normalized).not.toMatch(/DELETEFROMbusiness_event/i);
+      expect(normalized).not.toMatch(/DELETEFROM/i);
+    });
+
+    it('the adapter class surface is EXACTLY append + listByCompany (no mutation methods)', () => {
+      const source = readEventAdapterSource();
+      // Only the two port operations may exist as method declarations on the
+      // repository class body.
+      expect(source).toMatch(/async\s+append\s*\(/);
+      expect(source).toMatch(/async\s+listByCompany\s*\(/);
+      expect(source).not.toMatch(/async\s+(update|delete|remove|overwrite)\s*\(/i);
+    });
+  });
+
   describe('public surface — structural assertions (no extra prod code)', () => {
     it('exports the adapters, the connection, the idempotency wiring, and the row guards (D6/D7 additions)', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
@@ -273,11 +312,15 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(databaseApi.completeWorkAtomically).toBeTypeOf('function');
       expect(databaseApi.parseWorkRow).toBeTypeOf('function');
       expect(databaseApi.parseBusinessReceiptRow).toBeTypeOf('function');
+      // PR2 additions (design §006): the business_event adapter + row guard.
+      expect(databaseApi.PgBusinessEventRepository).toBeTypeOf('function');
+      expect(databaseApi.parseBusinessEventRow).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
           'PERSISTENT_PORT_DISCLOSURE',
           'PgAuditRepository',
+          'PgBusinessEventRepository',
           'PgBusinessReceiptRepository',
           'PgCompanyRepository',
           'PgDbConnection',
@@ -286,6 +329,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgIdempotencyJournalRepository',
           'PgWorkRepository',
           'completeWorkAtomically',
+          'parseBusinessEventRow',
           'parseBusinessReceiptRow',
           'parseWorkRow',
         ].sort(),

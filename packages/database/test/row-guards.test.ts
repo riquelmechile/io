@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseBusinessReceiptRow, parseWorkRow } from '../src/row-guards.js';
+import { parseBusinessEventRow, parseBusinessReceiptRow, parseWorkRow } from '../src/row-guards.js';
 
 /**
  * PostgreSQL row-guard tests (design D7, runtime-validation spec). Rows read
@@ -118,6 +118,90 @@ describe('parseBusinessReceiptRow (D7)', () => {
 
     for (const bad of corrupt) {
       const result = parseBusinessReceiptRow(bad);
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).not.toBe('');
+    }
+  });
+});
+
+describe('parseBusinessEventRow (R4, design §006 — untrusted PG bytes, guarded)', () => {
+  function eventRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      eventId: 'evt:att:acme:key-1',
+      companyId: 'acme',
+      aggregateKind: 'work',
+      aggregateId: 'work-1',
+      eventType: 'work.completed',
+      occurredAt: 1750000000000,
+      payload: {
+        workId: 'work-1',
+        state: 'completed',
+        receiptId: 'rcpt:att:acme:key-1',
+        terminalState: 'verified',
+        evidenceId: 'evid:acme:key-1',
+        attemptId: 'att:acme:key-1',
+        actor: 'principal-2',
+      },
+      source: 'worker',
+      ...overrides,
+    };
+  }
+
+  it('accepts a well-formed event row → {ok:true, value} preserving all 8 fields', () => {
+    const result = parseBusinessEventRow(eventRow());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.eventId).toBe('evt:att:acme:key-1');
+      expect(result.value.companyId).toBe('acme');
+      expect(result.value.aggregateKind).toBe('work');
+      expect(result.value.aggregateId).toBe('work-1');
+      expect(result.value.eventType).toBe('work.completed');
+      expect(result.value.occurredAt).toBe(1750000000000);
+      expect(result.value.payload).toEqual({
+        workId: 'work-1',
+        state: 'completed',
+        receiptId: 'rcpt:att:acme:key-1',
+        terminalState: 'verified',
+        evidenceId: 'evid:acme:key-1',
+        attemptId: 'att:acme:key-1',
+        actor: 'principal-2',
+      });
+      expect(result.value.source).toBe('worker');
+    }
+  });
+
+  it('accepts a payload with arbitrary extra keys (payload is an opaque record)', () => {
+    const result = parseBusinessEventRow(eventRow({ payload: { attemptId: 'x', custom: 42 } }));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.payload).toEqual({ attemptId: 'x', custom: 42 });
+    }
+  });
+
+  it('rejects a corrupt event row with a NON-EMPTY reason, WITHOUT throwing', () => {
+    const corrupt: unknown[] = [
+      null,
+      'row',
+      [],
+      eventRow({ eventId: '' }),
+      eventRow({ eventId: undefined }),
+      eventRow({ companyId: 42 }),
+      eventRow({ aggregateKind: null }),
+      eventRow({ aggregateId: '' }),
+      eventRow({ eventType: undefined }),
+      eventRow({ source: '' }),
+      eventRow({ occurredAt: 'not-a-number' }),
+      eventRow({ occurredAt: undefined }),
+      eventRow({ payload: null }),
+      eventRow({ payload: [] }),
+      eventRow({ payload: 'json-text' }),
+      eventRow({ payload: undefined }),
+    ];
+
+    for (const bad of corrupt) {
+      const result = parseBusinessEventRow(bad);
       expect(result.ok).toBe(false);
       if (result.ok === false) expect(result.reason).not.toBe('');
     }

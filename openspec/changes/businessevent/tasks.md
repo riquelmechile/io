@@ -35,12 +35,12 @@ Chain strategy: stacked-to-main
 
 ## PR2 — database (one batch, ≤6)
 
-- [ ] 2.1 RED sql-migrations.test.ts: 006 DDL — table, UNIQUE event_id, company+aggregate indexes (R4). GREEN sql/006_business_events.sql. →V2 sql-migrations
-- [ ] 2.2 RED row-guards.test.ts: parseBusinessEventRow accepts valid, rejects malformed (R4). GREEN guard in row-guards.ts. →V2 row-guards
-- [ ] 2.3 RED business-event-roundtrip.integration.test.ts: live PG round-trip all fields via guard (R4); cross-tenant isolation (R8). GREEN `PgBusinessEventRepository` (INSERT + scoped SELECT ORDER BY id) in business-event-adapter.ts. →V2 business-event
-- [ ] 2.4 RED duplicate event_id rejected, original kept (R7 PG). GREEN UNIQUE(event_id), no upsert. →V2 business-event
-- [ ] 2.5 RED boundary.test.ts: INSERT present, no UPDATE/DELETE; export surface (R4 mutation). GREEN export adapter+guard from index.ts. →V2 boundary
-- [ ] 2.6 Gate: G + sequential PG suite green (R4). →G+V2
+- [x] 2.1 RED sql-migrations.test.ts: 006 DDL — table, UNIQUE event_id, company+aggregate indexes (R4). GREEN sql/006_business_events.sql. →V2 sql-migrations
+- [x] 2.2 RED row-guards.test.ts: parseBusinessEventRow accepts valid, rejects malformed (R4). GREEN guard in row-guards.ts. →V2 row-guards
+- [x] 2.3 RED business-event-roundtrip.integration.test.ts: live PG round-trip all fields via guard (R4); cross-tenant isolation (R8). GREEN `PgBusinessEventRepository` (INSERT + scoped SELECT ORDER BY id) in business-event-adapter.ts. →V2 business-event
+- [x] 2.4 RED duplicate event_id rejected, original kept (R7 PG). GREEN UNIQUE(event_id), no upsert. →V2 business-event
+- [x] 2.5 RED boundary.test.ts: INSERT present, no UPDATE/DELETE; export surface (R4 mutation). GREEN export adapter+guard from index.ts. →V2 boundary
+- [x] 2.6 Gate: G + sequential PG suite green (R4). →G+V2
 
 ## PR3 — app (two batches; T1 isolated)
 

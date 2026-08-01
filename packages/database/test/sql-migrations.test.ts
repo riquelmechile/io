@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
 const SCHEMA_005 = join(pkgRoot, 'sql', '005_journal_retryable_status.sql');
+const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -123,5 +124,62 @@ describe('sql/005_journal_retryable_status.sql (retryable marker CHECK)', () => 
     const sql = read005();
     expect(sql).toMatch(/idempotency_journal/i);
     expect(SCHEMA_004 && readFileSync(SCHEMA_004, 'utf8')).toMatch(/status\s+TEXT\s+NOT\s+NULL/i);
+  });
+});
+
+describe('sql/006_business_events.sql (business_event table — R4, design §006)', () => {
+  function read006(): string {
+    return existsSync(SCHEMA_006) ? readFileSync(SCHEMA_006, 'utf8') : '';
+  }
+
+  it('ships sql/006_business_events.sql', () => {
+    expect(existsSync(SCHEMA_006)).toBe(true);
+  });
+
+  it('creates business_event with the ten design columns, all NOT NULL (IF NOT EXISTS)', () => {
+    const sql = read006();
+    expect(sql).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+business_event/i);
+    for (const column of [
+      'id SERIAL PRIMARY KEY',
+      'event_id TEXT NOT NULL',
+      'company_id TEXT NOT NULL',
+      'aggregate_kind TEXT NOT NULL',
+      'aggregate_id TEXT NOT NULL',
+      'event_type TEXT NOT NULL',
+      'occurred_at BIGINT NOT NULL',
+      'payload JSONB NOT NULL',
+      'source TEXT NOT NULL',
+      'created_at BIGINT NOT NULL',
+    ]) {
+      expect(sql).toContain(column);
+    }
+  });
+
+  it('adds the UNIQUE event_id index and the two tenant/aggregate read indexes (IF NOT EXISTS)', () => {
+    const sql = read006();
+    expect(sql).toMatch(
+      /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+uq_business_event_event_id\s+ON\s+business_event\s*\(\s*event_id\s*\)/i,
+    );
+    expect(sql).toMatch(
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_business_event_company_id\s+ON\s+business_event\s*\(\s*company_id\s*\)/i,
+    );
+    expect(sql).toMatch(
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_business_event_aggregate\s+ON\s+business_event\s*\(\s*aggregate_kind\s*,\s*aggregate_id\s*\)/i,
+    );
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read006()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(4);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
   });
 });
