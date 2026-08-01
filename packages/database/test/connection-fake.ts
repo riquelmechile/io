@@ -13,9 +13,15 @@ import { PERSISTENT_PORT_DISCLOSURE } from '../src/disclosure.js';
  * Methods return `Promise` (matching the async port contract, D1) while using
  * in-memory structures only — no network, no real I/O, instant resolution. It
  * parses only the minimal PG-shaped SQL the adapters emit (INSERT ... VALUES
- * ($1,..) and SELECT ... AS "x" ... [WHERE col = $N (AND col = $M)?]
- * [ORDER BY col ASC|DESC]).
- * It is NOT durable and NOT real PostgreSQL (scenario 2): it honestly carries
+ * ($1,..), UPDATE ... SET ... WHERE col = $N (AND col = $M (AND col = $K)?)?,
+ * and SELECT ... AS "x" ... [WHERE col = $N (AND col = $M)?]
+ * [ORDER BY col ASC|DESC]). A parsed UPDATE returns `{ rowCount }` so CAS
+ * adapters can detect 0-row conflicts exactly like PG's `QueryResult.rowCount`.
+ * `transaction(fn)` (D1) snapshots `tables` + `idCounters` on entry, runs `fn`
+ * against a transaction-scoped connection, keeps the changes when `fn`
+ * succeeds, and restores the snapshot + rethrows the ORIGINAL error when `fn`
+ * throws (nested transactions are forbidden and reject). It is NOT durable and
+ * NOT real PostgreSQL (scenario 2): it honestly carries
  * {@link PERSISTENT_PORT_DISCLOSURE}.
  */
 export class InMemoryDbConnection implements DbConnection {
@@ -41,6 +47,24 @@ export class InMemoryDbConnection implements DbConnection {
         row[column] = reviveValue(params[index]);
       });
       rows.push(row);
+      return { rowCount: 1 };
+    }
+    const update = parseUpdate(sql);
+    if (update) {
+      const rows = this.table(update.table);
+      const matched = rows.filter((row) =>
+        update.where.every((condition) => row[condition.column] === params[condition.param - 1]),
+      );
+      for (const row of matched) {
+        for (const set of update.sets) {
+          if (set.increment) {
+            row[set.column] = Number(row[set.column]) + 1;
+          } else {
+            row[set.column] = reviveValue(params[set.param - 1]);
+          }
+        }
+      }
+      return { rowCount: matched.length };
     }
     return undefined;
   }
@@ -67,6 +91,46 @@ export class InMemoryDbConnection implements DbConnection {
       });
       return out as T;
     });
+  }
+
+  /**
+   * Simulate honest atomicity in-memory (D1, spec scenario 3): snapshot the
+   * tables and id counters, run `fn` against a transaction-scoped connection
+   * that records operations and rejects nesting, keep the changes when `fn`
+   * succeeds, and restore the snapshot + rethrow the ORIGINAL error when `fn`
+   * throws. The assertion log (`operations`) is NOT rolled back — like a real
+   * database's statement history, it records what was CALLED, not committed
+   * state.
+   */
+  async transaction<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> {
+    const tablesSnapshot = structuredClone(this.tables);
+    const countersSnapshot = structuredClone(this.idCounters);
+    const tx: DbConnection = {
+      execute: (sql: string, params: readonly unknown[]) => this.execute(sql, params),
+      query: <TRow>(sql: string, params: readonly unknown[]) => this.query<TRow>(sql, params),
+      transaction: () =>
+        // The port contract is ASYNC-only; nesting is forbidden, so the guard
+        // rejects (await surfaces it) exactly like the PG implementation.
+        Promise.reject(new Error('nested transactions are forbidden')),
+    };
+    try {
+      return await fn(tx);
+    } catch (error) {
+      this.restore(tablesSnapshot, countersSnapshot);
+      throw error;
+    }
+  }
+
+  /** Replace the live tables/counters with pristine clones of the snapshot. */
+  private restore(tablesSnapshot: Map<string, Row[]>, countersSnapshot: Map<string, number>): void {
+    this.tables.clear();
+    for (const [name, rows] of tablesSnapshot) {
+      this.tables.set(name, structuredClone(rows));
+    }
+    this.idCounters.clear();
+    for (const [name, counter] of countersSnapshot) {
+      this.idCounters.set(name, counter);
+    }
   }
 
   private table(name: string): Row[] {
@@ -98,6 +162,19 @@ interface ParsedInsert {
   readonly columns: readonly string[];
 }
 
+/** One SET assignment: a plain `col = $N` or a `col = col + 1` increment. */
+interface UpdateSet {
+  readonly column: string;
+  readonly param: number;
+  readonly increment: boolean;
+}
+
+interface ParsedUpdate {
+  readonly table: string;
+  readonly sets: readonly UpdateSet[];
+  readonly where: readonly { readonly column: string; readonly param: number }[];
+}
+
 interface SelectItem {
   readonly column: string;
   readonly alias: string;
@@ -117,6 +194,51 @@ function parseInsert(sql: string): ParsedInsert | undefined {
   const columns = match?.[2];
   if (!table || columns === undefined) return undefined;
   return { table, columns: columns.split(',').map((column) => column.trim()) };
+}
+
+/**
+ * Parse `UPDATE <table> SET col = $N, ..., col = col + 1
+ * WHERE col = $N (AND col = $M (AND col = $K)?)?`. Supports plain `$N` SET
+ * assignments plus the CAS increment form (`version = version + 1`), and up to
+ * three equality WHERE conditions so CAS updates
+ * (`WHERE work_id = $1 AND company_id = $2 AND version = $3`) round-trip.
+ */
+function parseUpdate(sql: string): ParsedUpdate | undefined {
+  const match =
+    /^UPDATE\s+(\w+)\s+SET\s+(.*?)\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?\s*$/i.exec(
+      sql,
+    );
+  const table = match?.[1];
+  const setClause = match?.[2];
+  if (!table || setClause === undefined) return undefined;
+
+  const sets: UpdateSet[] = [];
+  for (const part of setClause.split(',')) {
+    const assignment = part.trim();
+    const plain = /^(\w+)\s*=\s*\$(\d+)$/i.exec(assignment);
+    if (plain) {
+      sets.push({ column: plain[1] ?? '', param: Number(plain[2]), increment: false });
+      continue;
+    }
+    const increment = /^(\w+)\s*=\s*\w+\s*\+\s*1$/i.exec(assignment);
+    if (increment) {
+      sets.push({ column: increment[1] ?? '', param: -1, increment: true });
+      continue;
+    }
+    return undefined;
+  }
+
+  const where: Array<{ readonly column: string; readonly param: number }> = [];
+  for (const [column, param] of [
+    [match?.[3], match?.[4]],
+    [match?.[5], match?.[6]],
+    [match?.[7], match?.[8]],
+  ] as const) {
+    if (column && param) where.push({ column, param: Number(param) });
+  }
+  if (where.length === 0) return undefined;
+
+  return { table, sets, where };
 }
 
 /**

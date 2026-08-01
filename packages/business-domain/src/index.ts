@@ -25,6 +25,7 @@ export type {
   DelegationRepository,
   WorkRepository,
   BusinessReceiptRepository,
+  CasResult,
 } from './ports/repositories.js';
 
 export {

@@ -42,18 +42,18 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 
 ## Phase 2: Slice B — Persistence + Concurrency (PR2)
 
-- [ ] 2.1 RED database/connection-port.test.ts: transaction(fn) resolves Promise<T> of fn result; port driver-free; execute/query async (Port ×3).
-- [ ] 2.2 GREEN database/connection.ts: add `transaction<T>(fn:(conn)=>Promise<T>):Promise<T>` (D1).
-- [ ] 2.3 RED database/pg-connection.test.ts + integration: commit persists, error rolls back no partial, nested throws, live round-trip, conn-string isolation, close() not on port (PG ×6).
-- [ ] 2.4 GREEN database/pg-connection.ts: pool.connect→BEGIN→tx {execute,query,transaction:rejectNested}→fn→COMMIT+release; throw→ROLLBACK+release+rethrow.
-- [ ] 2.5 RED database/connection-fake.test.ts: commit keeps / error restores+rethrows; nested throws; records+round-trips; non-durable disclosure; mirrors PG (Fake ×4).
-- [ ] 2.6 GREEN database/test/connection-fake.ts: snapshot tables+idCounters, restore on throw; add UPDATE parse for CAS; nested throws.
-- [ ] 2.7 RED+GREEN database/sql/004_harden_constraints.sql: terminal_event_id column + UNIQUE indexes (company/delegation/work/receipt + work×terminal) + idempotency_journal (company_id/version columns already present via 003; column additions use IF NOT EXISTS) (design 004).
-- [ ] 2.8 RED business-domain/fakes.test.ts + database/business-adapters.test.ts: CAS success N→N+1; stale→{ok:false,reason:'version-conflict',current?}; concurrent single winner (CAS ×3).
-- [ ] 2.9 GREEN business-domain/ports/{repositories,fakes}.ts + database/work-adapter.ts: updateIfVersion (PG `UPDATE … version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3`, 0 rows→conflict); fake compares version; save insert-only.
-- [ ] 2.10 RED+GREEN business-domain/types.ts + database/business-receipt-adapter.ts: terminalEventId; INSERT/SELECT terminal_event_id+company_id; UNIQUE(work_id,terminal_event_id) — first ok, dup receiptId rejected, dup work×terminal rejected (Receipt ×5).
-- [ ] 2.11 GREEN database/{delegation,work,business-receipt}-adapter.ts: reject empty companyId (PG/fake validation parity) — follow-up from Slice A adversarial review WARNING.
-- [ ] 2.12 Verify B: `pnpm vitest run packages/database` + PG integration green (not skipped).
+- [x] 2.1 RED database/connection-port.test.ts: transaction(fn) resolves Promise<T> of fn result; port driver-free; execute/query async (Port ×3).
+- [x] 2.2 GREEN database/connection.ts: add `transaction<T>(fn:(conn)=>Promise<T>):Promise<T>` (D1).
+- [x] 2.3 RED database/pg-connection.test.ts + integration: commit persists, error rolls back no partial, nested throws, live round-trip, conn-string isolation, close() not on port (PG ×6).
+- [x] 2.4 GREEN database/pg-connection.ts: pool.connect→BEGIN→tx {execute,query,transaction:rejectNested}→fn→COMMIT+release; throw→ROLLBACK+release+rethrow.
+- [x] 2.5 RED database/connection-fake.test.ts: commit keeps / error restores+rethrows; nested throws; records+round-trips; non-durable disclosure; mirrors PG (Fake ×4).
+- [x] 2.6 GREEN database/test/connection-fake.ts: snapshot tables+idCounters, restore on throw; add UPDATE parse for CAS; nested throws.
+- [x] 2.7 RED+GREEN database/sql/004_harden_constraints.sql: terminal_event_id column + UNIQUE indexes (company/delegation/work/receipt + work×terminal) + idempotency_journal (company_id/version columns already present via 003; column additions use IF NOT EXISTS) (design 004).
+- [x] 2.8 RED business-domain/fakes.test.ts + database/business-adapters.test.ts: CAS success N→N+1; stale→{ok:false,reason:'version-conflict',current?}; concurrent single winner (CAS ×3).
+- [x] 2.9 GREEN business-domain/ports/{repositories,fakes}.ts + database/work-adapter.ts: updateIfVersion (PG `UPDATE … version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3`, 0 rows→conflict); fake compares version; save insert-only.
+- [x] 2.10 RED+GREEN business-domain/types.ts + database/business-receipt-adapter.ts: terminalEventId; INSERT/SELECT terminal_event_id+company_id; UNIQUE(work_id,terminal_event_id) — first ok, dup receiptId rejected, dup work×terminal rejected (Receipt ×5).
+- [x] 2.11 GREEN database/{delegation,work,business-receipt}-adapter.ts: reject empty companyId (PG/fake validation parity) — follow-up from Slice A adversarial review WARNING.
+- [x] 2.12 Verify B: `pnpm vitest run packages/database` + PG integration green (not skipped).
 
 ## Phase 3: Slice C — Use Cases + Idempotency + Validation (PR3)
 

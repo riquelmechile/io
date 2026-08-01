@@ -7,6 +7,9 @@ import type { DbConnection } from './connection.js';
  * Pattern). Implements `CompanyRepository` over an injected, ASYNC
  * {@link DbConnection}. save() binds fields as `$1..$3` (including adapter-
  * managed `created_at`); get() aliases columns so rows map straight to Company.
+ * An empty `companyId` is rejected up front — PG/fake validation parity (the
+ * Slice A follow-up guarded delegation/work/business-receipt; this closes the
+ * company gap so all four PG adapters match the fake's `requireCompanyId`).
  * Methods are ASYNC (D1): they `await` the connection's execute/query.
  */
 export class PgCompanyRepository {
@@ -17,6 +20,9 @@ export class PgCompanyRepository {
   }
 
   async save(company: Company): Promise<Readonly<Company>> {
+    if (!company.companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
     await this.conn.execute(
       'INSERT INTO company (company_id, purpose, created_at) VALUES ($1,$2,$3)',
       [company.companyId, company.purpose, Date.now()],
@@ -25,6 +31,9 @@ export class PgCompanyRepository {
   }
 
   async get(companyId: string): Promise<Company | undefined> {
+    if (!companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
     const rows = await this.conn.query<Company>(
       'SELECT company_id AS "companyId", purpose FROM company WHERE company_id = $1',
       [companyId],

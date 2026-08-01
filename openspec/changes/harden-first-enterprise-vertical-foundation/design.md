@@ -15,6 +15,8 @@ Close PASOS 1.1–1.7 on `120ec33` via stacked PRs A→B→C (RED→GREEN, `pnpm
 
 **Port** (`connection.ts` L40–42) adds signature above. **PG**: `pool.connect()`→`BEGIN`→tx-scoped `{execute,query,transaction:rejectNested}`→`fn`→`COMMIT`+release; throw→`ROLLBACK`+release+rethrow. **Fake**: snapshot `tables`+`idCounters`; success keeps; throw restores+rethrows; still `PERSISTENT_PORT_DISCLOSURE`. Adapters take `conn` from `fn`.
 
+**Checked-out-client error handling (Slice B correction)**: pg-pool strips the idle `error` listener on acquire, so for the tx lifetime `transaction` attaches its own `client.on('error')` capture (removed in `finally`) and releases WITH any captured error so the pool discards a broken client — mirroring R4-001 for checked-out (not just idle) clients; the tx still rejects but with NO uncaughtException. `ROLLBACK` is wrapped in its own try/catch so a rollback failure can never replace fn's ORIGINAL error (error fidelity).
+
 ### D2 — proposer ≠ approver (Q2)
 
 | Option | Tradeoff | Decision |

@@ -16,17 +16,67 @@ const pg = vi.hoisted(() => {
   const ctorCalls: Array<{ connectionString: string }> = [];
   const queryMock = vi.fn();
   const endMock = vi.fn().mockResolvedValue(undefined);
+  // Per-connection client the Pool yields to transaction() (pool.connect()).
+  const clientQueryMock = vi.fn();
+  const releaseMock = vi.fn();
+  // A real pg Client extends EventEmitter; transaction() relies on
+  // on('error')/removeListener('error') for the checked-out-client safety net
+  // (R4-001 parity). Mirror that contract — including Node's rule that an
+  // 'error' event with NO listener throws — so the tests exercise the real
+  // crash path the production code must prevent.
+  class MockClient {
+    query = clientQueryMock;
+    release = releaseMock;
+    private listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+    on(event: string, listener: (...args: unknown[]) => void): this {
+      const existing = this.listeners[event];
+      if (existing === undefined) {
+        this.listeners[event] = [listener];
+      } else {
+        existing.push(listener);
+      }
+      return this;
+    }
+    removeListener(event: string, listener: (...args: unknown[]) => void): this {
+      this.listeners[event] = (this.listeners[event] ?? []).filter((l) => l !== listener);
+      return this;
+    }
+    listenerCount(event: string): number {
+      return (this.listeners[event] ?? []).length;
+    }
+    emit(event: string, ...args: unknown[]): boolean {
+      const ls = this.listeners[event] ?? [];
+      if (ls.length === 0) {
+        if (event === 'error') {
+          throw args[0] instanceof Error ? args[0] : new Error('Unhandled error event');
+        }
+        return false;
+      }
+      for (const l of ls) l(...args);
+      return true;
+    }
+  }
+  const connectMock = vi.fn().mockImplementation(() => new MockClient());
   class MockPool {
     readonly options: { connectionString: string };
     query = queryMock;
     end = endMock;
     on = vi.fn();
+    connect = connectMock;
     constructor(options: { connectionString: string }) {
       this.options = options;
       ctorCalls.push(options);
     }
   }
-  return { Pool: MockPool, ctorCalls, queryMock, endMock };
+  return {
+    Pool: MockPool,
+    ctorCalls,
+    queryMock,
+    endMock,
+    clientQueryMock,
+    releaseMock,
+    connectMock,
+  };
 });
 
 vi.mock('pg', () => ({ Pool: pg.Pool }));
@@ -38,6 +88,12 @@ describe('PgDbConnection (Req: PgDbConnection Implementation; D2/D6)', () => {
     pg.ctorCalls.length = 0;
     pg.queryMock.mockReset();
     pg.endMock.mockReset().mockResolvedValue(undefined);
+    pg.clientQueryMock.mockReset().mockResolvedValue({ rows: [] });
+    pg.releaseMock.mockReset();
+    // Clear (not reset) so the mockImplementation stays but call/results are
+    // scoped to THIS test — connectMock.mock.results[0] is then the client the
+    // current transaction actually checked out.
+    pg.connectMock.mockClear();
   });
 
   describe('lazy pool lifecycle (D6)', () => {
@@ -142,14 +198,182 @@ describe('PgDbConnection (Req: PgDbConnection Implementation; D2/D6)', () => {
       expect(pg.endMock).not.toHaveBeenCalled();
     });
 
-    it('the DbConnection port declares ONLY execute/query — close() is extra', () => {
-      expectTypeOf<keyof DbConnection>().toEqualTypeOf<'execute' | 'query'>();
+    it('the DbConnection port declares execute/query/transaction — close() is extra', () => {
+      expectTypeOf<keyof DbConnection>().toEqualTypeOf<'execute' | 'query' | 'transaction'>();
     });
 
     it('PgDbConnection is assignable to DbConnection (implements the port)', () => {
       expectTypeOf<
         import('../src/pg-connection.js').PgDbConnection
       >().toMatchTypeOf<DbConnection>();
+    });
+  });
+
+  describe('transaction() — BEGIN/COMMIT/ROLLBACK lifecycle over a pooled client (D1)', () => {
+    it('acquires a client via pool.connect(), BEGINs, runs fn on the client, COMMITs, releases, resolves fn result', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+
+      const result = await conn.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+        const rows = await tx.query<{ n: number }>('SELECT n FROM t', []);
+        return { rows, marker: 'from-fn' };
+      });
+
+      expect(result).toEqual({ rows: [], marker: 'from-fn' });
+      // The transaction's statements went to the CLIENT (BEGIN → fn → COMMIT),
+      // not to the pool-level query path.
+      const clientCalls = pg.clientQueryMock.mock.calls.map((call) => call[0]);
+      expect(clientCalls).toEqual([
+        'BEGIN',
+        'INSERT INTO t (a) VALUES ($1)',
+        'SELECT n FROM t',
+        'COMMIT',
+      ]);
+      expect(pg.queryMock).not.toHaveBeenCalled();
+      expect(pg.connectMock).toHaveBeenCalledTimes(1);
+      expect(pg.releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('spreads readonly params into a mutable array on the client', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+      const params: readonly unknown[] = ['a', 1];
+
+      await conn.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (a, b) VALUES ($1, $2)', params);
+      });
+
+      const passed = pg.clientQueryMock.mock.calls[1]?.[1];
+      expect(passed).toEqual(['a', 1]);
+      expect(Array.isArray(passed)).toBe(true);
+    });
+
+    it('fn throw → ROLLBACK + release + rethrow of the ORIGINAL error', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+      const boom = new Error('boom from fn');
+
+      await expect(
+        conn.transaction(async (tx) => {
+          await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+          throw boom;
+        }),
+      ).rejects.toBe(boom); // identity: the ORIGINAL error, not a wrapper
+
+      const clientCalls = pg.clientQueryMock.mock.calls.map((call) => call[0]);
+      expect(clientCalls).toEqual(['BEGIN', 'INSERT INTO t (a) VALUES ($1)', 'ROLLBACK']);
+      expect(pg.clientQueryMock.mock.calls.map((call) => call[0])).not.toContain('COMMIT');
+      expect(pg.releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('a transaction call on the tx-scoped connection throws (nesting forbidden)', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+
+      await conn.transaction(async (tx) => {
+        await expect(tx.transaction(async () => 'nested')).rejects.toThrow(/nested/i);
+        // The outer transaction is unaffected by the rejected nested attempt.
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['outer-continues']);
+      });
+
+      const clientCalls = pg.clientQueryMock.mock.calls.map((call) => call[0]);
+      expect(clientCalls).toEqual(['BEGIN', 'INSERT INTO t (a) VALUES ($1)', 'COMMIT']);
+    });
+  });
+
+  describe('transaction() — checked-out-client error safety + rollback error fidelity (R4-001 parity)', () => {
+    // pg-pool removes the idle 'error' listener on acquire and only re-adds it
+    // on release, so a checked-out client has NO 'error' listener for the tx's
+    // lifetime. A backend death mid-tx (during a non-DB await) would emit an
+    // unhandled 'error' → uncaughtException → process crash. R4-001's
+    // pool.on('error') only covers IDLE clients; these tests pin the same
+    // guarantee for the CHECKED-OUT client, plus rollback error fidelity.
+    type Client = {
+      emit: (event: string, ...args: unknown[]) => boolean;
+      listenerCount: (event: string) => number;
+    };
+    const checkedOutClient = (): Client =>
+      pg.connectMock.mock.results[0]?.value as unknown as Client;
+
+    it('attaches an error listener to the checked-out client during the tx and removes it in finally', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+
+      let listenerCountDuringTx = -1;
+      await conn.transaction(async (tx) => {
+        listenerCountDuringTx = checkedOutClient().listenerCount('error');
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+      });
+
+      expect(listenerCountDuringTx).toBe(1); // safety net present mid-tx
+      expect(checkedOutClient().listenerCount('error')).toBe(0); // removed after
+    });
+
+    it('captures a client error mid-tx (NO uncaughtException) and releases the client WITH the error so the pool discards it', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+      const connectionError = new Error('connection terminated unexpectedly');
+
+      const uncaught = vi.fn();
+      process.on('uncaughtException', uncaught);
+      try {
+        // The backend dies during fn's INSERT: the client emits the
+        // connection-break 'error' event (handled ONLY if the tx attached a
+        // listener) and the awaited query rejects, so the tx rejects cleanly.
+        pg.clientQueryMock.mockImplementation(async (sql: string) => {
+          if (sql === 'INSERT INTO t (a) VALUES ($1)') {
+            checkedOutClient().emit('error', connectionError);
+            throw connectionError;
+          }
+          return { rows: [] }; // BEGIN / ROLLBACK / COMMIT
+        });
+
+        await expect(
+          conn.transaction(async (tx) => {
+            await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+          }),
+        ).rejects.toBe(connectionError); // atomicity: the tx still rejects
+      } finally {
+        process.removeListener('uncaughtException', uncaught);
+      }
+
+      // Released WITH the captured error → the pool discards the broken client.
+      expect(pg.releaseMock).toHaveBeenCalledWith(connectionError);
+      expect(uncaught).not.toHaveBeenCalled(); // no process crash
+    });
+
+    it('releases a healthy client without an error on success (pool may reuse it)', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+
+      await conn.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+      });
+
+      expect(pg.releaseMock).toHaveBeenCalledTimes(1);
+      expect(pg.releaseMock).toHaveBeenCalledWith(undefined); // no error → reusable
+    });
+
+    it('when ROLLBACK itself rejects, the ORIGINAL fn error still propagates (rollback error swallowed)', async () => {
+      const { PgDbConnection } = await import('../src/pg-connection.js');
+      const conn = new PgDbConnection(CONN);
+      const fnError = new Error('boom from fn');
+      const rollbackError = new Error('rollback failed: connection gone');
+
+      pg.clientQueryMock.mockImplementation(async (sql: string) => {
+        if (sql === 'ROLLBACK') throw rollbackError;
+        return { rows: [] };
+      });
+
+      await expect(
+        conn.transaction(async (tx) => {
+          await tx.execute('INSERT INTO t (a) VALUES ($1)', ['x']);
+          throw fnError;
+        }),
+      ).rejects.toBe(fnError); // identity: the ORIGINAL fn error, NOT the rollback error
+
+      expect(pg.releaseMock).toHaveBeenCalledTimes(1);
     });
   });
 

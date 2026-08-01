@@ -66,6 +66,72 @@ export class PgDbConnection implements DbConnection {
     return result.rows as readonly T[]; // SELECT — columns aliased to shape rows to T (D7)
   }
 
+  /**
+   * Run `fn` inside a real PostgreSQL transaction (D1; spec: PgDbConnection
+   * Implementation). Acquires a dedicated client from the pool, issues `BEGIN`,
+   * then runs `fn` against a transaction-scoped connection exposing the SAME
+   * three port operations — but scoped to THIS client, so every statement is
+   * part of the transaction. On success it `COMMIT`s; if `fn` throws it
+   * `ROLLBACK`s and RETHROWS THE ORIGINAL error (no wrapper, no swallowing).
+   * The client is released in all cases. Nested transactions are FORBIDDEN:
+   * the tx-scoped `transaction` throws immediately, mirroring the port
+   * contract (spec scenario: Nested transaction throws).
+   *
+   * Checked-out-client error safety (R4-001 parity): pg-pool removes the idle
+   * 'error' listener on acquire and only re-adds it on release, so a checked-out
+   * client has NO 'error' listener for the tx's lifetime. If the backend dies
+   * mid-tx during a non-DB await, the client emits 'error' with no listener →
+   * uncaughtException → process crash. R4-001's `pool.on('error')` only covers
+   * IDLE clients, so for the tx's lifetime we attach our own error-capturing
+   * listener (removed in `finally`). On a connection error the client is
+   * released WITH the error so the pool discards the broken connection; the tx
+   * promise still rejects (atomicity preserved) but WITHOUT any
+   * uncaughtException. ROLLBACK is wrapped in its own try/catch so a rollback
+   * failure (broken connection) can never replace fn's ORIGINAL error.
+   */
+  async transaction<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> {
+    const client = await this.getPool().connect();
+    let connectionError: Error | undefined;
+    const onClientError = (error: Error): void => {
+      connectionError = error;
+    };
+    client.on('error', onClientError);
+    const tx: DbConnection = {
+      execute: (sql: string, params: readonly unknown[]) => client.query(sql, [...params]),
+      query: async <TRow>(sql: string, params: readonly unknown[]): Promise<readonly TRow[]> => {
+        const result = await client.query(sql, [...params]);
+        return result.rows as readonly TRow[];
+      },
+      transaction: () =>
+        // Nested transactions are forbidden (spec scenario). The port contract
+        // is ASYNC-only (every operation returns a Promise — a sync throw would
+        // lie about completion), so the guard rejects instead of throwing
+        // synchronously; `await` surfaces it either way.
+        Promise.reject(new Error('nested transactions are forbidden')),
+    };
+    try {
+      await client.query('BEGIN');
+      const result = await fn(tx);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      // ROLLBACK can itself reject (broken connection); swallow that error and
+      // ALWAYS rethrow the ORIGINAL error from fn (error fidelity). Atomicity is
+      // unaffected — the tx is aborted either way.
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // A failed rollback must never mask fn's original error.
+      }
+      throw error;
+    } finally {
+      client.removeListener('error', onClientError);
+      // Release WITH the captured connection error (if any) so the pool discards
+      // the broken client; a healthy client is released error-free (reusable).
+      client.release(connectionError);
+    }
+  }
+
   async close(): Promise<void> {
     await this.pool?.end();
   }

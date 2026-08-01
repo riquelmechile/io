@@ -8,8 +8,9 @@ import type { DbConnection } from './connection.js';
  * {@link DbConnection}. save() binds fields as `$1..$11` (JSONB objects passed
  * directly for authorityScope and budget; `company_id` is the tenant scope,
  * ADR-0002); get() is a SCOPED read: `WHERE company_id = $1 AND delegation_id
- * = $2` so a lookup under the wrong tenant returns no rows (not-found). Methods
- * are ASYNC (D1).
+ * = $2` so a lookup under the wrong tenant returns no rows (not-found). An
+ * empty `companyId` is rejected up front — PG/fake validation parity (task
+ * 2.11, Slice A review follow-up). Methods are ASYNC (D1).
  */
 export class PgDelegationRepository {
   private readonly conn: DbConnection;
@@ -19,6 +20,9 @@ export class PgDelegationRepository {
   }
 
   async save(delegation: Delegation): Promise<Readonly<Delegation>> {
+    if (!delegation.companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
     await this.conn.execute(
       'INSERT INTO delegation (delegation_id, company_id, delegator, delegate, authority_scope, budget, ' +
         'valid_from, valid_until, expected_outcome, state, created_at) ' +
@@ -41,6 +45,9 @@ export class PgDelegationRepository {
   }
 
   async get(companyId: string, delegationId: string): Promise<Delegation | undefined> {
+    if (!companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
     const rows = await this.conn.query<Delegation>(
       'SELECT delegation_id AS "delegationId", company_id AS "companyId", delegator, delegate, ' +
         'authority_scope AS "authorityScope", budget, ' +

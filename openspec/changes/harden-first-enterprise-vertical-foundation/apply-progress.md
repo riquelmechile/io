@@ -119,3 +119,203 @@ work `version` column) across the Delegation/Work/BusinessReceipt round-trips.
   `business-pg-roundtrip.integration.test.ts` **11 passed / 0 failed**. Both PG
   integration tests RUN (not skipped) and pass; the only 2 skips are the DeepSeek
   external-API round-trip (no `DEEPSEEK_API_KEY`), unrelated to PG.
+
+---
+
+# Slice B — Persistence + Concurrency (PR2, stacked-to-main) — APPENDED
+
+**Slice**: B — Persistence + Concurrency (PR2, stacked-to-main) — ONLY. Slice C (use-cases,
+idempotency journal LOGIC, runtime-validation guards) NOT implemented.
+**Mode**: Strict TDD (RED → GREEN → REFACTOR), vitest (`pnpm test`), Node 24 (`PATH=/data/node24/bin`),
+live PG 18.4 (`postgresql://io:io_dev@localhost:5432/io_dev`, container io_pg) — integration tests RAN,
+none skipped.
+**Status**: ✅ Slice B complete — `pnpm check` fully green (**525 passed | 2 skipped**); both PG
+integration files ran (32/32). All changes UNCOMMITTED (left dirty for native RDD review).
+**Merge note**: Slice A's record above is preserved untouched; this section appends Slice B evidence.
+
+## Tasks Done (2.1–2.12)
+
+All 12 Slice B tasks checked off in `tasks.md`. Test count: baseline **473 passed / 2 skipped**
+(Slice A coherence fix) → **525 passed / 2 skipped** (+52 new tests). The only skips remain the
+DeepSeek external-API round-trip (no `DEEPSEEK_API_KEY`) — PG integration is NOT skipped.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.1 | `packages/database/test/connection-port.test.ts` | Unit | ✅ 473/2 | ✅ 1 runtime fail (port lacks `transaction`) + tsc TS2339 | ✅ Passed | ✅ signature ×3 (keyof, generic T, fn param) + source-level guard | ✅ header comment widened to three ops |
+| 2.2 | `packages/database/src/connection.ts` | Unit | ✅ (above) | ✅ (from 2.1) | ✅ Passed (11/11) | ➖ covered by 2.1 | ✅ JSDoc: three operations, nested forbidden, close() outside port |
+| 2.3 | `packages/database/test/pg-connection.test.ts` + boundary.test.ts | Unit | ✅ (above) | ✅ 5 failed (4 tx unit tests `conn.transaction is not a function` + boundary `.connect(` approval update) | ✅ Passed (59/59) | ✅ BEGIN/COMMIT order, ROLLBACK+rethrow identity, nested throws, param spread | ✅ keyof test widened; boundary approval updated to NEW spec behavior (`pool.connect()` now MANDATED, `new Client` still banned) |
+| 2.4 | `packages/database/src/pg-connection.ts` | Unit | ✅ (above) | ✅ (from 2.3) | ✅ Passed | ✅ original-error identity (`rejects.toBe(boom)`) | ✅ rejectNested rejects (async) not throws (port is ASYNC-only contract) |
+| 2.5 | `packages/database/test/connection-fake.test.ts` | Unit | ✅ (above) | ✅ 4 failed (`db.transaction is not a function`) | ✅ Passed (9/9) | ✅ commit keeps / error restores+rethrows / nested throws / mirrors-PG contract | ✅ scenario-4 test names the PG-observable contract explicitly |
+| 2.6 | `packages/database/test/connection-fake.ts` | Unit | ✅ (above) | ✅ (from 2.5) | ✅ Passed | ✅ UPDATE parse for CAS (up to 3 WHERE + `version=version+1`) + `{rowCount}`; snapshot via structuredClone, restore clones are pristine | ✅ `restore()` re-clones snapshot so a second rollback restores original data |
+| 2.7 | `packages/database/test/sql-migrations.test.ts` + `sql/004_harden_constraints.sql` | Unit + Integration | ✅ (above) | ✅ 5 failed (004 file absent) | ✅ Passed (5/5) + live-PG: 004 applies idempotently, journal usable, both journal UNIQUEs enforced | ✅ every statement IF NOT EXISTS; journal round-trip + dup attempt_id + dup (company,key) live tests | ✅ 1 test fix: strip `--` comment lines before counting statements |
+| 2.8 | `packages/business-domain/test/fakes.test.ts` + `packages/database/test/business-adapters.test.ts` | Unit | ✅ (above) | ✅ 10 failed (updateIfVersion missing on port/fake/adapter) | ✅ Passed | ✅ success N→N+1 / stale+current / concurrent single winner / repeated bumps / insert-only save | ✅ seeded fixture `await save` (test bug, not prod) |
+| 2.9 | `packages/business-domain/src/ports/{repositories,fakes}.ts` + `database/src/work-adapter.ts` | Unit | ✅ (above) | ✅ (from 2.8) | ✅ Passed (228/228 db+domain) | ✅ triangulation caught REAL bug: new version = `expectedVersion + 1` (stored), NOT `work.version + 1` (caller may be stale) — fixed in BOTH fake and PG impl | ✅ CasResult type in pure ports; fake mirrors PG `{rowCount}` semantics |
+| 2.10 | `packages/business-domain/test/{types,fakes}.test.ts` + `business-adapters.test.ts` + integration | Unit + Integration | ✅ (above) | ✅ 5 unit fails (10→11 fields, dup work×terminal not rejected, SQL shape) + 4 integration fails (terminal round-trip, dup receiptId, dup work×terminal) | ✅ Passed — unit 66/66, integration 25/25 (live PG) | ✅ same work + different terminal ALLOWED (triangulation); dup receiptId rejected; dup work×terminal rejected even with different receiptId | ✅ fake mirrors uq_receipt_work_terminal with an explicit scan |
+| 2.11 | `packages/database/test/business-adapters.test.ts` (empty-companyId block) | Unit | ✅ (above) | ✅ 4 failed (delegation save/get, work save/get) — receipt+updateIfVersion guards already landed in 2.9/2.10 edits | ✅ Passed (32/32) | ✅ 7 parity tests across 3 adapters (save/get/updateIfVersion) | ✅ identical message to fake's `requireCompanyId` ('a non-empty companyId is required') |
+| 2.12 | Verify B — full gate | N/A | ✅ (above) | N/A | ✅ `pnpm check` green; `pnpm vitest run packages/database` 162/162 (0 skipped) | N/A | N/A |
+
+**Test summary**: 52 new tests written (473 → 525 passing). Layers: Unit (connection-port +4, pg-connection +4,
+connection-fake +4, sql-migrations +5, fakes +9, types +1, business-adapters +17), Integration
+(business-pg-roundtrip 11 → 25 tests, +14 live-PG scenarios: tx commit/rollback/nested, fake-vs-PG mirror,
+conn-string isolation via scratch DB `io_dev_iso`, CAS live success/stale/concurrent-winner, work insert-only,
+receipt single-issuance ×2 + different-terminal allowed, journal ×3). Approval tests updated to NEW spec
+behavior (strict-tdd rule): (1) `keyof DbConnection` now `'execute' | 'query' | 'transaction'`; (2) boundary
+`pg-connection.ts` now REQUIRES `pool.connect()` (spec mandates it) while still banning `new Client`;
+(3) business-pg-roundtrip "re-save creates duplicate" replaced by "duplicate receiptId REJECTED by
+uq_receipt_receipt_id" (spec MODIFIED: Single Issuance). None of these are gate hacks — each reflects a
+spec-MODIFIED requirement.
+
+## Files Changed (all UNCOMMITTED — left dirty for native RDD review)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `packages/database/src/connection.ts` | Modified | Port adds `transaction<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T>` (D1). execute/query return types UNCHANGED. close() still NOT on the port. |
+| `packages/database/src/pg-connection.ts` | Modified | `transaction`: pool.connect() → BEGIN → tx-scoped {execute, query, transaction: rejectNested-as-rejection} → fn → COMMIT + release; throw → ROLLBACK + release + rethrow ORIGINAL error. |
+| `packages/database/test/connection-fake.ts` | Modified | `transaction` with structuredClone snapshot/restore of tables+idCounters (restore re-clones so repeated rollbacks stay pristine); nested rejects; `parseUpdate` (up to 3 WHERE, `col=col+1` increment, `{rowCount}`) so CAS works in tests; INSERT now returns `{rowCount:1}`. |
+| `packages/database/sql/004_harden_constraints.sql` | Created | terminal_event_id column (IF NOT EXISTS), 5 UNIQUE indexes (company/delegation/work/receipt/work×terminal), idempotency_journal table (created here; logic is Slice C). All statements idempotent. |
+| `packages/business-domain/src/types.ts` | Modified | `BusinessReceipt.terminalEventId` (D5). |
+| `packages/business-domain/src/ports/repositories.ts` | Modified | `CasResult` type + `WorkRepository.updateIfVersion(work, expectedVersion)` (D4); save documented INSERT-only. |
+| `packages/business-domain/src/ports/fakes.ts` | Modified | Fake `updateIfVersion` (compare version → bump `expectedVersion+1` / conflict with current, no silent overwrite); work save insert-only (dup workId throws); receipt fake rejects dup (workId, terminalEventId). |
+| `packages/business-domain/src/index.ts` | Modified | Export `CasResult`. |
+| `packages/database/src/work-adapter.ts` | Modified | `updateIfVersion`: `UPDATE work SET … version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3`, 0 rows → version-conflict + current via scoped get; empty-companyId guard (2.11). |
+| `packages/database/src/business-receipt-adapter.ts` | Modified | INSERT/SELECT `terminal_event_id`; empty-companyId guard (2.11). |
+| `packages/database/src/delegation-adapter.ts` | Modified | Empty-companyId guard on save/get (2.11). |
+| `packages/database/test/connection-port.test.ts` | Modified | transaction signature ×3 + source-level runtime guard (2.1 RED). |
+| `packages/database/test/pg-connection.test.ts` | Modified | Mocked Pool gains `connect()` client; keyof widened; 4 tx lifecycle tests (2.3). |
+| `packages/database/test/connection-fake.test.ts` | Modified | Fake tx scenario-3 ×3 + scenario-4 mirrors-PG (2.5). |
+| `packages/database/test/sql-migrations.test.ts` | Created | 004 content contract (2.7). |
+| `packages/business-domain/test/{fakes,types}.test.ts` | Modified | CAS ×5 + insert-only + receipt dup work×terminal + terminalEventId types (2.8/2.10). |
+| `packages/database/test/business-adapters.test.ts` | Modified | CAS ×5, terminal_event_id SQL shapes, empty-companyId parity ×7 (2.8/2.10/2.11). |
+| `packages/database/test/business-pg-roundtrip.integration.test.ts` | Modified | Applies 004; +14 live-PG scenarios incl. tx commit/rollback/nested, fake-vs-PG mirror, conn-string isolation (scratch DB io_dev_iso), CAS live (Promise.all concurrent winners), work insert-only, receipt single-issuance, journal uniques. |
+| `packages/database/test/boundary.test.ts` | Modified | Approval update: pg-connection.ts (driver owner) now REQUIRES `pool.connect()`; `new Client` still banned. |
+| `openspec/changes/harden-first-enterprise-vertical-foundation/tasks.md` | Modified | Tasks 2.1–2.12 checked `[x]` (Slice C 3.x untouched). |
+
+## Workload / PR Boundary
+
+- Mode: chained PR slice — `auto-chain` / `stacked-to-main`; this batch = **PR2 (Slice B)**.
+- Boundary: Slice B ONLY. Slice A files (trust-kernel, transitions, 003) untouched — git status shows no
+  trust-kernel/003 changes in this batch. Slice C (use-cases, idempotency journal logic, row guards, validation)
+  NOT implemented — `idempotency_journal` table exists (004) but no adapter/logic.
+- Authored diff: **1105 insertions + 50 deletions ≈ 1155 changed lines** (19 files touched) — above the
+  400-line guideline and above the ~380 forecast for B. Forecast underestimated the live-PG integration
+  breadth (the tx/CAS/journal/isolation scenarios are genuine and long). Flagged for the orchestrator/
+  reviewer: PR2 review budget is elevated; splitting B further was rejected because tx + CAS + UNIQUE are
+  one coherent concurrency unit. Rollback boundary: revert the 20 files above; Slice A stays.
+
+## Deviations from Design
+
+1. **rejectNested rejects (async) instead of throwing synchronously** (pg-connection + fake). The port
+   contract is ASYNC-only — every operation returns a Promise (the port's own D1 rationale: a synchronous
+   bridge would lie about completion). The spec says "MUST throw"; an awaited rejection satisfies it. Both
+   implementations behave identically (mirrors-PG test asserts this).
+2. **CAS returned version is `expectedVersion + 1`**, not `work.version + 1` (fake + PG). Triangulation
+   caught that a caller may hold a stale snapshot; the DB computes `version=version+1` on the STORED row,
+   which equals expectedVersion+1 because the WHERE clause guaranteed the match. Design D4 said "bump +1"
+   without pinning which base; this is the faithful reading.
+3. **Fake INSERT now returns `{ rowCount: 1 }`** (was `undefined`): mirrors PG's `QueryResult.rowCount` so
+   adapter code reads execute results uniformly. No consumer asserted the old value.
+4. **Boundary approval test updated** (`pg-connection.ts` may `pool.connect()`): the spec MODIFIED
+   requirement explicitly mandates `pool.connect()` for transactions; pg-connection.ts remains the single
+   driver owner and `new Client` stays banned.
+5. **Empty-companyId guard message** matches the fake's `requireCompanyId` exactly ('a non-empty companyId
+   is required') for parity (2.11).
+
+## Issues Found
+
+- None blocking. One test bug caught during RED (fakes.test.ts CAS fixture forgot to `save` the seeded
+  work) and one during GREEN (sql-migrations statement counter counted comment lines) — both fixed in the
+  tests, not by weakening them. Triangulation surfaced one real production bug (CAS version base) that was
+  fixed in both fake and PG implementations.
+
+## Verify B Evidence (task 2.12)
+
+- `PATH=/data/node24/bin pnpm vitest run packages/database`: **10 files, 162 passed, 0 skipped** — both
+  PG integration files RAN (not skipped).
+- `PATH=/data/node24/bin pnpm check`: **EXIT 0** — format-check ✅ / typecheck ✅ / build ✅ / lint ✅ /
+  test ✅ **525 passed | 2 skipped (527)**. The 2 skips are the DeepSeek external-API round-trip (no
+  `DEEPSEEK_API_KEY`) — unrelated to PG; PG integration RAN (32/32 across both integration files, verified
+  in verbose reporter output).
+- Forbidden-coupling invariants: business-domain `@io/*` imports = **zero** (grep verified); no
+  cross-aggregate import; `openai` confined to `deepseek-client.ts`; no dependency added (no package.json
+  change); `DbConnection` execute/query return types unchanged (transaction ADDED only); CasResult +
+  updateIfVersion live in business-domain ports (pure) + database adapter (PG).
+- All changes LEFT UNCOMMITTED (git status: 19 modified + 2 untracked, nothing staged/committed).
+
+---
+
+## Slice B Correction (adversarial review findings)
+
+**Scope**: BOUNDED correction to the UNCOMMITTED Slice B diff. Three real defects fixed
+with real tests (strict TDD RED→GREEN) + one documentation note. No Slice C surface
+touched, no test weakened/deleted, no new deps, business-domain stays `@io/*`-free.
+Live PG 18.4 (`postgresql://io:io_dev@localhost:5432/io_dev`) — integration RAN, not skipped.
+
+### #1 (WARNING, candidate-caused) — transaction() crash path on connection break — FIXED
+
+`transaction()` held a checked-out client across `await fn(tx)`. pg-pool removes the idle
+`error` listener on acquire and only re-adds it on release, so a checked-out client had NO
+`error` listener during the tx; a backend death mid-tx (during a non-DB await) would emit an
+unhandled `error` → uncaughtException → process crash. R4-001's `pool.on('error')` only covers
+IDLE clients. **Fix** (`pg-connection.ts`): for the tx lifetime, attach an error-capturing
+`client.on('error', onError)` (removed in `finally`); on a connection error the client is
+released WITH the error (`client.release(connectionError)`) so the pool discards the broken
+connection. The tx promise still rejects (atomicity preserved) with NO uncaughtException —
+mirrors R4-001's intent for checked-out clients.
+
+**Test evidence** (`pg-connection.test.ts`, mocked `pg.Pool` whose `MockClient` now mirrors
+Node's EventEmitter contract incl. "an `error` event with no listener throws"):
+- `attaches an error listener to the checked-out client during the tx and removes it in finally`
+  — asserts `listenerCount('error') === 1` mid-tx and `=== 0` after.
+- `captures a client error mid-tx (NO uncaughtException) and releases the client WITH the error`
+  — emits `error` on the checked-out client during fn's INSERT (handled only because the tx
+  attached a listener), asserts the tx rejects with the connection error, `release` called WITH
+  the error, and a process-level `uncaughtException` spy was NEVER fired.
+- `releases a healthy client without an error on success` — `release(undefined)` (reusable).
+
+### #2 (SUGGESTION, candidate-caused) — ROLLBACK masks original error — FIXED
+
+In the catch path, `await client.query('ROLLBACK')` could itself reject (broken connection),
+replacing fn's original error. **Fix** (`pg-connection.ts`): wrap ROLLBACK in its own try/catch
+(swallow the rollback error) and ALWAYS rethrow the ORIGINAL error from fn. Atomicity unaffected
+—the tx is aborted either way; this is error fidelity.
+
+**Test evidence** (`pg-connection.test.ts`):
+- `when ROLLBACK itself rejects, the ORIGINAL fn error still propagates (rollback error swallowed)`
+  — `clientQueryMock` rejects on `'ROLLBACK'`; asserts `rejects.toBe(fnError)` (identity — the
+  original fn error, NOT the rollback error) and `release` called once.
+
+### #3 (WARNING, pre-existing parity gap) — PgCompanyRepository empty-companyId guard — FIXED
+
+The Slice A follow-up added `if (!companyId) throw new Error('a non-empty companyId is required')`
+to the work/delegation/business-receipt PG adapters but MISSED `company-adapter.ts`. **Fix**:
+added the SAME guard (identical message/shape) to `PgCompanyRepository.save` and `.get` so all
+four PG adapters match the fake's `requireCompanyId`.
+
+**Test evidence**:
+- Unit (`business-adapters.test.ts`, parity block): `PgCompanyRepository` rejects save/get with an
+  empty companyId (`/companyId/i`).
+- Integration (`business-pg-roundtrip.integration.test.ts`, LIVE PG): `PG save/get rejects an empty
+  companyId, exactly like the fake` — asserts the PG error message is `'a non-empty companyId is
+  required'` AND is byte-identical to the `InMemoryCompanyRepository` fake's message (parity).
+
+### #4 (SUGGESTION) — migration backfill note — DOCUMENTED
+
+`004_harden_constraints.sql`: `terminal_event_id NOT NULL DEFAULT ''` + `UNIQUE(work_id,
+terminal_event_id)` would fail to create the index if pre-existing business_receipt rows share a
+work_id (backfill to `''` creates dup keys; `IF NOT EXISTS` does not skip on a data violation).
+The project is GREENFIELD (no existing rows), so NO code change — added a SQL comment in 004 noting
+the greenfield assumption and the `terminal_event_id = receipt_id` backfill recipe if rows ever exist.
+`sql-migrations.test.ts` (statement-count, strips `--` comments) still passes.
+
+### Verify (correction)
+
+- `PATH=/data/node24/bin:$PATH pnpm check` → full gate green (see return contract for counts). PG
+  integration RAN (not skipped) and passed; the only skips remain the DeepSeek external-API
+  round-trip (no `DEEPSEEK_API_KEY`), unrelated to PG.
+- No uncaughtException from the #1 scenario — pinned by the process-level `uncaughtException` spy
+  in the #1 test (asserts `not.toHaveBeenCalled()`).
+- New tests: 4 in `pg-connection.test.ts` (#1 ×3, #2 ×1) + 2 unit in `business-adapters.test.ts`
+  (#3) + 2 integration in `business-pg-roundtrip.integration.test.ts` (#3 parity, live PG).
+- All changes LEFT UNCOMMITTED. business-domain `@io/*` imports = zero (unchanged). No new deps.

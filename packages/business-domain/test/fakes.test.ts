@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { BusinessReceipt, Company, Delegation, Work } from '../src/types.js';
+import type { CasResult } from '../src/ports/repositories.js';
 import {
   InMemoryBusinessReceiptRepository,
   InMemoryCompanyRepository,
@@ -50,6 +51,7 @@ function sampleReceipt(id: string, companyId = 'acme'): BusinessReceipt {
     policyHash: 'sha256:policy-hash',
     evidenceRefs: ['evid-x'],
     terminalState: 'verified',
+    terminalEventId: 'attempt-1',
     artifactHash: 'sha256:artifact-hash',
     issuedAt: 1750000000000,
   };
@@ -180,6 +182,84 @@ describe('InMemoryWorkRepository', () => {
     const repo = new InMemoryWorkRepository();
     await expect(repo.get('', 'work-1')).rejects.toThrow(/companyId/i);
   });
+
+  it('save is insert-only: a duplicate workId is rejected (no overwrite)', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(sampleWork('work-dup'));
+    await expect(repo.save(sampleWork('work-dup'))).rejects.toThrow(/already/i);
+  });
+});
+
+describe('InMemoryWorkRepository CAS (updateIfVersion, ADR-0002/D4)', () => {
+  async function seededRepo(version = 1): Promise<{ repo: InMemoryWorkRepository; work: Work }> {
+    const repo = new InMemoryWorkRepository();
+    const work: Work = { ...sampleWork('work-cas'), state: 'proposed', version };
+    await repo.save(work);
+    return { repo, work };
+  }
+
+  it('successful CAS bumps the stored version N → N+1 and returns { ok: true, value }', async () => {
+    const { repo, work } = await seededRepo(1);
+    const next: Work = { ...work, state: 'accepted' };
+
+    const result = (await repo.updateIfVersion(next, 1)) as Extract<CasResult, { ok: true }>;
+
+    expect(result.ok).toBe(true);
+    expect(result.value.version).toBe(2);
+    expect(result.value.state).toBe('accepted');
+    expect((await repo.get('acme', 'work-cas'))?.version).toBe(2);
+  });
+
+  it('stale expectedVersion yields version-conflict with current, stored work unchanged', async () => {
+    const { repo, work } = await seededRepo(2);
+    const next: Work = { ...work, state: 'in_progress' };
+
+    const result = (await repo.updateIfVersion(next, 1)) as Extract<CasResult, { ok: false }>;
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('version-conflict');
+    expect(result.current?.version).toBe(2);
+    expect(result.current?.state).toBe('proposed');
+    const stored = await repo.get('acme', 'work-cas');
+    expect(stored?.version).toBe(2);
+    expect(stored?.state).toBe('proposed');
+  });
+
+  it('exactly one writer wins when two write with the same expectedVersion', async () => {
+    const { repo, work } = await seededRepo(1);
+    const first: Work = { ...work, state: 'accepted' };
+    const second: Work = { ...work, state: 'in_progress' };
+
+    const winner = await repo.updateIfVersion(first, 1);
+    const loser = await repo.updateIfVersion(second, 1);
+
+    expect(winner.ok).toBe(true);
+    expect(loser.ok).toBe(false);
+    if (loser.ok === false) {
+      expect(loser.reason).toBe('version-conflict');
+      expect(loser.current?.state).toBe('accepted');
+      expect(loser.current?.version).toBe(2);
+    }
+  });
+
+  it('CAS bumps N → N+1 repeatedly across successive updates (triangulation)', async () => {
+    const { repo, work } = await seededRepo(1);
+    const accepted: Work = { ...work, state: 'accepted' };
+    const started: Work = { ...accepted, state: 'in_progress' };
+
+    await repo.updateIfVersion(accepted, 1);
+    const second = await repo.updateIfVersion(started, 2);
+
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(second.value.version).toBe(3);
+    expect((await repo.get('acme', 'work-cas'))?.version).toBe(3);
+  });
+
+  it('rejects an empty companyId on updateIfVersion (same guard as save/get)', async () => {
+    const { repo, work } = await seededRepo(1);
+    const orphan: Work = { ...work, companyId: '' };
+    await expect(repo.updateIfVersion(orphan, 1)).rejects.toThrow(/companyId/i);
+  });
 });
 
 describe('InMemoryBusinessReceiptRepository', () => {
@@ -228,5 +308,40 @@ describe('InMemoryBusinessReceiptRepository', () => {
 
     const unchanged = await repo.get('acme', 'r-dup');
     expect(unchanged).toEqual(receipt);
+  });
+
+  it('round-trips terminalEventId (D5)', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await repo.save(sampleReceipt('r-term'));
+    const got = await repo.get('acme', 'r-term');
+    expect(got?.terminalEventId).toBe('attempt-1');
+  });
+
+  it('rejects a second receipt for the same (workId, terminalEventId) even with a different receiptId', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    const first = sampleReceipt('r-1'); // work-1 + attempt-1
+    await repo.save(first);
+
+    const second: BusinessReceipt = {
+      ...sampleReceipt('r-2'),
+      workId: 'work-1',
+      terminalEventId: 'attempt-1',
+    };
+    await expect(repo.save(second)).rejects.toThrow(/terminal/i);
+
+    const original = await repo.get('acme', 'r-1');
+    expect(original).toEqual(first);
+    expect(await repo.get('acme', 'r-2')).toBeUndefined();
+  });
+
+  it('allows the SAME work with a DIFFERENT terminal event (triangulation)', async () => {
+    const repo = new InMemoryBusinessReceiptRepository();
+    await repo.save(sampleReceipt('r-a')); // work-1 + attempt-1
+    const second: BusinessReceipt = {
+      ...sampleReceipt('r-b'),
+      workId: 'work-1',
+      terminalEventId: 'attempt-2',
+    };
+    await expect(repo.save(second)).resolves.toEqual(second);
   });
 });

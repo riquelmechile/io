@@ -26,9 +26,28 @@ export interface DelegationRepository {
   get(companyId: string, delegationId: string): Promise<Delegation | undefined>;
 }
 
+/**
+ * Result of a compare-and-swap write (ADR-0002/D4): `{ ok: true; value }` when
+ * the expected version matched and the write succeeded (version bumped +1), or
+ * `{ ok: false; reason: 'version-conflict'; current? }` when it did NOT match —
+ * the stored work is left UNCHANGED and `current` carries it when available.
+ * No last-write-wins overwrite ever occurs.
+ */
+export type CasResult =
+  | { ok: true; value: Work }
+  | { ok: false; reason: 'version-conflict'; current?: Work };
+
 export interface WorkRepository {
+  /** Insert-only: creates a NEW work. Not the state-change path for an existing work. */
   save(work: Work): Promise<Readonly<Work>>;
   get(companyId: string, workId: string): Promise<Work | undefined>;
+  /**
+   * Compare-and-swap update (D4): writes ONLY when `expectedVersion` matches
+   * the stored `version`, bumping it to `version + 1` on success. A mismatch
+   * returns `{ ok: false, reason: 'version-conflict', current? }` and NEVER
+   * overwrites the stored work.
+   */
+  updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult>;
 }
 
 export interface BusinessReceiptRepository {

@@ -85,4 +85,84 @@ describe('InMemoryDbConnection test double (Req 4)', () => {
       expect(db.disclosure.toLowerCase()).not.toContain('durable in postgresql');
     });
   });
+
+  describe('fake transaction commit keeps and error restores (scenario 3)', () => {
+    it('a successful transaction commits: its writes persist after it resolves', async () => {
+      const db = new InMemoryDbConnection();
+
+      await db.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['committed']);
+      });
+
+      const rows = await db.query<{ a: string }>('SELECT a FROM t WHERE a = $1', ['committed']);
+      expect(rows).toEqual([{ a: 'committed' }]);
+    });
+
+    it('a failed transaction restores the prior snapshot and rethrows the ORIGINAL error', async () => {
+      const db = new InMemoryDbConnection();
+      await db.execute('INSERT INTO t (a) VALUES ($1)', ['before-tx']);
+      const boom = new Error('boom inside tx');
+
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.execute('INSERT INTO t (a) VALUES ($1)', ['partial']);
+          throw boom;
+        }),
+      ).rejects.toBe(boom); // identity: the original error, not a wrapper
+
+      // No partial write survived the rollback…
+      const after = await db.query<{ a: string }>('SELECT a FROM t', []);
+      expect(after).toEqual([{ a: 'before-tx' }]);
+      // …and the pre-transaction state is fully intact.
+      const pre = await db.query<{ a: string }>('SELECT a FROM t WHERE a = $1', ['before-tx']);
+      expect(pre).toEqual([{ a: 'before-tx' }]);
+    });
+
+    it('a nested transaction on the tx-scoped connection throws', async () => {
+      const db = new InMemoryDbConnection();
+
+      await db.transaction(async (tx) => {
+        await expect(tx.transaction(async () => 'nested')).rejects.toThrow(/nested/i);
+        // The outer transaction is unaffected by the rejected nested attempt.
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['outer-continues']);
+      });
+
+      const rows = await db.query<{ a: string }>('SELECT a FROM t', []);
+      expect(rows).toEqual([{ a: 'outer-continues' }]);
+    });
+  });
+
+  describe('fake mirrors PostgreSQL transaction semantics (scenario 4)', () => {
+    it('produces the same observable outcomes real PG produces (commit persists, error leaves no partial write, nesting throws)', async () => {
+      const db = new InMemoryDbConnection();
+
+      // PG-observable contract, mirrored exactly by the fake (D1):
+      // 1) COMMIT persists the write for later reads outside the transaction.
+      await db.transaction(async (tx) => {
+        await tx.execute('INSERT INTO t (a) VALUES ($1)', ['mirror-commit']);
+      });
+      const committed = await db.query<{ a: string }>('SELECT a FROM t WHERE a = $1', [
+        'mirror-commit',
+      ]);
+      expect(committed).toEqual([{ a: 'mirror-commit' }]);
+
+      // 2) ROLLBACK leaves NO partial write behind.
+      const boom = new Error('mirror rollback');
+      await expect(
+        db.transaction(async (tx) => {
+          await tx.execute('INSERT INTO t (a) VALUES ($1)', ['mirror-partial']);
+          throw boom;
+        }),
+      ).rejects.toBe(boom);
+      const rolledBack = await db.query<{ a: string }>('SELECT a FROM t WHERE a = $1', [
+        'mirror-partial',
+      ]);
+      expect(rolledBack).toEqual([]);
+
+      // 3) Nesting throws on the transaction-scoped connection.
+      await db.transaction(async (tx) => {
+        await expect(tx.transaction(async () => 1)).rejects.toThrow(/nested/i);
+      });
+    });
+  });
 });

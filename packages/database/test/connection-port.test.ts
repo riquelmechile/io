@@ -114,6 +114,34 @@ describe('DbConnection port interface (Req 1)', () => {
     });
   });
 
+  describe('transaction signature on the port (scenario 3; MODIFIED spec)', () => {
+    it('the port declares exactly execute, query, and transaction', () => {
+      // Previously the port exposed exactly two operations; the spec now adds
+      // the transaction primitive (and close() stays OUTSIDE the port).
+      expectTypeOf<keyof DbConnection>().toEqualTypeOf<'execute' | 'query' | 'transaction'>();
+    });
+
+    it('transaction is generic over fn result: resolves Promise<T> of fn result', () => {
+      expectTypeOf<DbConnection['transaction']>().toEqualTypeOf<
+        <T>(fn: (conn: DbConnection) => Promise<T>) => Promise<T>
+      >();
+    });
+
+    it('transaction fn receives a transactional DbConnection', () => {
+      expectTypeOf<DbConnection['transaction']>()
+        .parameter(0)
+        .parameter(0)
+        .toEqualTypeOf<DbConnection>();
+    });
+
+    it('the port source actually declares transaction (runtime RED — code only, comments stripped)', () => {
+      const code = stripComments(connectionSource);
+      expect(code).toMatch(
+        /transaction\s*<T>\s*\(\s*fn\s*:\s*\(\s*conn\s*:\s*DbConnection\s*\)\s*=>\s*Promise<T>\s*\)\s*:\s*Promise<T>/,
+      );
+    });
+  });
+
   describe('no driver types or schema knowledge (scenario 2; threat: leakage)', () => {
     it('the forbidden-import detector actually catches a known offender', () => {
       const source = "import { Client } from 'pg';\nimport express from 'express';";

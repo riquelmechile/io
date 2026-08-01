@@ -130,7 +130,7 @@ describe('Work type', () => {
 });
 
 describe('BusinessReceipt type', () => {
-  it('requires all 10 fields including a non-empty companyId', () => {
+  it('requires all 11 fields including a non-empty companyId and terminalEventId', () => {
     const receipt: BusinessReceipt = {
       receiptId: 'receipt-1',
       companyId: 'acme',
@@ -140,13 +140,33 @@ describe('BusinessReceipt type', () => {
       policyHash: 'sha256:abc123',
       evidenceRefs: ['evid-1'],
       terminalState: 'verified',
+      terminalEventId: 'attempt-1',
       artifactHash: 'sha256:def456',
       issuedAt: 1750000000000,
     };
     expect(receipt.receiptId).toBe('receipt-1');
     expect(receipt.companyId).toBe('acme');
     expect(receipt.terminalState).toBe('verified');
+    expect(receipt.terminalEventId).toBe('attempt-1');
     expect(receipt.evidenceRefs).toEqual(['evid-1']);
-    expect(Object.keys(receipt)).toHaveLength(10);
+    expect(Object.keys(receipt)).toHaveLength(11);
+  });
+
+  it('terminalEventId is a required string — omitting it is a compile error', () => {
+    // tsc rejects the omission; at runtime the closest to "missing" is empty.
+    const receipt: BusinessReceipt = {
+      receiptId: 'receipt-2',
+      companyId: 'acme',
+      workId: 'work-1',
+      delegationId: 'del-1',
+      actor: 'principal-2',
+      policyHash: 'sha256:abc123',
+      evidenceRefs: [],
+      terminalState: 'verified',
+      terminalEventId: '',
+      artifactHash: 'sha256:def456',
+      issuedAt: 1750000000000,
+    };
+    expect(receipt.terminalEventId).toBe('');
   });
 });

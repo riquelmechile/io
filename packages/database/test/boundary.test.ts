@@ -174,11 +174,15 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(present).toEqual([]);
     });
 
-    it('pg-connection.ts owns a Pool but opens NO Client / connect()', () => {
+    it('pg-connection.ts owns a Pool, opens clients ONLY via pool.connect(), and constructs no Client', () => {
       const code = stripComments(readFileSync(pgDriverOwner, 'utf8'));
       expect(code).toContain('new Pool');
+      // D1 transaction(): the spec REQUIRES acquiring a pooled client via
+      // pool.connect() (previously banned — the port had no transaction
+      // primitive). pg-connection.ts is the driver owner, so the exemption
+      // covers pool.connect(); direct `new Client` construction stays banned.
+      expect(code).toMatch(/\.connect\(/);
       expect(code).not.toMatch(/new\s+Client/);
-      expect(code).not.toMatch(/\.connect\(/);
     });
   });
 

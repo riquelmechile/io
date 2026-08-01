@@ -86,6 +86,9 @@ export interface BusinessReceipt {
   readonly policyHash: string;
   readonly evidenceRefs: readonly string[];
   readonly terminalState: string;
+  /** Terminal event (the attempt) that closed the work (D5). UNIQUE with
+   * workId in the repository — a single terminal close per work. */
+  readonly terminalEventId: string;
   readonly artifactHash: string;
   readonly issuedAt: number;
 }
