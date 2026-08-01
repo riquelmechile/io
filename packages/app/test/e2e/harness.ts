@@ -14,8 +14,9 @@ import {
 import type { DbConnection } from '@io/database/src/connection.js';
 import { PgDbConnection, pgConnectionString } from '@io/database/src/pg-connection.js';
 import { FakeLlmClient } from '@io/llm-client/src/index.js';
-import type { LlmResponse } from '@io/llm-client/src/index.js';
+import type { LlmClient, LlmResponse } from '@io/llm-client/src/index.js';
 
+import { buildWorkerDeps } from '../../src/composition/worker-deps.js';
 import { FileDocumentSandbox } from '../../src/sandbox/file-document-sandbox.js';
 import type { WorkerDeps, WorkerPrincipals } from '../../src/worker/types.js';
 
@@ -114,7 +115,8 @@ export interface E2eHarness {
   readonly journal: PgIdempotencyJournalRepository;
   readonly sandbox: FileDocumentSandbox;
   readonly sandboxRoot: string;
-  readonly llm: FakeLlmClient;
+  /** The LLM client driving the cycle: the injected one, or `cannedLlm()`. */
+  readonly llm: LlmClient;
   readonly principals: WorkerPrincipals;
   /** Fully wired worker deps over the REAL adapters + terminal transaction. */
   readonly deps: WorkerDeps;
@@ -127,6 +129,8 @@ export interface E2eHarnessOptions {
   readonly databaseName: string;
   /** Canned LLM plan JSON (default: the create-document plan). */
   readonly llmContent?: string;
+  /** Optional injected LlmClient (default: `cannedLlm(llmContent)`). */
+  readonly llm?: LlmClient;
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -177,54 +181,32 @@ export async function createE2eHarness(options: E2eHarnessOptions): Promise<E2eH
   }
 
   const sandboxRoot = mkdtempSync(join(tmpdir(), 'io-e2e-sandbox-'));
-  const sandbox = new FileDocumentSandbox(sandboxRoot);
-  const llm = cannedLlm(options.llmContent);
+  const llm = options.llm ?? cannedLlm(options.llmContent);
   const principals = E2E_PRINCIPALS;
 
-  // The REAL PG adapters, all over the same live scratch connection (pool).
-  const work = new PgWorkRepository(conn);
-  const delegation = new PgDelegationRepository(conn);
-  const receipts = new PgBusinessReceiptRepository(conn);
-  const journal = new PgIdempotencyJournalRepository(conn);
-
-  const deps: WorkerDeps = {
-    work,
-    delegation,
-    receipts,
-    journal,
-    sandbox,
-    llm,
-    principals,
-    now: () => Date.now(),
-    // The real terminal transaction (§9.8): the B7 finalize twin runs its T1
-    // atomic close (CAS + receipt + journal.complete) inside this live
-    // connection's transaction. The effect NEVER runs inside it — the effect
-    // phase (worker/effect.ts) takes only sandbox + action.
+  // Deps assembly is DELEGATED to the production composition root
+  // (packages/app/src/composition/worker-deps.ts — Req 1): ONE wiring path for
+  // the harness and any other composition root consumer. The pool-bound PG
+  // adapters + FileDocumentSandbox over `sandboxRoot` + the injected llm +
+  // the `repositories(conn)` factory (mirrors completeWorkAtomically) all come
+  // from `buildWorkerDeps`. The finalize twin's T1 binds its repos to the
+  // transaction-scoped `tx` — atomic by construction, no statement routing.
+  const deps = buildWorkerDeps({
     connection: conn,
-    // PRODUCTION wiring for the terminal close — mirrors completeWorkAtomically
-    // (packages/database/src/complete-work-flow.ts:32-39): the factory binds
-    // FRESH PG adapters to whatever connection it is given. T1 passes the
-    // transaction-scoped `tx`, so the CAS + receipt + journal.complete share
-    // ONE real PostgreSQL transaction — atomic BY CONSTRUCTION, no routing
-    // decorator. T2 passes the pool (`deps.connection`) for separate committed
-    // writes (the design's marker-durability boundary). `@io/app` source stays
-    // PG-agnostic: the PG repos are constructed HERE (composition root).
-    repositories: (repoConn: DbConnection) => ({
-      work: new PgWorkRepository(repoConn),
-      receipts: new PgBusinessReceiptRepository(repoConn),
-      journal: new PgIdempotencyJournalRepository(repoConn),
-    }),
-  };
+    llm,
+    sandboxRoot,
+    principals,
+  });
 
   const harness: E2eHarness = {
     databaseName,
     conn,
     company: new PgCompanyRepository(conn),
-    delegation,
-    work,
-    receipts,
-    journal,
-    sandbox,
+    delegation: deps.delegation as PgDelegationRepository,
+    work: deps.work as PgWorkRepository,
+    receipts: deps.receipts as PgBusinessReceiptRepository,
+    journal: deps.journal as PgIdempotencyJournalRepository,
+    sandbox: deps.sandbox as FileDocumentSandbox,
     sandboxRoot,
     llm,
     principals,
@@ -329,36 +311,18 @@ export interface FreshWorkerStack {
 
 /** Boot a fresh worker stack for a restart simulation (C5): connects to the
  * harness's scratch database with a NEW PgDbConnection pool and builds a fully
- * wired fresh worker (plain pool + fresh REAL adapters + FileDocumentSandbox
- * over the SAME root + a fresh FakeLlmClient). The database, migrations and
- * committed rows are untouched — the fresh connection reads exactly what the
- * crashed instance persisted. */
+ * wired fresh worker via the production composition root (`buildWorkerDeps`):
+ * plain pool + fresh REAL adapters + FileDocumentSandbox over the SAME root +
+ * the harness's LLM client (default FakeLlmClient unless injected). The
+ * database, migrations and committed rows are untouched — the fresh connection
+ * reads exactly what the crashed instance persisted. */
 export function openFreshWorkerStack(harness: E2eHarness): FreshWorkerStack {
   const conn = new PgDbConnection(scratchConnectionString(harness.databaseName));
-  const work = new PgWorkRepository(conn);
-  const delegation = new PgDelegationRepository(conn);
-  const receipts = new PgBusinessReceiptRepository(conn);
-  const journal = new PgIdempotencyJournalRepository(conn);
-  const sandbox = new FileDocumentSandbox(harness.sandboxRoot);
-  const llm = cannedLlm(undefined);
-  const deps: WorkerDeps = {
-    work,
-    delegation,
-    receipts,
-    journal,
-    sandbox,
-    llm,
-    principals: harness.principals,
-    now: () => Date.now(),
+  const deps = buildWorkerDeps({
     connection: conn,
-    // Same production wiring as the harness: fresh PG adapters bound to the
-    // connection the factory is given (tx-scoped client in T1 → one REAL
-    // transaction; pool for T2's separate committed writes).
-    repositories: (repoConn: DbConnection) => ({
-      work: new PgWorkRepository(repoConn),
-      receipts: new PgBusinessReceiptRepository(repoConn),
-      journal: new PgIdempotencyJournalRepository(repoConn),
-    }),
-  };
+    llm: harness.llm,
+    sandboxRoot: harness.sandboxRoot,
+    principals: harness.principals,
+  });
   return { conn, deps, close: async () => conn.close() };
 }

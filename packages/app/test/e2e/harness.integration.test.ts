@@ -9,9 +9,17 @@ import {
 } from '@io/database/src/index.js';
 import { PgDbConnection } from '@io/database/src/pg-connection.js';
 import { FakeLlmClient } from '@io/llm-client/src/index.js';
+import type { LlmResponse } from '@io/llm-client/src/index.js';
 
 import { FileDocumentSandbox } from '../../src/sandbox/file-document-sandbox.js';
-import { createE2eHarness, e2eRequirePg, pgReachable } from './harness.js';
+import { runWorker } from '../../src/worker/worker.js';
+import {
+  createE2eHarness,
+  e2eRequirePg,
+  pgReachable,
+  seedAcceptedWork,
+  workerInputFor,
+} from './harness.js';
 import type { E2eHarness } from './harness.js';
 
 /**
@@ -88,6 +96,92 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       const company = { companyId: 'smoke-company', purpose: 'E2E smoke round-trip' };
       await harness.company.save(company);
       expect(await harness.company.get(company.companyId)).toEqual(company);
+    });
+  },
+);
+
+describe.skipIf(!reachable && !e2eRequirePg)(
+  'E2E harness widening (task 2.1): injected LlmClient + deps delegated to buildWorkerDeps',
+  () => {
+    const injectedPlan = JSON.stringify({
+      steps: [
+        {
+          action: 'create-document',
+          args: { relativePath: 'docs/injected.md', content: 'injected client plan' },
+        },
+      ],
+      intent: 'create the injected document',
+    });
+    const injectedResponse: LlmResponse = {
+      model: 'deepseek-v4-flash',
+      content: injectedPlan,
+      usage: {
+        promptTokens: 1,
+        completionTokens: 1,
+        promptCacheHitTokens: 0,
+        promptCacheMissTokens: 1,
+      },
+    };
+
+    it('accepts an injected LlmClient, wires it into deps, and drives the REAL cycle with it', async () => {
+      const injected = new FakeLlmClient({ responses: [injectedResponse] });
+      const h = await createE2eHarness({
+        databaseName: 'io_dev_e2e_harness_llm',
+        llm: injected,
+      });
+      try {
+        await seedAcceptedWork(h, {
+          companyId: 'widen-co',
+          delegationId: 'widen-del',
+          workId: 'work-widen',
+        });
+
+        // The injected client is the harness llm AND the composed deps llm.
+        expect(h.llm).toBe(injected);
+        expect(h.deps.llm).toBe(injected);
+
+        // Deps are assembled by buildWorkerDeps: pool-bound adapters over the
+        // live scratch connection + the repositories factory (terminal close).
+        expect(h.deps.connection).toBe(h.conn);
+        expect(h.deps.work).toBeInstanceOf(PgWorkRepository);
+        expect(h.deps.delegation).toBeInstanceOf(PgDelegationRepository);
+        expect(h.deps.receipts).toBeInstanceOf(PgBusinessReceiptRepository);
+        expect(h.deps.journal).toBeInstanceOf(PgIdempotencyJournalRepository);
+        expect(h.deps.sandbox).toBeInstanceOf(FileDocumentSandbox);
+        expect(h.deps.repositories).toBeTypeOf('function');
+
+        // The injected client drives the full cycle (FakeLlm path, behavior
+        // unchanged): the worker called the injected client EXACTLY once and the
+        // cycle reached a terminal state with exactly one receipt.
+        const result = await runWorker(
+          workerInputFor(h, {
+            companyId: 'widen-co',
+            workId: 'work-widen',
+            idempotencyKey: 'widen-key',
+            requestHash: 'hash-widen',
+          }),
+          h.deps,
+        );
+        expect(result.ok).toBe(true);
+        expect(injected.requests).toHaveLength(1);
+        const receipts = await h.conn.query<{ count: number }>(
+          'SELECT count(*)::int AS count FROM business_receipt',
+          [],
+        );
+        expect(receipts[0]?.count).toBe(1);
+      } finally {
+        await h.close();
+      }
+    });
+
+    it('keeps the default cannedLlm() path unchanged when no llm is injected', async () => {
+      const h = await createE2eHarness({ databaseName: 'io_dev_e2e_harness_default_llm' });
+      try {
+        expect(h.llm).toBeInstanceOf(FakeLlmClient);
+        expect(h.deps.llm).toBe(h.llm);
+      } finally {
+        await h.close();
+      }
     });
   },
 );
