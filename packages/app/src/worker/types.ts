@@ -60,6 +60,17 @@ export type WorkerResult =
   | { ok: true; replayed: true; resultJson: unknown }
   | { ok: false; reason: WorkerFailureReason; detail?: string; current?: Work };
 
+/** The repository set one worker step works on, bound to ONE connection —
+ * mirrors `completeWorkAtomically` (packages/database/src/complete-work-flow.ts):
+ * inside the terminal transaction the factory receives the TRANSACTION-SCOPED
+ * connection so CAS + receipt + journal.complete share ONE transaction; outside
+ * a transaction it receives the pool for separate committed writes (§9.8). */
+export interface WorkerRepositories {
+  work: WorkRepository;
+  receipts: BusinessReceiptRepository;
+  journal: IdempotencyJournalPort;
+}
+
 /** Injectable port set for one worker cycle (unit level: fakes; Slice C: PG adapters). */
 export interface WorkerDeps {
   work: WorkRepository;
@@ -76,4 +87,12 @@ export interface WorkerDeps {
    * batch-1 wiring keeps the effect outside any transaction.
    */
   connection?: DbConnection;
+  /**
+   * Repository factory for the terminal close (Slice C correction): binds the
+   * repos to whatever connection it is given. The finalize T1 passes the
+   * transaction-scoped `tx` (ONE real transaction); T2 passes the pool for
+   * separate committed writes. `@io/app` stays PG-agnostic — the PG adapters
+   * are constructed at the composition root (harness), never in worker source.
+   */
+  repositories?: (conn: DbConnection) => WorkerRepositories;
 }

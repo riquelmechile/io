@@ -18,7 +18,12 @@ import type { EffectRecord, SandboxPort } from '../sandbox/sandbox-port.js';
  *   T1 (ONE transaction): work.get → state guard (only an in_progress Work may
  *   CAS; a terminal/absent Work aborts BEFORE the CAS) → updateIfVersion(completed)
  *   CAS → exactly ONE receipt (rcpt:<attemptId>, terminal_event_id = attemptId,
- *   evidenceId) → journal.complete → COMMIT.
+ *   evidenceId) → journal.complete → COMMIT. The CAS + receipt + journal.complete
+ *   are ONE REAL transaction because T1 builds its repositories on the
+ *   TRANSACTION-SCOPED connection via the `repositories` factory — mirroring
+ *   `completeWorkAtomically` (packages/database/src/complete-work-flow.ts) — so
+ *   the writes CANNOT autocommit on the pool (the pool-bound repos would leave
+ *   partial state on a mid-close failure).
  *
  *   T1 CAS-loss: STOP BEFORE receipts.save → ROLL BACK. Unlike the foundation
  *   in-tx insert, the in_flight row here was committed in a DIFFERENT
@@ -59,12 +64,28 @@ export const WORKER_POLICY_HASH = 'worker:low-risk-documents';
  * (create-document). Overridable via FinalizeInput.artifactHash. */
 export const WORKER_ARTIFACT_HASH = 'worker:create-document';
 
-/** Injectable port set for the terminal close (unit level: fakes; Slice C:
- * PG adapters + the real connection). */
-export interface FinalizeDeps {
+/** The repository set one terminal-close step works on, bound to ONE
+ * connection. The factory pattern keeps `@io/app` PG-agnostic: whoever wires
+ * the worker (composition root / harness) decides what `repositories(conn)`
+ * constructs — inside T1 it receives the transaction-scoped connection, outside
+ * T1 the pool. */
+export interface FinalizeRepositories {
   work: WorkRepository;
   receipts: BusinessReceiptRepository;
   journal: IdempotencyJournalPort;
+}
+
+/** Injectable port set for the terminal close (unit level: fakes; Slice C:
+ * PG adapters + the real connection). */
+export interface FinalizeDeps {
+  /** Builds the repository set bound to the GIVEN connection (mirrors
+   * `completeWorkAtomically`, packages/database/src/complete-work-flow.ts:32-39):
+   * T1 passes the TRANSACTION-SCOPED `tx` so CAS + receipt + journal.complete
+   * share ONE real transaction; T2 passes the pool (`deps.connection`) so the
+   * reconciliation writes (`sandbox.undo`, `journal.markRetryable`,
+   * `journal.complete(UNRESOLVED)`) are separate committed writes (§9.8). The
+   * app stays PG-agnostic — PG repos are constructed at the composition root. */
+  repositories: (conn: DbConnection) => FinalizeRepositories;
   sandbox: SandboxPort;
   /** The terminal-close transaction boundary (§9.8): T1 runs inside it and
    * rolls back on CAS loss; T2 writes are separate committed writes. */
@@ -196,8 +217,10 @@ export async function finalizeInFlightWorkAtomically(
   deps: FinalizeDeps,
   input: FinalizeInput,
 ): Promise<FinalizeResult> {
-  // WC-6 lookup: replay | DENY | continue. Read-only — no transaction needed.
-  const entry = await deps.journal.lookup(input.companyId, input.idempotencyKey);
+  // WC-6 lookup: replay | DENY | continue. Read-only standalone access — the
+  // POOL factory (no transaction needed; autocommit read is correct here).
+  const { journal } = deps.repositories(deps.connection);
+  const entry = await journal.lookup(input.companyId, input.idempotencyKey);
   if (entry?.status === 'completed') {
     if (entry.requestHash !== input.requestHash) {
       return { ok: false, reason: 'idempotency-conflict' };
@@ -214,8 +237,14 @@ export async function finalizeInFlightWorkAtomically(
   // T1: the atomic terminal close — CAS + receipt + journal.complete in ONE
   // transaction. Any post-write failure aborts the whole close.
   try {
-    return await deps.connection.transaction(async () => {
-      const current = await deps.work.get(input.companyId, input.workId);
+    return await deps.connection.transaction(async (tx) => {
+      // The repositories are bound to the TRANSACTION-SCOPED `tx` connection:
+      // the CAS + receipt + journal.complete share ONE real PostgreSQL
+      // transaction (mirrors completeWorkAtomically). The pool-bound adapters
+      // would AUTOCOMMIT each write — a failure after the CAS would leave
+      // partial state (the Slice C correction BLOCKER).
+      const { work, receipts, journal } = deps.repositories(tx);
+      const current = await work.get(input.companyId, input.workId);
       if (current === undefined || current.state !== 'in_progress') {
         // State guard BEFORE the CAS: only an in_progress Work may CAS
         // in_progress → completed. A TERMINAL Work (e.g. completed out-of-band
@@ -225,18 +254,15 @@ export async function finalizeInFlightWorkAtomically(
         // closes the attempt honestly (no undo, no marker).
         throw new FinalizeCasLostError();
       }
-      const cas = await deps.work.updateIfVersion(
-        { ...current, state: 'completed' },
-        current.version,
-      );
+      const cas = await work.updateIfVersion({ ...current, state: 'completed' }, current.version);
       if (!cas.ok) {
         // A concurrent writer won after our read: STOP before the receipt and
         // roll back. The pre-committed in_flight row (different tx) survives.
         throw new FinalizeCasLostError();
       }
       const completed = cas.value;
-      const receipt = await deps.receipts.save(buildReceipt(deps, input, completed));
-      await deps.journal.complete(input.attemptId, completed);
+      const receipt = await receipts.save(buildReceipt(deps, input, completed));
+      await journal.complete(input.attemptId, completed);
       return { ok: true, work: completed, receipt } as const;
     });
   } catch (error) {
@@ -248,13 +274,12 @@ export async function finalizeInFlightWorkAtomically(
 }
 
 async function reconcileCasLoss(deps: FinalizeDeps, input: FinalizeInput): Promise<FinalizeResult> {
-  // T2 — the shared post-effect-failure reconciliation (in_progress + applied →
-  // undo + markRetryable; already terminal → UNRESOLVED; no effect → clean
-  // replay). The FinalizeDeps satisfy the narrower PostEffectReconcileDeps.
-  return reconcilePostEffectFailure(
-    { work: deps.work, journal: deps.journal, sandbox: deps.sandbox },
-    input,
-  );
+  // T2 — the shared post-effect-failure reconciliation, on the POOL connection
+  // (OUTSIDE the rolled-back T1): `deps.repositories(deps.connection)` yields
+  // separate committed writes — `sandbox.undo`, `journal.markRetryable`,
+  // `journal.complete(UNRESOLVED)` are each their own committed write (§9.8).
+  const { work, journal } = deps.repositories(deps.connection);
+  return reconcilePostEffectFailure({ work, journal, sandbox: deps.sandbox }, input);
 }
 
 function buildReceipt(deps: FinalizeDeps, input: FinalizeInput, completed: Work): BusinessReceipt {

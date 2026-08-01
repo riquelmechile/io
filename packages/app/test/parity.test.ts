@@ -249,7 +249,13 @@ describe('B11 parity 2 — CAS-loss → markRetryable → retry-wins ≡ foundat
       state: 'in_progress',
     }));
 
-    const lost = await runWorker(workerInput(), { ...h, work: appRacing, connection: conn });
+    const lost = await runWorker(workerInput(), {
+      ...h,
+      work: appRacing,
+      connection: conn,
+      // The racing double must reach the finalize twin's T1 too.
+      repositories: () => ({ work: appRacing, receipts: h.receipts, journal: h.journal }),
+    });
     expect(lost.ok).toBe(false);
     if (lost.ok) return;
     expect(lost.reason).toBe('cas-lost-retryable');

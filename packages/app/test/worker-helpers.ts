@@ -208,8 +208,16 @@ export function harness(overrides: Partial<WorkerDeps> = {}): WorkerHarness {
     sandbox: new RecordingSandbox(trace),
     llm: cannedLlm(),
     principals,
+    repositories: () => ({ work: base.work, receipts: base.receipts, journal: base.journal }),
     trace,
   };
+  // The repository factory returns the SHARED in-memory fakes for ANY
+  // connection (the fakes ignore the connection — the same instances serve the
+  // transaction-scoped and the pool connection, mirroring the unit-level
+  // "rollback" proof via TxTrackingConnection). A test that overrides
+  // work/journal/receipts AND expects the finalize twin to use the double must
+  // also override `repositories` (the spread `{ ...h, work: double }` shadows
+  // the field but not this closure).
   return { ...base, ...overrides } as WorkerHarness;
 }
 

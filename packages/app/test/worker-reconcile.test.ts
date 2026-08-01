@@ -356,7 +356,13 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-    const lost = await runWorker(workerInput(), { ...h, work: racing, connection: conn });
+    const lost = await runWorker(workerInput(), {
+      ...h,
+      work: racing,
+      connection: conn,
+      // The racing double must reach the finalize twin's T1 too.
+      repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+    });
 
     expect(lost.ok).toBe(false);
     if (lost.ok) return;

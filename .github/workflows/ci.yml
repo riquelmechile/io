@@ -4,12 +4,16 @@ name: Toolchain
 # non-mutating local gates under the enforced Node 24 LTS runtime. This workflow
 # does NOT replace .github/workflows/pr-validation.yml (governance).
 #
-# PostgreSQL integration is REQUIRED in CI (task 3.9): the database slice's
-# integration suites run against the postgres:18 service container below and
-# MUST pass — the IO_REQUIRE_PG=1 marker flips the reachability probe from
-# "skip when PG is missing" (local-dev behavior) to "FAIL LOUDLY", so CI can
-# never silently skip the live-PG tests. The DeepSeek external-API round-trip
-# remains skipped (no DEEPSEEK_API_KEY in CI) — unrelated to PostgreSQL.
+# PostgreSQL integration is REQUIRED in CI (task 3.9 / C6): the database slice's
+# integration suites AND the packages/app E2E suites run against the postgres:18
+# service container below and MUST pass — the IO_REQUIRE_PG=1 marker flips the
+# reachability probe from "skip when PG is missing" (local-dev behavior) to
+# "FAIL LOUDLY", so CI can never silently skip the live-PG tests. The app E2E
+# (`packages/app/test/e2e/*.integration.test.ts`) is discovered by the root
+# vitest include pattern (`packages/**/test/**/*.test.ts`) inside `pnpm check` —
+# it is NOT excluded, so it runs here against the same PG service and fails
+# loudly (ECONNREFUSED) if the database is unavailable. The DeepSeek external-API
+# round-trip remains skipped (no DEEPSEEK_API_KEY in CI) — unrelated to PostgreSQL.
 on:
   push:
     branches: [main]

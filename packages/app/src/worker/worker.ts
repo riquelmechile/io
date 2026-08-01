@@ -202,14 +202,15 @@ export async function runWorker(input: unknown, deps: WorkerDeps): Promise<Worke
   // 7. Terminal close (B7): finalizeInFlightWorkAtomically — T1 CAS + receipt +
   //    journal.complete in ONE transaction, with the honest T2 reconciliation
   //    on CAS loss (undo + markRetryable, or UNRESOLVED when already terminal).
-  //    Runs ONLY when a connection seam is wired (batch-1 cycles run without
-  //    one and return pre-terminal; Slice C wires the real connection).
-  if (deps.connection !== undefined) {
+  //    Runs ONLY when a connection seam AND the repository factory are wired
+  //    (batch-1 cycles run without them and return pre-terminal; Slice C wires
+  //    the real connection + the PG factory). The factory is what makes T1
+  //    ATOMIC against live PG: it binds the repos to the transaction-scoped
+  //    client (mirrors completeWorkAtomically) instead of the pool.
+  if (deps.connection !== undefined && deps.repositories !== undefined) {
     const finalized = await finalizeInFlightWorkAtomically(
       {
-        work: deps.work,
-        receipts: deps.receipts,
-        journal: deps.journal,
+        repositories: deps.repositories,
         sandbox: deps.sandbox,
         connection: deps.connection,
         executor: deps.principals.executor,

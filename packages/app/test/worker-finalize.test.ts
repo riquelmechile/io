@@ -123,9 +123,9 @@ function finalizeDeps(
   overrides: Partial<FinalizeDeps> = {},
 ): FinalizeDeps {
   return {
-    work: h.work,
-    receipts: h.receipts,
-    journal: h.journal,
+    // The fakes ignore the connection: the same in-memory instances serve the
+    // transaction-scoped (T1) and the pool (T2/WC-6 lookup) connections.
+    repositories: () => ({ work: h.work, receipts: h.receipts, journal: h.journal }),
     sandbox: h.sandbox,
     connection: conn,
     executor: principals.executor,
@@ -191,7 +191,9 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
 
     const result = await finalizeInFlightWorkAtomically(
-      finalizeDeps(h, conn, { work: racing }),
+      finalizeDeps(h, conn, {
+        repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+      }),
       finalizeInput(effect),
     );
 
@@ -236,7 +238,9 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'completed' }));
 
     const result = await finalizeInFlightWorkAtomically(
-      finalizeDeps(h, conn, { work: racing }),
+      finalizeDeps(h, conn, {
+        repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+      }),
       finalizeInput(effect),
     );
 
@@ -339,7 +343,13 @@ describe('cycle wiring (B7) — finalize runs after the effect, INSIDE the termi
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-    const result = await runWorker(workerInput(), { ...h, work: racing, connection: conn });
+    const result = await runWorker(workerInput(), {
+      ...h,
+      work: racing,
+      connection: conn,
+      // The racing double must reach the finalize twin's T1 too.
+      repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
