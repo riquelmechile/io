@@ -68,14 +68,25 @@ UseCase → transaction(tx =>
   → receipt(terminal_event_id=attempt_id) → journal.complete)
 ```
 
-## Data Model (003)
+## Data Model (003 + 004)
+
+Split into two additive, idempotent migrations. **003 travels with Slice A** —
+the columns its adapters already read/write (`company_id` ×3, `version`); this is
+the coherence fix found during live-PG verification (adapters landed in A, the
+columns were originally planned for B). **004 travels with Slice B** — the
+constraints (`terminal_event_id`, all UNIQUE indexes, `idempotency_journal`).
+004's column additions use `IF NOT EXISTS`, so they are safe after 003.
 
 ```sql
--- database/sql/003_harden_constraints.sql
+-- database/sql/003_harden_columns.sql (Slice A: additive columns the adapters read/write)
 ALTER TABLE delegation ADD COLUMN IF NOT EXISTS company_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE work ADD COLUMN IF NOT EXISTS company_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE work ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
 ALTER TABLE business_receipt ADD COLUMN IF NOT EXISTS company_id TEXT NOT NULL DEFAULT '';
+```
+
+```sql
+-- database/sql/004_harden_constraints.sql (Slice B: terminal_event_id + UNIQUE + journal)
 ALTER TABLE business_receipt ADD COLUMN IF NOT EXISTS terminal_event_id TEXT NOT NULL DEFAULT '';
 CREATE UNIQUE INDEX IF NOT EXISTS uq_company_company_id ON company (company_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_delegation_delegation_id ON delegation (delegation_id);
@@ -99,8 +110,8 @@ Types: Delegation/Work/BusinessReceipt +`companyId`; Work +`version`.
 
 | Slice | Surfaces |
 |-------|----------|
-| **A** | D2 sod; `isWindowActive`→grant/identity/expiryGate; honest deferred steps; companyId+scoped get |
-| **B** | D1 tx; D4 CAS; D5 UNIQUE/terminal; 003; fake UPDATE |
+| **A** | D2 sod; `isWindowActive`→grant/identity/expiryGate; honest deferred steps; companyId+scoped get; 003 columns |
+| **B** | D1 tx; D4 CAS; D5 UNIQUE/terminal; 004 constraints; fake UPDATE |
 | **C** | D3–D8 use-cases/journal/guards; hygiene; CI-PG visible |
 
 ## File Changes
@@ -109,7 +120,7 @@ Types: Delegation/Work/BusinessReceipt +`companyId`; Work +`version`.
 |------|--------|
 | `trust-kernel/src/{sod,model,grant,identity,pipeline}.ts` | Modify |
 | `business-domain/src/{types,ports/*,index,use-cases/*,validation/*}` | Modify/Create |
-| `database/src/{connection,pg-connection,*-adapter,row-guards}.ts`, fake, `sql/003_*.sql` | Modify/Create |
+| `database/src/{connection,pg-connection,*-adapter,row-guards}.ts`, fake, `sql/003_*.sql`, `sql/004_*.sql` | Modify/Create |
 | Tests + hygiene | Create/Modify |
 
 ## Interfaces

@@ -22,7 +22,7 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 | Unit | Goal | PR | Focused test | Runtime harness | Rollback boundary |
 |------|------|----|--------------|-----------------|-------------------|
 | A | Authority + scope | PR1 | `pnpm vitest run packages/trust-kernel packages/business-domain` | N/A — pure domain + fakes; live PG lands in B | Revert PR1: sod/model/grant/identity/pipeline + companyId + scoped repos |
-| B | Persistence + concurrency | PR2 | `pnpm vitest run packages/database` | `pnpm vitest run packages/database/test/*integration*` vs docker PG 18.4 | Revert PR2: connection/pg-connection/fake/adapters/003; A stays |
+| B | Persistence + concurrency | PR2 | `pnpm vitest run packages/database` | `pnpm vitest run packages/database/test/*integration*` vs docker PG 18.4 | Revert PR2: connection/pg-connection/fake/adapters/004; A stays |
 | C | Use cases + idempotency + validation | PR3 | `pnpm check` | `business-pg-roundtrip.integration.test.ts` (atomic close) | Revert PR3: use-cases/validation/row-guards/journal; A+B stay |
 
 ## Phase 1: Slice A — Authority + Scope (PR1)
@@ -38,6 +38,7 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 - [x] 1.9 RED+GREEN business-domain delegation-window tests: future inactive, in-window active, expired inactive, validFrom==now active (Delegation-window ×4).
 - [x] 1.10 RED+GREEN database/business-adapters.test.ts + {delegation,work,business-receipt}-adapter.ts: company_id INSERT/SELECT, scoped get WHERE company_id=$N, receipt carries companyId (scope ×adapters).
 - [x] 1.11 Verify A: `pnpm check` green; no cross-aggregate import.
+- [x] 1.12 GREEN database/sql/003_harden_columns.sql: additive company_id/version columns so Slice A adapters are coherent with live PG (coherence fix found during live-PG verification).
 
 ## Phase 2: Slice B — Persistence + Concurrency (PR2)
 
@@ -47,7 +48,7 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 - [ ] 2.4 GREEN database/pg-connection.ts: pool.connect→BEGIN→tx {execute,query,transaction:rejectNested}→fn→COMMIT+release; throw→ROLLBACK+release+rethrow.
 - [ ] 2.5 RED database/connection-fake.test.ts: commit keeps / error restores+rethrows; nested throws; records+round-trips; non-durable disclosure; mirrors PG (Fake ×4).
 - [ ] 2.6 GREEN database/test/connection-fake.ts: snapshot tables+idCounters, restore on throw; add UPDATE parse for CAS; nested throws.
-- [ ] 2.7 RED+GREEN database/sql/003_harden_constraints.sql: company_id/version/terminal_event_id columns, UNIQUE indexes (company/delegation/work/receipt + work×terminal), idempotency_journal (design 003).
+- [ ] 2.7 RED+GREEN database/sql/004_harden_constraints.sql: terminal_event_id column + UNIQUE indexes (company/delegation/work/receipt + work×terminal) + idempotency_journal (company_id/version columns already present via 003; column additions use IF NOT EXISTS) (design 004).
 - [ ] 2.8 RED business-domain/fakes.test.ts + database/business-adapters.test.ts: CAS success N→N+1; stale→{ok:false,reason:'version-conflict',current?}; concurrent single winner (CAS ×3).
 - [ ] 2.9 GREEN business-domain/ports/{repositories,fakes}.ts + database/work-adapter.ts: updateIfVersion (PG `UPDATE … version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3`, 0 rows→conflict); fake compares version; save insert-only.
 - [ ] 2.10 RED+GREEN business-domain/types.ts + database/business-receipt-adapter.ts: terminalEventId; INSERT/SELECT terminal_event_id+company_id; UNIQUE(work_id,terminal_event_id) — first ok, dup receiptId rejected, dup work×terminal rejected (Receipt ×5).

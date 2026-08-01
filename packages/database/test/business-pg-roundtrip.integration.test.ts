@@ -16,6 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
 const SCHEMA_001 = join(pkgRoot, 'sql', '001_create_tables.sql');
 const SCHEMA_002 = join(pkgRoot, 'sql', '002_create_business_tables.sql');
+const SCHEMA_003 = join(pkgRoot, 'sql', '003_harden_columns.sql');
 
 /**
  * Integration test — REAL PostgreSQL round-trip for all four business-domain
@@ -51,6 +52,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     conn = new PgDbConnection(pgConnectionString());
     await conn.execute(readFileSync(SCHEMA_001, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_002, 'utf8'), []);
+    await conn.execute(readFileSync(SCHEMA_003, 'utf8'), []);
     companyRepo = new PgCompanyRepository(conn);
     delegationRepo = new PgDelegationRepository(conn);
     workRepo = new PgWorkRepository(conn);

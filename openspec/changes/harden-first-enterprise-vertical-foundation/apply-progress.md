@@ -85,3 +85,37 @@ All 11 Slice A tasks checked off in `tasks.md`. Full suite: **455 passed / 20 sk
 - **1 WARNING (candidate-caused, folded to Slice B)**: PG adapters bind `companyId` without an empty guard, while the fake rejects empty (`requireCompanyId`). Defense-in-depth / validation parity only — NOT an isolation break (scoped SQL still isolates tenants). Fix in Slice B: add `if (!companyId) throw` to the three PG adapters (tracked as task 2.11).
 - **1 SUGGESTION (spec-sanctioned, not a bug)**: `proposer==verifier` / `approver==verifier` are not absolute pairs; the trust-kernel spec explicitly permits low-risk to combine other roles but never proposer with approver. No action.
 - Independent orchestrator verification: `pnpm check` re-run green (455/20); business-domain `@io/*` imports = none; critical tests (sod.test.ts, model.test.ts) inspected and confirmed genuine (real assertions, not empty/trivial).
+
+## Coherence Fix (post-commit, live-PG verification)
+
+After the Slice A commit (`c4b4d7e`) was verified against LIVE PG 18.4
+(`postgresql://io:io_dev@localhost:5432/io_dev`), the business integration test
+failed with **9 failures**: `error: column "company_id" does not exist` (and the
+work `version` column) across the Delegation/Work/BusinessReceipt round-trips.
+
+- **Root cause**: Slice A changed the PG adapters (`delegation-adapter.ts`,
+  `work-adapter.ts`, `business-receipt-adapter.ts`) to INSERT/SELECT `company_id`
+  (×3) and work `version`, but those columns were planned for Slice B's migration
+  (`003_harden_constraints.sql`). Against live PG with only 001+002 applied, the
+  adapters referenced columns that did not exist — a coherence defect between the
+  committed adapters and the shipped schema.
+- **Fix**: the additive columns travel WITH Slice A. New idempotent migration
+  `packages/database/sql/003_harden_columns.sql` adds exactly the four columns the
+  Slice A adapters read/write (`delegation.company_id`, `work.company_id`,
+  `work.version`, `business_receipt.company_id`), each `ADD COLUMN IF NOT EXISTS`.
+  `business-pg-roundtrip.integration.test.ts` now applies 001 + 002 + 003 in order
+  before the tests run (TRUNCATE isolation in beforeEach unchanged). Slice B's
+  migration is renumbered to `004_harden_constraints.sql` and keeps only the
+  constraints (`terminal_event_id` column, all UNIQUE indexes,
+  `idempotency_journal`); its column additions use `IF NOT EXISTS`, so 004 is safe
+  after 003. design.md (Data Model split into 003 + 004, Slice Mapping, File
+  Changes) and tasks.md (Slice A task 1.12 added; Slice B task 2.7 renumbered
+  003→004) updated to match.
+- **Not touched**: adapter logic (correct), Slice B/C code (transaction, CAS,
+  journal, use-cases, validation), no test weakened/skipped/deleted, no new deps,
+  business-domain stays `@io/*`-free.
+- **Result**: full suite GREEN against live PG — `pnpm check` format-check ✅ /
+  typecheck ✅ / build ✅ / lint ✅ / test ✅, **473 passed | 2 skipped (475)**;
+  `business-pg-roundtrip.integration.test.ts` **11 passed / 0 failed**. Both PG
+  integration tests RUN (not skipped) and pass; the only 2 skips are the DeepSeek
+  external-API round-trip (no `DEEPSEEK_API_KEY`), unrelated to PG.
