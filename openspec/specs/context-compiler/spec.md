@@ -50,9 +50,9 @@ An unsourced segment MUST render ABSENT with zero bytes at its fixed position; i
 
 #### Scenario: Missing sources remain in place
 
-- GIVEN segments 1 and 11 present and 2–10 unsourced
+- GIVEN segments 1, 8, and 11 present (sourced) and segments 2–7, 9–10, and 12–13 unsourced
 - WHEN the input is compiled
-- THEN 2–10 MUST be ABSENT without moving segment 11
+- THEN the unsourced segments MUST be ABSENT (zero bytes) at their fixed positions without moving segment 11
 
 ### Requirement: Cache-Cohort Derivation
 
