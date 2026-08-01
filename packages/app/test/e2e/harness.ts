@@ -140,6 +140,7 @@ const MIGRATIONS = [
   '003_harden_columns.sql',
   '004_harden_constraints.sql',
   '005_journal_retryable_status.sql',
+  '006_business_events.sql',
 ];
 
 /** Boot the harness: probe PG, recreate the scratch DB, migrate, wire the stack. */

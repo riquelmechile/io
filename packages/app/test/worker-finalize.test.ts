@@ -15,7 +15,14 @@ import {
   WORKER_POLICY_HASH,
 } from '../src/worker/finalize.js';
 import { runWorker } from '../src/worker/worker.js';
-import { harness, principals, seed, type WorkerHarness, workerInput } from './worker-helpers.js';
+import {
+  cannedLlm,
+  harness,
+  principals,
+  seed,
+  type WorkerHarness,
+  workerInput,
+} from './worker-helpers.js';
 
 /**
  * B7 — finalizeInFlightWorkAtomically twin (design "Finalize CAS-loss", WC-6
@@ -125,7 +132,12 @@ function finalizeDeps(
   return {
     // The fakes ignore the connection: the same in-memory instances serve the
     // transaction-scoped (T1) and the pool (T2/WC-6 lookup) connections.
-    repositories: () => ({ work: h.work, receipts: h.receipts, journal: h.journal }),
+    repositories: () => ({
+      work: h.work,
+      receipts: h.receipts,
+      journal: h.journal,
+      events: h.events,
+    }),
     sandbox: h.sandbox,
     connection: conn,
     executor: principals.executor,
@@ -178,9 +190,77 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     const row = await h.journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('completed');
     expect(row?.resultJson).toMatchObject({ state: 'completed' });
+    // EXACTLY ONE `work.completed` event appended in the SAME transaction
+    // (R5): evt:{attemptId}, built ONLY from terminal-close facts.
+    expect(h.events.appends).toHaveLength(1);
+    const event = h.events.appends[0];
+    expect(event?.eventId).toBe(`evt:${ATTEMPT}`);
+    expect(event?.companyId).toBe(COMPANY);
+    expect(event?.aggregateKind).toBe('work');
+    expect(event?.aggregateId).toBe(WORK_ID);
+    expect(event?.eventType).toBe('work.completed');
+    expect(event?.source).toBe('worker');
+    expect(typeof event?.occurredAt).toBe('number');
+    expect(event?.payload).toMatchObject({
+      workId: WORK_ID,
+      state: 'completed',
+      receiptId: `rcpt:${ATTEMPT}`,
+      terminalState: 'completed',
+      evidenceId: 'ev:acme:close-2026-q3',
+      attemptId: ATTEMPT,
+      actor: principals.executor,
+    });
     // T1 committed; nothing rolled back.
     expect(conn.commits).toBe(1);
     expect(conn.rollbacks).toBe(0);
+  });
+
+  it('R6: equal terminal-close facts + different LLM output → IDENTICAL events (model-independent payload)', async () => {
+    // Two full cycles over the SAME work/key with a FIXED clock and DIFFERENT
+    // LLM plans (different document content — different model output). The
+    // event must be built ONLY from terminal facts — the model output MUST NOT
+    // select, judge, or alter any event field (R6).
+    const now = () => 1_234_567_890;
+    const first = harness({ now });
+    await seed(first);
+    const second = harness({
+      now,
+      llm: cannedLlm(
+        JSON.stringify({
+          steps: [
+            {
+              action: 'create-document',
+              args: {
+                relativePath: 'docs/quarterly-close-draft.md',
+                content: 'COMPLETELY DIFFERENT MODEL CONTENT',
+              },
+            },
+          ],
+          intent: 'a different plan for the same work',
+        }),
+      ),
+    });
+    await seed(second);
+
+    const a = await runWorker(workerInput(), {
+      ...first,
+      connection: new TxTrackingConnection(new InMemoryDbConnection()),
+    });
+    const b = await runWorker(workerInput(), {
+      ...second,
+      connection: new TxTrackingConnection(new InMemoryDbConnection()),
+    });
+
+    expect(a.ok).toBe(true);
+    expect(b.ok).toBe(true);
+    if (!a.ok || 'replayed' in a || !b.ok || 'replayed' in b) return;
+    // Exactly one event per close, and the two are BYTE-IDENTICAL.
+    expect(first.events.appends).toHaveLength(1);
+    expect(second.events.appends).toHaveLength(1);
+    expect(second.events.appends[0]).toEqual(first.events.appends[0]);
+    // No LLM output leaked into the event payload (no content/path fields).
+    expect(first.events.appends[0]?.payload).not.toHaveProperty('content');
+    expect(first.events.appends[0]?.payload).not.toHaveProperty('relativePath');
   });
 
   it('T1 CAS-loss: stops BEFORE receipts.save → T1 ROLLS BACK; the pre-committed in_flight row survives; marker is NOT a failure-complete', async () => {
@@ -192,7 +272,12 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
 
     const result = await finalizeInFlightWorkAtomically(
       finalizeDeps(h, conn, {
-        repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+        repositories: () => ({
+          work: racing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
       }),
       finalizeInput(effect),
     );
@@ -204,6 +289,10 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(result.current?.state).toBe('in_progress');
     // T1 stopped BEFORE the receipt: no receipt was ever saved.
     expect(h.receipts.saves).toHaveLength(0);
+    // R5 orphan guard: the CAS loss aborted T1 BEFORE the append — ZERO events
+    // from the losing attempt (the append is inside the transaction, so the
+    // throw rolls it back).
+    expect(h.events.appends).toHaveLength(0);
     // T1 rolled back (aborted), and the effect was reversed + marker set.
     expect(conn.commits).toBe(0);
     expect(conn.rollbacks).toBe(1);
@@ -240,7 +329,12 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
 
     const result = await finalizeInFlightWorkAtomically(
       finalizeDeps(h, conn, {
-        repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+        repositories: () => ({
+          work: racing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
       }),
       finalizeInput(effect),
     );
@@ -251,6 +345,9 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(result.current?.state).toBe('completed');
     // T1 rolled back before any receipt.
     expect(h.receipts.saves).toHaveLength(0);
+    // R5 orphan guard: the terminal-work abort (T2(ii)) also never appends —
+    // the state guard throws before the receipt AND the event.
+    expect(h.events.appends).toHaveLength(0);
     expect(conn.commits).toBe(0);
     expect(conn.rollbacks).toBe(1);
     // NEVER fabricate a resolution: the journal row is closed with the typed
@@ -281,6 +378,9 @@ describe('finalizeInFlightWorkAtomically — replay / DENY (WC atomic-close look
 
     expect(result).toEqual({ ok: true, replayed: true, resultJson: { ok: true, note: 'done' } });
     expect(h.receipts.saves).toHaveLength(0);
+    // R7: the replay early-returns BEFORE T1 — no second event append (the
+    // recorded result is replayed, the close never re-runs).
+    expect(h.events.appends).toHaveLength(0);
     expect(h.sandbox.undos).toHaveLength(0);
     expect(conn.commits).toBe(0);
     expect(conn.rollbacks).toBe(0);
@@ -349,7 +449,12 @@ describe('cycle wiring (B7) — finalize runs after the effect, INSIDE the termi
       work: racing,
       connection: conn,
       // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+      repositories: () => ({
+        work: racing,
+        receipts: h.receipts,
+        journal: h.journal,
+        events: h.events,
+      }),
     });
 
     expect(result.ok).toBe(false);

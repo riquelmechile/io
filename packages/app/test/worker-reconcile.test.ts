@@ -1,13 +1,13 @@
-import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
+import {
+  InMemoryIdempotencyJournalRepository,
+  type InMemoryWorkRepository,
+} from '@io/business-domain/src/ports/fakes.js';
 import type {
   IdempotencyJournalPort,
   JournalClaimResult,
   JournalEntry,
 } from '@io/business-domain/src/ports/idempotency.js';
-import {
-  InMemoryIdempotencyJournalRepository,
-  type InMemoryWorkRepository,
-} from '@io/business-domain/src/ports/fakes.js';
+import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
 import type { Work } from '@io/business-domain/src/types.js';
 import type { DbConnection } from '@io/database/src/connection.js';
 import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
@@ -528,7 +528,12 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       work: racing,
       connection: conn,
       // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({ work: racing, receipts: h.receipts, journal: h.journal }),
+      repositories: () => ({
+        work: racing,
+        receipts: h.receipts,
+        journal: h.journal,
+        events: h.events,
+      }),
     });
 
     expect(lost.ok).toBe(false);

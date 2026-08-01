@@ -1,21 +1,24 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+import { compileContext } from '@io/context/src/index.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { attemptIdFor } from '../../src/worker/intent.js';
+import { attemptIdFor, processTokenFor } from '../../src/worker/intent.js';
 import { runWorker } from '../../src/worker/worker.js';
+import type { E2eHarness } from './harness.js';
 import {
+  createE2eHarness,
   E2E_COMPANY,
   E2E_DELEGATION_ID,
   E2E_IDEMPOTENCY_KEY,
   E2E_WORK_ID,
-  createE2eHarness,
   e2eRequirePg,
   pgReachable,
   seedAcceptedWork,
   workerInputFor,
 } from './harness.js';
-import type { E2eHarness } from './harness.js';
 
 /**
  * E2E happy path (Slice C, C2 — WC-6 "End-to-end happy path against live
@@ -91,6 +94,76 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         [],
       );
       expect(journal).toEqual([{ status: 'completed' }]);
+
+      // R5 structure: EXACTLY ONE `work.completed` business_event row in the
+      // live database after the full cycle — the append committed inside T1.
+      const eventCount = await harness.conn.query<{ count: number }>(
+        'SELECT count(*)::int AS count FROM business_event',
+        [],
+      );
+      expect(eventCount[0]?.count).toBe(1);
+      const eventRows = await harness.conn.query<{
+        eventId: string;
+        eventType: string;
+        companyId: string;
+        aggregateKind: string;
+        aggregateId: string;
+        source: string;
+      }>(
+        'SELECT event_id AS "eventId", event_type AS "eventType", company_id AS "companyId", ' +
+          'aggregate_kind AS "aggregateKind", aggregate_id AS "aggregateId", source ' +
+          'FROM business_event',
+        [],
+      );
+      expect(eventRows).toEqual([
+        {
+          eventId: `evt:${attemptId}`,
+          eventType: 'work.completed',
+          companyId: E2E_COMPANY,
+          aggregateKind: 'work',
+          aggregateId: E2E_WORK_ID,
+          source: 'worker',
+        },
+      ]);
+
+      // R9 (structure-not-output): the business event NEVER feeds compileContext.
+      // Compiling the SAME inputs the worker compiled yields UNCHANGED bytes —
+      // the stable prefix still equals the frozen golden pin — and segment 12
+      // (recent-evidence) stays ABSENT from the dynamic suffix.
+      const delegation = await harness.delegation.get(E2E_COMPANY, E2E_DELEGATION_ID);
+      if (stored === undefined || delegation === undefined) {
+        throw new Error('test setup: stored work/delegation missing');
+      }
+      const compiled = compileContext({
+        companyId: E2E_COMPANY,
+        process: processTokenFor(delegation),
+        delegation,
+        work: stored,
+      });
+      const here = dirname(fileURLToPath(import.meta.url));
+      const golden = readFileSync(
+        join(here, '../../../context/test/fixtures/prefix.v1.golden.txt'),
+        'utf8',
+      );
+      // Bytes UNCHANGED: the compiled stable prefix is byte-identical to the
+      // frozen golden pin except for the cohort discriminator (the process
+      // token legitimately differs from the context fixture's 'planning') —
+      // every STABLE segment byte matches the pin, and NO event segment exists.
+      const process = processTokenFor(delegation);
+      expect(compiled.messages[0]?.content).toBe(
+        golden.replace('Business process: planning.', `Business process: ${process}.`),
+      );
+      // Segment 12 (recent-evidence) ABSENT — no event/evidence leakage into
+      // the dynamic suffix (and no event markers anywhere in the compiled bytes).
+      const suffix = compiled.messages[1]?.content ?? '';
+      expect(suffix).not.toContain('recent-evidence');
+      expect(suffix).not.toContain('recovered-memory');
+      expect(suffix).not.toContain('tool-results');
+      expect(suffix).not.toContain('evt:');
+      expect(compiled.messages[0]?.content).not.toContain('business_event');
+      expect(compiled.messages[0]?.content).not.toContain('evt:');
+      // The suffix still carries ONLY the current-work segment (11) bytes.
+      expect(suffix).toContain(`Execute work ${E2E_WORK_ID} for company ${E2E_COMPANY}`);
 
       // The sandbox effect was applied to the real filesystem…
       expect(existsSync(result.effect.absolutePath)).toBe(true);

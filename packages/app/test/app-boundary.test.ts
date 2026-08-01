@@ -10,21 +10,19 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { DurableJournalFake } from '@io/business-domain/src/ports/fakes.js';
 import type { JournalFakePersistence } from '@io/business-domain/src/ports/fakes.js';
+import { DurableJournalFake } from '@io/business-domain/src/ports/fakes.js';
 import type { JournalEntry } from '@io/business-domain/src/ports/idempotency.js';
-import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import type { DbConnection } from '@io/database/src/connection.js';
+import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { describe, expect, it } from 'vitest';
-
+import { InMemorySandbox } from '../src/sandbox/in-memory-sandbox.js';
 import type {
   EffectRecord,
   SandboxAction,
   SandboxPort,
   UndoHandle,
 } from '../src/sandbox/sandbox-port.js';
-import { InMemorySandbox } from '../src/sandbox/in-memory-sandbox.js';
 import { runWorker } from '../src/worker/worker.js';
 import { harness, seed, workerInput } from './worker-helpers.js';
 
@@ -148,7 +146,7 @@ describe('@io/app assembled wiring (SP composition-root, app level)', () => {
         connection: conn,
         // The durable journal must reach the finalize twin's T1 too (the
         // repository factory binds the journal the close writes to).
-        repositories: () => ({ work: h.work, receipts: h.receipts, journal }),
+        repositories: () => ({ work: h.work, receipts: h.receipts, journal, events: h.events }),
       });
 
       expect(result.ok).toBe(true);

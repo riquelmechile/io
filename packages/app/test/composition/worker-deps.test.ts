@@ -4,28 +4,28 @@ import { join } from 'node:path';
 
 import type { DbConnection } from '@io/database/src/connection.js';
 import {
+  PgBusinessEventRepository,
   PgBusinessReceiptRepository,
   PgDelegationRepository,
   PgIdempotencyJournalRepository,
   PgWorkRepository,
 } from '@io/database/src/index.js';
-import { FakeLlmClient } from '@io/llm-client/src/index.js';
 import type { LlmClient, LlmRequest, LlmResponse } from '@io/llm-client/src/index.js';
+import { FakeLlmClient } from '@io/llm-client/src/index.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-
+import { buildWorkerDeps } from '../../src/composition/worker-deps.js';
 import { FileDocumentSandbox } from '../../src/sandbox/file-document-sandbox.js';
-import { runWorker } from '../../src/worker/worker.js';
 import type { WorkerDeps } from '../../src/worker/types.js';
+import { runWorker } from '../../src/worker/worker.js';
+import type { E2eHarness } from '../e2e/harness.js';
 import {
   createE2eHarness,
+  E2E_PRINCIPALS,
   e2eRequirePg,
   pgReachable,
   seedAcceptedWork,
   workerInputFor,
 } from '../e2e/harness.js';
-import type { E2eHarness } from '../e2e/harness.js';
-import { E2E_PRINCIPALS } from '../e2e/harness.js';
-import { buildWorkerDeps } from '../../src/composition/worker-deps.js';
 
 /**
  * Composition root (task 1.1 / Req 1 "Production Composition Root"): proves
@@ -182,6 +182,30 @@ describe('buildWorkerDeps — repositories factory + atomic finalize (task 1.2)'
       expect(txRepos?.work).not.toBe(deps.work);
       expect(txRepos?.receipts).not.toBe(deps.receipts);
       expect(txRepos?.journal).not.toBe(deps.journal);
+    } finally {
+      rmSync(sandboxRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('repositories(conn) binds a FRESH PgBusinessEventRepository for events (R5 atomic emission wiring)', () => {
+    const conn = connectionDouble();
+    const sandboxRoot = mkdtempSync(join(tmpdir(), 'io-worker-deps-'));
+    try {
+      const deps = buildWorkerDeps({
+        connection: conn,
+        llm: new FakeLlmClient({ responses: [cannedResponse('x')] }),
+        sandboxRoot,
+        principals: E2E_PRINCIPALS,
+      });
+      const txRepos = deps.repositories?.(conn);
+      // The terminal-close factory binds the PG event adapter so T1's append
+      // joins the CAS + receipt + journal.complete transaction (R5).
+      expect(txRepos?.events).toBeInstanceOf(PgBusinessEventRepository);
+      // A FRESH adapter per factory call — a tx-bound events repo, NOT a
+      // shared pool instance (the append must not autocommit on the pool).
+      const second = deps.repositories?.(conn);
+      expect(second?.events).toBeInstanceOf(PgBusinessEventRepository);
+      expect(second?.events).not.toBe(txRepos?.events);
     } finally {
       rmSync(sandboxRoot, { recursive: true, force: true });
     }

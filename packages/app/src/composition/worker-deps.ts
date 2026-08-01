@@ -1,5 +1,6 @@
 import type { DbConnection } from '@io/database/src/connection.js';
 import {
+  PgBusinessEventRepository,
   PgBusinessReceiptRepository,
   PgDelegationRepository,
   PgIdempotencyJournalRepository,
@@ -27,8 +28,8 @@ import type { WorkerDeps, WorkerPrincipals } from '../worker/types.js';
  * `completeWorkAtomically` (packages/database/src/complete-work-flow.ts): it
  * binds FRESH PG adapters to whatever connection it is given, so the finalize
  * twin's T1 passes the TRANSACTION-SCOPED `tx` and the CAS + receipt +
- * journal.complete share ONE real PostgreSQL transaction — atomic by
- * construction, with no statement-routing decorator.
+ * journal.complete + business-event append share ONE real PostgreSQL
+ * transaction — atomic by construction, with no statement-routing decorator.
  */
 
 /** Inputs to the composition root. `now` is optional (defaults to Date.now). */
@@ -56,6 +57,7 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): WorkerDeps {
       work: new PgWorkRepository(conn),
       receipts: new PgBusinessReceiptRepository(conn),
       journal: new PgIdempotencyJournalRepository(conn),
+      events: new PgBusinessEventRepository(conn),
     }),
   };
 }

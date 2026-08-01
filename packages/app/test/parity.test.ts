@@ -3,13 +3,13 @@ import {
   InMemoryIdempotencyJournalRepository,
   InMemoryWorkRepository,
 } from '@io/business-domain/src/ports/fakes.js';
-import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
 import type { JournalEntry } from '@io/business-domain/src/ports/idempotency.js';
+import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
 import type { Work } from '@io/business-domain/src/types.js';
 import type { CompleteWorkCommand } from '@io/business-domain/src/use-cases/index.js';
 import { completeWork, IdempotentFlowAbortError } from '@io/business-domain/src/use-cases/index.js';
-import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import type { DbConnection } from '@io/database/src/connection.js';
+import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { describe, expect, it } from 'vitest';
 
 import { decidePreEffect } from '../src/worker/reconcile.js';
@@ -254,7 +254,12 @@ describe('B11 parity 2 — CAS-loss → markRetryable → retry-wins ≡ foundat
       work: appRacing,
       connection: conn,
       // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({ work: appRacing, receipts: h.receipts, journal: h.journal }),
+      repositories: () => ({
+        work: appRacing,
+        receipts: h.receipts,
+        journal: h.journal,
+        events: h.events,
+      }),
     });
     expect(lost.ok).toBe(false);
     if (lost.ok) return;

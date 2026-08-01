@@ -1,5 +1,6 @@
 import type { IdempotencyJournalPort } from '@io/business-domain/src/ports/idempotency.js';
 import type {
+  BusinessEventRepository,
   BusinessReceiptRepository,
   DelegationRepository,
   WorkRepository,
@@ -69,6 +70,10 @@ export interface WorkerRepositories {
   work: WorkRepository;
   receipts: BusinessReceiptRepository;
   journal: IdempotencyJournalPort;
+  /** Append-only business-fact log (R5): the T1 terminal close appends ONE
+   * `work.completed` event in the SAME transaction as the CAS + receipt +
+   * journal.complete — atomic by construction, rolled back with the CAS. */
+  events: BusinessEventRepository;
 }
 
 /** Injectable port set for one worker cycle (unit level: fakes; Slice C: PG adapters). */

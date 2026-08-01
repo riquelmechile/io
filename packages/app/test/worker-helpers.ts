@@ -1,4 +1,5 @@
 import {
+  InMemoryBusinessEventRepository,
   InMemoryBusinessReceiptRepository,
   InMemoryDelegationRepository,
   InMemoryIdempotencyJournalRepository,
@@ -10,8 +11,16 @@ import type {
   JournalEntry,
   NewJournalEntry,
 } from '@io/business-domain/src/ports/idempotency.js';
-import type { BusinessReceiptRepository } from '@io/business-domain/src/ports/repositories.js';
-import type { BusinessReceipt, Delegation, Work } from '@io/business-domain/src/types.js';
+import type {
+  BusinessEventRepository,
+  BusinessReceiptRepository,
+} from '@io/business-domain/src/ports/repositories.js';
+import type {
+  BusinessEvent,
+  BusinessReceipt,
+  Delegation,
+  Work,
+} from '@io/business-domain/src/types.js';
 import type { LlmPlanShape } from '@io/business-domain/src/validation/llm-plan.js';
 import type { LlmResponse } from '@io/llm-client/src/index.js';
 import { FakeLlmClient } from '@io/llm-client/src/index.js';
@@ -187,12 +196,31 @@ export class RecordingReceipts implements BusinessReceiptRepository {
   }
 }
 
+/** Event-repository double (R5, PR3): records every appended event so the
+ * finalize tests can assert EXACTLY ONE `work.completed` append per close,
+ * zero appends on CAS loss / replay, and R6 determinism. */
+export class RecordingEvents implements BusinessEventRepository {
+  readonly appends: BusinessEvent[] = [];
+  private readonly inner = new InMemoryBusinessEventRepository();
+
+  async append(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+    const saved = await this.inner.append(event);
+    this.appends.push(saved);
+    return saved;
+  }
+
+  async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
+    return this.inner.listByCompany(companyId);
+  }
+}
+
 /** A fully wired in-memory worker harness (all four packages over fakes). */
 export interface WorkerHarness extends WorkerDeps {
   work: InMemoryWorkRepository;
   delegation: InMemoryDelegationRepository;
   receipts: RecordingReceipts;
   journal: RecordingJournal;
+  events: RecordingEvents;
   sandbox: RecordingSandbox;
   llm: FakeLlmClient;
   /** Shared phase trace: journal + sandbox doubles record into this array. */
@@ -206,10 +234,16 @@ export function harness(overrides: Partial<WorkerDeps> = {}): WorkerHarness {
     delegation: new InMemoryDelegationRepository(),
     receipts: new RecordingReceipts(),
     journal: new RecordingJournal(trace),
+    events: new RecordingEvents(),
     sandbox: new RecordingSandbox(trace),
     llm: cannedLlm(),
     principals,
-    repositories: () => ({ work: base.work, receipts: base.receipts, journal: base.journal }),
+    repositories: () => ({
+      work: base.work,
+      receipts: base.receipts,
+      journal: base.journal,
+      events: base.events,
+    }),
     trace,
   };
   // The repository factory returns the SHARED in-memory fakes for ANY

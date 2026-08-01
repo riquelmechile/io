@@ -1,10 +1,11 @@
 import { evidenceId } from '@io/business-domain/src/evidence-id.js';
 import type { IdempotencyJournalPort } from '@io/business-domain/src/ports/idempotency.js';
 import type {
+  BusinessEventRepository,
   BusinessReceiptRepository,
   WorkRepository,
 } from '@io/business-domain/src/ports/repositories.js';
-import type { BusinessReceipt, Work } from '@io/business-domain/src/types.js';
+import type { BusinessEvent, BusinessReceipt, Work } from '@io/business-domain/src/types.js';
 import type { DbConnection } from '@io/database/src/connection.js';
 
 import type { EffectRecord, SandboxPort } from '../sandbox/sandbox-port.js';
@@ -18,12 +19,15 @@ import type { EffectRecord, SandboxPort } from '../sandbox/sandbox-port.js';
  *   T1 (ONE transaction): work.get → state guard (only an in_progress Work may
  *   CAS; a terminal/absent Work aborts BEFORE the CAS) → updateIfVersion(completed)
  *   CAS → exactly ONE receipt (rcpt:<attemptId>, terminal_event_id = attemptId,
- *   evidenceId) → journal.complete → COMMIT. The CAS + receipt + journal.complete
+ *   evidenceId) → ONE deterministic `work.completed` business event
+ *   (evt:<attemptId>, R5/R6 — terminal facts only, never LLM output) →
+ *   journal.complete → COMMIT. The CAS + receipt + event + journal.complete
  *   are ONE REAL transaction because T1 builds its repositories on the
  *   TRANSACTION-SCOPED connection via the `repositories` factory — mirroring
  *   `completeWorkAtomically` (packages/database/src/complete-work-flow.ts) — so
  *   the writes CANNOT autocommit on the pool (the pool-bound repos would leave
- *   partial state on a mid-close failure).
+ *   partial state on a mid-close failure), and a CAS loss rolls the event back
+ *   with the close (no orphan event, R5).
  *
  *   T1 CAS-loss: STOP BEFORE receipts.save → ROLL BACK. Unlike the foundation
  *   in-tx insert, the in_flight row here was committed in a DIFFERENT
@@ -73,6 +77,10 @@ export interface FinalizeRepositories {
   work: WorkRepository;
   receipts: BusinessReceiptRepository;
   journal: IdempotencyJournalPort;
+  /** Append-only business-fact log (R5): T1 appends ONE `work.completed`
+   * event between the receipt save and journal.complete — same transaction,
+   * so a CAS loss rolls the event back with the close. */
+  events: BusinessEventRepository;
 }
 
 /** Injectable port set for the terminal close (unit level: fakes; Slice C:
@@ -239,11 +247,11 @@ export async function finalizeInFlightWorkAtomically(
   try {
     return await deps.connection.transaction(async (tx) => {
       // The repositories are bound to the TRANSACTION-SCOPED `tx` connection:
-      // the CAS + receipt + journal.complete share ONE real PostgreSQL
-      // transaction (mirrors completeWorkAtomically). The pool-bound adapters
-      // would AUTOCOMMIT each write — a failure after the CAS would leave
-      // partial state (the Slice C correction BLOCKER).
-      const { work, receipts, journal } = deps.repositories(tx);
+      // the CAS + receipt + journal.complete + business-event append share ONE
+      // real PostgreSQL transaction (mirrors completeWorkAtomically). The
+      // pool-bound adapters would AUTOCOMMIT each write — a failure after the
+      // CAS would leave partial state (the Slice C correction BLOCKER).
+      const { work, receipts, journal, events } = deps.repositories(tx);
       const current = await work.get(input.companyId, input.workId);
       if (current === undefined || current.state !== 'in_progress') {
         // State guard BEFORE the CAS: only an in_progress Work may CAS
@@ -262,6 +270,12 @@ export async function finalizeInFlightWorkAtomically(
       }
       const completed = cas.value;
       const receipt = await receipts.save(buildReceipt(deps, input, completed));
+      // ONE deterministic `work.completed` event in the SAME transaction
+      // (R5/R6): built ONLY from terminal-close facts — the Work terminal
+      // state, receipt identity fields, evidenceId, attemptId, actor. Never
+      // LLM output. On a CAS loss the throw above aborts the whole
+      // transaction, so NO orphan event survives the rollback (R5).
+      await events.append(buildWorkCompletedEvent(deps, input, completed, receipt));
       await journal.complete(input.attemptId, completed);
       return { ok: true, work: completed, receipt } as const;
     });
@@ -295,5 +309,39 @@ function buildReceipt(deps: FinalizeDeps, input: FinalizeInput, completed: Work)
     terminalEventId: input.attemptId,
     artifactHash: input.artifactHash ?? WORKER_ARTIFACT_HASH,
     issuedAt: deps.now?.() ?? Date.now(),
+  };
+}
+
+/**
+ * The deterministic `work.completed` event factory (design "Interfaces /
+ * Contracts"): DETERMINISTIC from terminal-close facts ONLY (R6) — the Work
+ * terminal state, the receipt identity fields, evidenceId, attemptId, and the
+ * acting principal. NO LLM field is read: the model output never selects,
+ * judges, or alters any event field. `eventId = evt:{attemptId}` is the
+ * single-issuance identity (R7). Equal terminal facts ⇒ equal events.
+ */
+function buildWorkCompletedEvent(
+  deps: FinalizeDeps,
+  input: FinalizeInput,
+  completed: Work,
+  receipt: BusinessReceipt,
+): BusinessEvent {
+  return {
+    eventId: `evt:${input.attemptId}`,
+    companyId: input.companyId,
+    aggregateKind: 'work',
+    aggregateId: completed.workId,
+    eventType: 'work.completed',
+    occurredAt: deps.now?.() ?? Date.now(),
+    payload: {
+      workId: completed.workId,
+      state: completed.state,
+      receiptId: receipt.receiptId,
+      terminalState: receipt.terminalState,
+      evidenceId: evidenceId(input.companyId, input.idempotencyKey),
+      attemptId: input.attemptId,
+      actor: deps.executor,
+    },
+    source: 'worker',
   };
 }
