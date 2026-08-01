@@ -92,3 +92,24 @@ export interface BusinessReceipt {
   readonly artifactHash: string;
   readonly issuedAt: number;
 }
+
+// ── BusinessEvent (append-only business-fact log, deterministic) ──
+
+export interface BusinessEvent {
+  /** Single-issuance identity: `evt:{attemptId}` (R7). */
+  readonly eventId: string;
+  /** Non-empty tenant scope (ADR-0002/R8). */
+  readonly companyId: string;
+  /** Aggregate the event belongs to — 'work' for this capability. */
+  readonly aggregateKind: string;
+  /** Aggregate instance id — the workId. */
+  readonly aggregateId: string;
+  /** Event name — 'work.completed' for terminal closes. */
+  readonly eventType: string;
+  /** Epoch ms timestamp (deps.now?.() ?? Date.now()). */
+  readonly occurredAt: number;
+  /** Terminal-close facts ONLY — never LLM output (R6). */
+  readonly payload: Readonly<Record<string, unknown>>;
+  /** Emitter — 'worker'. */
+  readonly source: string;
+}

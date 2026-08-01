@@ -1,4 +1,4 @@
-import type { BusinessReceipt, Company, Delegation, Work } from '../types.js';
+import type { BusinessEvent, BusinessReceipt, Company, Delegation, Work } from '../types.js';
 import type {
   IdempotencyJournalPort,
   JournalClaimResult,
@@ -7,6 +7,7 @@ import type {
 } from './idempotency.js';
 import { isUnresolvedJournalResult } from './idempotency.js';
 import type {
+  BusinessEventRepository,
   BusinessReceiptRepository,
   CasResult,
   CompanyRepository,
@@ -135,6 +136,31 @@ export class InMemoryBusinessReceiptRepository implements BusinessReceiptReposit
     requireCompanyId(companyId);
     const entry = this.entries.get(receiptId);
     return entry !== undefined && entry.companyId === companyId ? entry : undefined;
+  }
+}
+
+export class InMemoryBusinessEventRepository implements BusinessEventRepository {
+  /**
+   * Ordered array storage — insertion order IS read order, mirroring the
+   * PostgreSQL adapter's `ORDER BY id ASC` (R3).
+   */
+  private readonly entries: BusinessEvent[] = [];
+
+  async append(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+    requireCompanyId(event.companyId);
+    if (this.entries.some((entry) => entry.eventId === event.eventId)) {
+      // Append-only, single-issuance (R7): an event is a write-once fact. A
+      // duplicate eventId is rejected and the ORIGINAL event is preserved —
+      // mirrors the PostgreSQL adapter's uq_business_event_event_id.
+      throw new Error(`BusinessEvent already recorded: ${event.eventId}`);
+    }
+    this.entries.push(event);
+    return event;
+  }
+
+  async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
+    requireCompanyId(companyId);
+    return this.entries.filter((entry) => entry.companyId === companyId);
   }
 }
 

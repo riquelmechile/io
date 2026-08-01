@@ -1,4 +1,4 @@
-import type { BusinessReceipt, Company, Delegation, Work } from '../types.js';
+import type { BusinessEvent, BusinessReceipt, Company, Delegation, Work } from '../types.js';
 
 /**
  * Async, driver-free repository port interfaces for the four business-domain
@@ -53,4 +53,20 @@ export interface WorkRepository {
 export interface BusinessReceiptRepository {
   save(receipt: BusinessReceipt): Promise<Readonly<BusinessReceipt>>;
   get(companyId: string, receiptId: string): Promise<BusinessReceipt | undefined>;
+}
+
+/**
+ * Append-only repository for business facts (R2): events are WRITE-ONCE records
+ * of what happened. The surface is deliberately limited to `append` (persist one
+ * event, return an immutable view) and `listByCompany` (tenant-scoped read in
+ * insertion order). There is NO update, delete, overwrite, or get-by-id — an
+ * event is a fact, and facts are never mutated. Every read MUST be scoped by a
+ * mandatory, non-empty `companyId` (ADR-0002/R8) and MUST NOT return another
+ * company's events. Methods return a `Promise` — a real adapter is I/O-bound.
+ * The port carries ZERO persistence knowledge; a downstream adapter (PG, file,
+ * etc.) supplies the implementation.
+ */
+export interface BusinessEventRepository {
+  append(event: BusinessEvent): Promise<Readonly<BusinessEvent>>;
+  listByCompany(companyId: string): Promise<readonly BusinessEvent[]>;
 }

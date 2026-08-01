@@ -5,9 +5,38 @@
  * runtime dependencies, zero cross-aggregate imports.
  */
 
+export { evidenceId } from './evidence-id.js';
+export type { JournalFakePersistence } from './ports/fakes.js';
+export {
+  DurableJournalFake,
+  InMemoryBusinessEventRepository,
+  InMemoryBusinessReceiptRepository,
+  InMemoryCompanyRepository,
+  InMemoryDelegationRepository,
+  InMemoryIdempotencyJournalRepository,
+  InMemoryWorkRepository,
+} from './ports/fakes.js';
+export type {
+  IdempotencyJournalPort,
+  JournalClaimResult,
+  JournalEntry,
+  JournalStatus,
+  NewJournalEntry,
+} from './ports/idempotency.js';
+export { isUnresolvedJournalResult } from './ports/idempotency.js';
+export type {
+  BusinessEventRepository,
+  BusinessReceiptRepository,
+  CasResult,
+  CompanyRepository,
+  DelegationRepository,
+  WorkRepository,
+} from './ports/repositories.js';
+export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 export type {
   AuthorityScope,
   Budget,
+  BusinessEvent,
   BusinessReceipt,
   Company,
   Delegation,
@@ -17,37 +46,6 @@ export type {
   WorkOutcome,
   WorkState,
 } from './types.js';
-
-export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
-
-export { evidenceId } from './evidence-id.js';
-
-export type {
-  CompanyRepository,
-  DelegationRepository,
-  WorkRepository,
-  BusinessReceiptRepository,
-  CasResult,
-} from './ports/repositories.js';
-
-export type {
-  IdempotencyJournalPort,
-  JournalClaimResult,
-  JournalEntry,
-  JournalStatus,
-  NewJournalEntry,
-} from './ports/idempotency.js';
-export { isUnresolvedJournalResult } from './ports/idempotency.js';
-
-export {
-  InMemoryCompanyRepository,
-  InMemoryDelegationRepository,
-  InMemoryWorkRepository,
-  InMemoryBusinessReceiptRepository,
-  InMemoryIdempotencyJournalRepository,
-  DurableJournalFake,
-} from './ports/fakes.js';
-export type { JournalFakePersistence } from './ports/fakes.js';
 
 export type {
   CompleteWorkCommand,
