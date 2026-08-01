@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Work } from '@io/business-domain/src/index.js';
+
 import { PgIdempotencyJournalRepository } from '../src/idempotency-adapter.js';
 
 import { InMemoryDbConnection } from './connection-fake.js';
@@ -22,6 +24,21 @@ function entry() {
   };
 }
 
+/** A well-formed Work — the shape `result_json` actually stores (guarded by
+ * parseWorkRow on replay lookup, D7). */
+function storedWork(): Work {
+  return {
+    workId: 'work-1',
+    companyId: 'acme',
+    delegationId: 'del-1',
+    proposer: 'principal-2',
+    description: 'execute the close',
+    state: 'completed',
+    version: 3,
+    evidenceRefs: ['evid-1'],
+  };
+}
+
 describe('PgIdempotencyJournalRepository', () => {
   describe('insertInFlight() SQL shape', () => {
     it('emits INSERT INTO idempotency_journal with $1..$6 in field order', async () => {
@@ -33,7 +50,7 @@ describe('PgIdempotencyJournalRepository', () => {
       expect(inserts).toHaveLength(1);
       expect(inserts[0]?.sql).toBe(
         'INSERT INTO idempotency_journal (company_id, idempotency_key, request_hash, attempt_id, status, created_at) ' +
-          'VALUES ($1,$2,$3,$4,$5,$6)',
+          'VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (company_id, idempotency_key) DO NOTHING',
       );
       const params = inserts[0]?.params ?? [];
       expect(params[0]).toBe('acme');
@@ -92,11 +109,11 @@ describe('PgIdempotencyJournalRepository', () => {
       expect(inFlight?.attemptId).toBe('att:acme:key-1');
       expect(inFlight?.resultJson).toBeUndefined();
 
-      await repo.complete('att:acme:key-1', { state: 'completed', version: 3 });
+      await repo.complete('att:acme:key-1', storedWork());
 
       const done = await repo.lookup('acme', 'key-1');
       expect(done?.status).toBe('completed');
-      expect(done?.resultJson).toEqual({ state: 'completed', version: 3 });
+      expect(done?.resultJson).toEqual(storedWork());
     });
 
     it('lookup for an unknown key returns undefined', async () => {
@@ -170,7 +187,7 @@ describe('PgIdempotencyJournalRepository', () => {
     it('throws when the attempt is completed (0 rows updated — never regresses completed)', async () => {
       const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
       await repo.insertInFlight(entry());
-      await repo.complete('att:acme:key-1', { ok: true });
+      await repo.complete('att:acme:key-1', storedWork());
 
       await expect(repo.markRetryable('att:acme:key-1')).rejects.toThrow(/in_flight|attempt/i);
       const done = await repo.lookup('acme', 'key-1');
@@ -226,17 +243,23 @@ describe('PgIdempotencyJournalRepository', () => {
       expect(unchanged?.status).toBe('aborted_retryable');
     });
 
-    it('an existing in_flight row is rejected (duplicate attempt)', async () => {
+    it('an existing in_flight row is a LOST CLAIM — typed attempt-in-flight (never a throw)', async () => {
       const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
       await repo.insertInFlight(entry());
-      await expect(repo.insertInFlight(entry())).rejects.toThrow(/already recorded/i);
+      await expect(repo.insertInFlight(entry())).resolves.toEqual({
+        ok: false,
+        reason: 'attempt-in-flight',
+      });
     });
 
-    it('an existing completed row is rejected (replay/DENY only — never reopened)', async () => {
+    it('an existing completed row is a LOST CLAIM — typed attempt-in-flight (replay/DENY only, never reopened)', async () => {
       const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
       await repo.insertInFlight(entry());
-      await repo.complete('att:acme:key-1', { ok: true });
-      await expect(repo.insertInFlight(entry())).rejects.toThrow(/already recorded/i);
+      await repo.complete('att:acme:key-1', storedWork());
+      await expect(repo.insertInFlight(entry())).resolves.toEqual({
+        ok: false,
+        reason: 'attempt-in-flight',
+      });
     });
   });
 });

@@ -318,48 +318,6 @@ export function scratchConnectionString(databaseName: string): string {
   return url.toString();
 }
 
-/**
- * Transaction-routing `DbConnection` decorator — RETIRED (Slice C correction).
- *
- * It was introduced (Slice C batch 2) as a harness crutch: the REAL PG adapters
- * hold ONE injected connection for their whole lifetime, so the finalize twin's
- * `connection.transaction(fn)` could not rebind them to the transaction-scoped
- * connection, and the T1 writes ran on the pool in AUTOCOMMIT. The decorator
- * routed every adapter statement into the open transaction, masking the
- * non-atomic production path.
- *
- * The REAL fix is the repository FACTORY (finalize T1 builds its repos on the
- * transaction-scoped client, mirroring `completeWorkAtomically`) — the wiring
- * is atomic BY CONSTRUCTION, so the decorator is no longer used anywhere. It
- * is kept ONLY as documentation of the defect it masked; delete when desired.
- */
-export class TxRoutingConnection implements DbConnection {
-  private tx: DbConnection | undefined;
-
-  constructor(readonly inner: DbConnection) {}
-
-  async execute(sql: string, params: readonly unknown[]): Promise<unknown> {
-    if (this.tx !== undefined) return this.tx.execute(sql, params);
-    return this.inner.execute(sql, params);
-  }
-
-  async query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> {
-    if (this.tx !== undefined) return this.tx.query<T>(sql, params);
-    return this.inner.query<T>(sql, params);
-  }
-
-  async transaction<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> {
-    return this.inner.transaction(async (tx) => {
-      this.tx = tx;
-      try {
-        return await fn(tx);
-      } finally {
-        this.tx = undefined;
-      }
-    });
-  }
-}
-
 /** A FRESH worker stack over the same scratch database (C5 restart): a
  * brand-new `PgDbConnection` pool (new TCP connection) + fresh REAL adapters +
  * fresh worker deps over the SAME sandbox root — the non-vacuous restart. */

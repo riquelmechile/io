@@ -58,7 +58,28 @@ export async function reconcilePreEffect(
   if (decision.kind === 'proceed') {
     // none → INSERT in_flight; aborted_retryable + same hash → reopen. Any
     // other existing status never reaches here (replay/deny/recovery returned).
-    await journal.insertInFlight({ companyId, idempotencyKey, requestHash, attemptId });
+    const claim = await journal.insertInFlight({
+      companyId,
+      idempotencyKey,
+      requestHash,
+      attemptId,
+    });
+    if (!claim.ok) {
+      // Lost the same-key race: another attempt claimed the key between our
+      // lookup and insert. Re-decide on the FRESH row (recovery / replay / deny).
+      const redecided = decidePreEffect(
+        await journal.lookup(companyId, idempotencyKey),
+        requestHash,
+      );
+      // A re-decide `proceed` (aborted_retryable + same hash, or a vanished row)
+      // MUST NOT run the effect: we hold NO claim. Map it to `recovery` so the
+      // "NEVER proceed on a lost claim" invariant is STRUCTURAL, not a comment
+      // (exactly-one-effect safety).
+      if (redecided.kind === 'proceed') {
+        return { kind: 'recovery' };
+      }
+      return redecided;
+    }
   }
   return decision;
 }

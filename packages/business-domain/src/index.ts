@@ -32,10 +32,12 @@ export type {
 
 export type {
   IdempotencyJournalPort,
+  JournalClaimResult,
   JournalEntry,
   JournalStatus,
   NewJournalEntry,
 } from './ports/idempotency.js';
+export { isUnresolvedJournalResult } from './ports/idempotency.js';
 
 export {
   InMemoryCompanyRepository,

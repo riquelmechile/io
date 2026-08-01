@@ -44,6 +44,15 @@ export async function completeWork(
   }));
 }
 
+/**
+ * The idempotent atomic terminal close (D6). ATOMICITY IS CALLER-ENFORCED: this
+ * flow MUST run inside ONE `DbConnection.transaction` — every post-write failure
+ * THROWS so the transaction rolls back the in_flight row, the CAS, and the
+ * receipt together (no partial state survives). `completeWorkAtomically`
+ * (packages/database/src/complete-work-flow.ts) is the sanctioned wiring that
+ * always wraps it; no shipped path drives the terminal close outside a single
+ * transaction.
+ */
 async function completeWorkIdempotent(
   cmd: CompleteWorkCommand,
   deps: CompleteWorkDeps,
@@ -80,14 +89,20 @@ async function completeWorkIdempotent(
     return { ok: false, reason: 'invalid-command' };
   }
 
-  // 3. Writes begin (pre-effect): record the attempt as in_flight.
+  // 3. Writes begin (pre-effect): claim the key (record the attempt in_flight).
   const attemptId = attemptIdFor(cmd.companyId, cmd.idempotencyKey);
-  await deps.journal.insertInFlight({
+  const claim = await deps.journal.insertInFlight({
     companyId: cmd.companyId,
     idempotencyKey: cmd.idempotencyKey,
     requestHash: cmd.requestHash,
     attemptId,
   });
+  if (!claim.ok) {
+    // Lost the same-key race at the claim boundary: a concurrent attempt owns
+    // the key. A typed result (never a throw) — the caller retries for a clean
+    // replay. No effect ran yet, so there is nothing to roll back.
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
 
   // 4. Effect: the CAS transition.
   const next: Work = {

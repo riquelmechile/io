@@ -1,5 +1,11 @@
 import type { BusinessReceipt, Company, Delegation, Work } from '../types.js';
-import type { IdempotencyJournalPort, JournalEntry, NewJournalEntry } from './idempotency.js';
+import type {
+  IdempotencyJournalPort,
+  JournalClaimResult,
+  JournalEntry,
+  NewJournalEntry,
+} from './idempotency.js';
+import { isUnresolvedJournalResult } from './idempotency.js';
 import type {
   BusinessReceiptRepository,
   CasResult,
@@ -153,10 +159,24 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
     if (!idempotencyKey) {
       throw new Error('a non-empty idempotencyKey is required');
     }
-    return this.byKey.get(InMemoryIdempotencyJournalRepository.keyOf(companyId, idempotencyKey));
+    const entry = this.byKey.get(
+      InMemoryIdempotencyJournalRepository.keyOf(companyId, idempotencyKey),
+    );
+    if (entry === undefined) return undefined;
+    // PG-parity (D7, F1/F4): the journal legitimately stores the NON-Work
+    // UNRESOLVED_REQUIRES_HUMAN sentinel (finalize T2(ii)); pass it through
+    // unguarded, exactly as the PG adapter does — via the SAME shared
+    // isUnresolvedJournalResult recognizer, so the fake and PG cannot diverge on
+    // the sentinel shape. The Work-parse guard itself stays in the PG adapter
+    // (business-domain cannot import parseWorkRow without a forbidden coupling);
+    // the PG integration suite is the authoritative corrupt-Work parity guarantee.
+    if (entry.resultJson !== undefined && isUnresolvedJournalResult(entry.resultJson)) {
+      return { ...entry, resultJson: entry.resultJson };
+    }
+    return entry;
   }
 
-  async insertInFlight(entry: NewJournalEntry): Promise<void> {
+  async insertInFlight(entry: NewJournalEntry): Promise<JournalClaimResult> {
     requireCompanyId(entry.companyId);
     if (!entry.idempotencyKey) {
       throw new Error('a non-empty idempotencyKey is required');
@@ -176,9 +196,10 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       // status → in_flight, the ORIGINAL attemptId is kept (a receipt was never
       // issued on the prior CAS loss, and the att: scheme is stable), resultJson
       // is cleared. A different hash under the marker is a DENY conflict; any
-      // other existing status (in_flight | completed) stays rejected.
+      // other existing status (in_flight | completed) is a LOST CLAIM — a typed
+      // attempt-in-flight result (a same-key race loser), never a thrown error.
       if (existing.status !== 'aborted_retryable') {
-        throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+        return { ok: false, reason: 'attempt-in-flight' };
       }
       if (existing.requestHash !== entry.requestHash) {
         throw new Error(
@@ -188,15 +209,17 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       const reopened: JournalEntry = { ...existing, status: 'in_flight', resultJson: undefined };
       this.byKey.set(key, reopened);
       this.byAttempt.set(existing.attemptId, reopened);
-      return;
+      return { ok: true };
     }
     if (this.byAttempt.has(entry.attemptId)) {
-      // Mirrors UNIQUE(attempt_id): one row per attempt.
-      throw new Error(`attempt id already recorded: ${entry.attemptId}`);
+      // Mirrors UNIQUE(attempt_id): one row per attempt — a duplicate attempt id
+      // is a lost claim (typed result), never a thrown error.
+      return { ok: false, reason: 'attempt-in-flight' };
     }
     const row: JournalEntry = { ...entry, status: 'in_flight' };
     this.byKey.set(key, row);
     this.byAttempt.set(entry.attemptId, row);
+    return { ok: true };
   }
 
   async complete(attemptId: string, resultJson: unknown): Promise<void> {
@@ -284,9 +307,10 @@ export class DurableJournalFake implements IdempotencyJournalPort {
     return this.delegate.lookup(companyId, idempotencyKey);
   }
 
-  async insertInFlight(entry: NewJournalEntry): Promise<void> {
-    await this.delegate.insertInFlight(entry);
+  async insertInFlight(entry: NewJournalEntry): Promise<JournalClaimResult> {
+    const claim = await this.delegate.insertInFlight(entry);
     this.persist();
+    return claim;
   }
 
   async complete(attemptId: string, resultJson: unknown): Promise<void> {

@@ -493,7 +493,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
     expect(entry?.status).toBe('aborted_retryable');
   });
 
-  it('an in_flight row is never reopened (duplicate attempt rejected)', async () => {
+  it('an in_flight row is never reopened — a duplicate claim is a typed attempt-in-flight (not a throw)', async () => {
     const journal = new InMemoryIdempotencyJournalRepository();
     await journal.insertInFlight({
       companyId: 'acme',
@@ -509,10 +509,10 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-2',
       }),
-    ).rejects.toThrow(/already recorded/i);
+    ).resolves.toEqual({ ok: false, reason: 'attempt-in-flight' });
   });
 
-  it('a completed row is never reopened (replay/DENY only)', async () => {
+  it('a completed row is never reopened — a duplicate claim is a typed attempt-in-flight (replay/DENY only)', async () => {
     const journal = new InMemoryIdempotencyJournalRepository();
     await journal.insertInFlight({
       companyId: 'acme',
@@ -529,7 +529,28 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-2',
       }),
-    ).rejects.toThrow(/already recorded/i);
+    ).resolves.toEqual({ ok: false, reason: 'attempt-in-flight' });
+  });
+
+  it('a same-key race loser receives a typed attempt-in-flight claim result, NOT a thrown error', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    const claim = await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    expect(claim).toEqual({ ok: true });
+
+    // A concurrent attempt on the SAME key loses the claim: a typed result the
+    // caller can retry, never a thrown unique-violation-style error.
+    const lost = await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    expect(lost).toEqual({ ok: false, reason: 'attempt-in-flight' });
   });
 });
 

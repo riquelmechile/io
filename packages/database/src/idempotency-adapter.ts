@@ -1,10 +1,13 @@
 import type {
   IdempotencyJournalPort,
+  JournalClaimResult,
   JournalEntry,
   NewJournalEntry,
 } from '@io/business-domain/src/index.js';
+import { isUnresolvedJournalResult } from '@io/business-domain/src/index.js';
 
 import type { DbConnection } from './connection.js';
+import { parseWorkRow } from './row-guards.js';
 
 /**
  * PostgreSQL adapter for the idempotency journal port (design D6) over the
@@ -46,10 +49,32 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
     );
     const row = rows[0];
     if (row === undefined) return undefined;
-    return { ...row, resultJson: row.resultJson ?? undefined };
+    const resultJson = row.resultJson ?? undefined;
+    if (resultJson === undefined) {
+      // in_flight / aborted_retryable rows carry no stored result to guard.
+      return { ...row, resultJson: undefined };
+    }
+    // The journal legitimately stores TWO result shapes: a completed Work (the
+    // replay path) AND the NON-Work UNRESOLVED_REQUIRES_HUMAN sentinel (the
+    // honest finalize T2(ii) / worker terminal close). `lookup` is a generic
+    // read serving BOTH caller classes, so recognize the sentinel and pass it
+    // through unguarded — a same-key retry after an honest UNRESOLVED close
+    // MUST get the typed result, not a throw that poisons the key (F1).
+    if (isUnresolvedJournalResult(resultJson)) {
+      return { ...row, resultJson };
+    }
+    // D7: any OTHER present result_json is a Work-shaped replay payload —
+    // untrusted PG bytes, guarded with the SAME row parser the work adapter
+    // uses, so a stale/malformed stored result is caught consistently (fail
+    // loudly) rather than returned raw to the replay path.
+    const parsed = parseWorkRow(resultJson);
+    if (!parsed.ok) {
+      throw new Error(`corrupt journal result_json: ${parsed.reason}`);
+    }
+    return { ...row, resultJson: parsed.value };
   }
 
-  async insertInFlight(entry: NewJournalEntry): Promise<void> {
+  async insertInFlight(entry: NewJournalEntry): Promise<JournalClaimResult> {
     if (!entry.companyId) {
       throw new Error('a non-empty companyId is required');
     }
@@ -92,16 +117,21 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
           `idempotency conflict: retryable attempt changed concurrently: ${entry.idempotencyKey}`,
         );
       }
-      return;
+      return { ok: true };
     }
     if (existing !== undefined) {
-      // Mirrors UNIQUE(company_id, idempotency_key): in_flight and completed
-      // attempts are never re-opened.
-      throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+      // Mirrors UNIQUE(company_id, idempotency_key): an in_flight or completed
+      // attempt already owns the key, so this caller LOST the claim. A typed
+      // result (never a thrown error) so the caller can retry for a clean replay.
+      return { ok: false, reason: 'attempt-in-flight' };
     }
-    await this.conn.execute(
+    // Claim the key. ON CONFLICT DO NOTHING turns the same-key RACE (a concurrent
+    // insert committed between our lookup and this INSERT) into a 0-row result
+    // instead of a thrown unique-violation that would ABORT the enclosing
+    // transaction — the loser gets a typed attempt-in-flight and stays clean.
+    const inserted = (await this.conn.execute(
       'INSERT INTO idempotency_journal (company_id, idempotency_key, request_hash, attempt_id, status, created_at) ' +
-        'VALUES ($1,$2,$3,$4,$5,$6)',
+        'VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (company_id, idempotency_key) DO NOTHING',
       [
         entry.companyId,
         entry.idempotencyKey,
@@ -110,7 +140,11 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
         'in_flight',
         Date.now(),
       ],
-    );
+    )) as { rowCount?: number };
+    if ((inserted.rowCount ?? 0) === 0) {
+      return { ok: false, reason: 'attempt-in-flight' };
+    }
+    return { ok: true };
   }
 
   async complete(attemptId: string, resultJson: unknown): Promise<void> {

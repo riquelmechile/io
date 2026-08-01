@@ -666,6 +666,131 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       expect(journalRows).toEqual([]);
     });
   });
+
+  describe('journal result_json replay row-guard (D7) — live PG', () => {
+    it('guards a malformed stored result_json on replay lookup — fails loudly instead of returning raw bytes', async () => {
+      const repo = new PgIdempotencyJournalRepository(conn);
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'guard-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:guard-key',
+      });
+      // Simulate a stale/inconsistent stored result: a completed journal row
+      // whose result_json is NOT a well-formed Work (missing required fields).
+      await repo.complete('att:acme-corp:guard-key', { bogus: 'not-a-work' });
+
+      await expect(repo.lookup('acme-corp', 'guard-key')).rejects.toThrow(
+        /corrupt journal result_json/i,
+      );
+    });
+
+    it('passes through the legitimate UNRESOLVED_REQUIRES_HUMAN sentinel on lookup — a same-key retry returns the typed result, NOT a throw (F1)', async () => {
+      const repo = new PgIdempotencyJournalRepository(conn);
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'unresolved-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:unresolved-key',
+      });
+      // Production legitimately closes an unresolvable attempt with the NON-Work
+      // UNRESOLVED sentinel (finalize T2(ii), worker.ts) — it has NO workId. A
+      // same-key retry / lookup MUST return it typed, not throw `corrupt journal
+      // result_json` (which would poison the key and break the honest
+      // UNRESOLVED_REQUIRES_HUMAN retry contract).
+      await repo.complete('att:acme-corp:unresolved-key', {
+        ok: false,
+        reason: 'UNRESOLVED_REQUIRES_HUMAN',
+      });
+
+      const entry = await repo.lookup('acme-corp', 'unresolved-key');
+      expect(entry?.status).toBe('completed');
+      expect(entry?.resultJson).toEqual({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    });
+
+    it('a well-formed stored result_json on replay lookup returns the correct guarded Work', async () => {
+      const repo = new PgIdempotencyJournalRepository(conn);
+      const completedWork: Work = { ...sampleWork(), state: 'completed', version: 3 };
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'guard-ok-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:guard-ok-key',
+      });
+      await repo.complete('att:acme-corp:guard-ok-key', completedWork);
+
+      const entry = await repo.lookup('acme-corp', 'guard-ok-key');
+      expect(entry?.status).toBe('completed');
+      // The replayed result_json survived the parseWorkRow guard byte-for-byte.
+      expect(entry?.resultJson).toEqual(completedWork);
+    });
+  });
+
+  describe('same-key race loser — typed result + exactly-one-effect (D6) — live PG', () => {
+    it('two concurrent claims on the same key: exactly one wins, the loser gets a typed attempt-in-flight (never a throw)', async () => {
+      const claimKey = {
+        companyId: 'acme-corp',
+        idempotencyKey: 'race-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:race-key',
+      };
+      const [a, b] = await Promise.all([
+        conn.transaction((tx) => new PgIdempotencyJournalRepository(tx).insertInFlight(claimKey)),
+        conn.transaction((tx) => new PgIdempotencyJournalRepository(tx).insertInFlight(claimKey)),
+      ]);
+
+      const wins = [a, b].filter((r) => r.ok === true);
+      const losses = [a, b].filter((r) => r.ok === false && r.reason === 'attempt-in-flight');
+      expect(wins).toHaveLength(1);
+      expect(losses).toHaveLength(1);
+    });
+
+    it('two concurrent terminal closes on the same key issue EXACTLY ONE receipt and bump the version once (no throw)', async () => {
+      const w: Work = {
+        ...sampleWork(),
+        state: 'in_progress',
+        version: 2,
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+      const cmd: CompleteWorkCommand = {
+        companyId: 'acme-corp',
+        actor: 'principal-2',
+        workId: 'work-001',
+        idempotencyKey: 'race-close-key',
+        requestHash: 'hash-1',
+        policyHash: 'sha256:policy-hash-123',
+        artifactHash: 'sha256:artifact-hash-789',
+        outcome: { result: 'closed successfully', success: true },
+        evidenceRefs: ['evid-2'],
+      };
+
+      // Two genuine concurrent terminal closes — BOTH resolve (no thrown error):
+      // the winner completes; the loser gets a typed attempt-in-flight (or a
+      // replay if the winner committed before the loser's lookup).
+      const [a, b] = await Promise.all([
+        completeWorkAtomically(conn, cmd),
+        completeWorkAtomically(conn, cmd),
+      ]);
+      expect(a.ok === true || (a.ok === false && a.reason === 'attempt-in-flight')).toBe(true);
+      expect(b.ok === true || (b.ok === false && b.reason === 'attempt-in-flight')).toBe(true);
+
+      // EXACTLY ONE effect: one receipt, the version bumped once, one journal row.
+      const receipts = await conn.query<{ receipt_id: string }>(
+        'SELECT receipt_id FROM business_receipt WHERE work_id = $1',
+        ['work-001'],
+      );
+      expect(receipts).toHaveLength(1);
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('completed');
+      expect(stored?.version).toBe(3); // bumped ONCE, not twice
+      const journalRows = await conn.query<{ attempt_id: string }>(
+        'SELECT attempt_id FROM idempotency_journal',
+        [],
+      );
+      expect(journalRows).toHaveLength(1);
+    });
+  });
 });
 
 /** Journal adapter whose terminal close ALWAYS fails — proves the enclosing

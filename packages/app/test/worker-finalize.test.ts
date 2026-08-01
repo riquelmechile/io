@@ -214,7 +214,8 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     const row = await h.journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('aborted_retryable');
     expect(row?.attemptId).toBe(ATTEMPT);
-    // The marker is NOT a failure-complete: a same-key same-hash retry reopens.
+    // The marker is NOT a failure-complete: a same-key same-hash retry reopens
+    // (a successful claim — typed {ok:true}, never a throw).
     await expect(
       h.journal.insertInFlight({
         companyId: COMPANY,
@@ -222,7 +223,7 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
         requestHash: HASH,
         attemptId: ATTEMPT,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ ok: true });
     expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
     // The failed CAS never overwrote the work; the effect was undone.
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');

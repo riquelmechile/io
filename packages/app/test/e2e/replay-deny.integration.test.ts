@@ -3,6 +3,8 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import type { Work } from '@io/business-domain/src/index.js';
+
 import { attemptIdFor } from '../../src/worker/intent.js';
 import { runWorker } from '../../src/worker/worker.js';
 import {
@@ -13,6 +15,21 @@ import {
   workerInputFor,
 } from './harness.js';
 import type { E2eHarness } from './harness.js';
+
+/** A well-formed completed Work — the shape the terminal close actually stores
+ * in result_json (guarded by parseWorkRow on the replay lookup, D7). */
+function recordedResult(companyId: string, delegationId: string, workId: string): Work {
+  return {
+    workId,
+    companyId,
+    delegationId,
+    proposer: 'c3-proposer',
+    description: 'c3 recorded terminal result',
+    state: 'completed',
+    version: 3,
+    evidenceRefs: ['c3-evid'],
+  };
+}
 
 /**
  * E2E replay / DENY (Slice C, C3 — WC-6 "Atomic Terminal Close" + IJ
@@ -68,7 +85,8 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         requestHash,
         attemptId,
       });
-      await harness.journal.complete(attemptId, { ok: true, note: 'c3-recorded-result' });
+      const recorded = recordedResult(companyId, 'c3-del', workId);
+      await harness.journal.complete(attemptId, recorded);
 
       // The stored result round-trips through real PG (JSONB).
       const seeded = await harness.conn.query<{ status: string; resultJson: unknown }>(
@@ -76,9 +94,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
           'WHERE company_id = $1 AND idempotency_key = $2',
         [companyId, idempotencyKey],
       );
-      expect(seeded).toEqual([
-        { status: 'completed', resultJson: { ok: true, note: 'c3-recorded-result' } },
-      ]);
+      expect(seeded).toEqual([{ status: 'completed', resultJson: recorded }]);
 
       // Re-attempt the SAME key + SAME hash: the cycle claims, then the pre-effect
       // reconciliation REPLAYS the recorded result and stops BEFORE any effect.
@@ -92,7 +108,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         throw new Error(`expected the replay result, got: ${JSON.stringify(result)}`);
       }
       expect(result.replayed).toBe(true);
-      expect(result.resultJson).toEqual({ ok: true, note: 'c3-recorded-result' });
+      expect(result.resultJson).toEqual(recorded);
 
       // NO new effect: the sandbox document was never created.
       expect(existsSync(join(harness.sandboxRoot, 'docs/quarterly-close.md'))).toBe(false);
@@ -110,9 +126,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
           'WHERE company_id = $1 AND idempotency_key = $2',
         [companyId, idempotencyKey],
       );
-      expect(after).toEqual([
-        { status: 'completed', resultJson: { ok: true, note: 'c3-recorded-result' } },
-      ]);
+      expect(after).toEqual([{ status: 'completed', resultJson: recorded }]);
     });
 
     it('same key + different hash → DENY idempotency-conflict: no effect, no receipt, journal unchanged', async () => {
@@ -130,7 +144,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         requestHash: 'hash-c3-original',
         attemptId,
       });
-      await harness.journal.complete(attemptId, { ok: true });
+      await harness.journal.complete(attemptId, recordedResult(companyId, 'c3-del2', workId));
 
       // Re-attempt with the SAME key but a DIFFERENT hash: DENY.
       const result = await runWorker(

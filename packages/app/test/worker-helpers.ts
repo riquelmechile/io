@@ -6,6 +6,7 @@ import {
 } from '@io/business-domain/src/ports/fakes.js';
 import type {
   IdempotencyJournalPort,
+  JournalClaimResult,
   JournalEntry,
   NewJournalEntry,
 } from '@io/business-domain/src/ports/idempotency.js';
@@ -149,7 +150,7 @@ export class RecordingJournal implements IdempotencyJournalPort {
     return this.inner.lookup(companyId, idempotencyKey);
   }
 
-  async insertInFlight(entry: NewJournalEntry): Promise<void> {
+  async insertInFlight(entry: NewJournalEntry): Promise<JournalClaimResult> {
     this.log.push(`insertInFlight:${entry.companyId}:${entry.idempotencyKey}`);
     this.trace?.push(`journal:insertInFlight:${entry.companyId}:${entry.idempotencyKey}`);
     return this.inner.insertInFlight(entry);

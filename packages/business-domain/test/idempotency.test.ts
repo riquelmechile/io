@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { evidenceId } from '../src/evidence-id.js';
-import type { JournalStatus } from '../src/ports/idempotency.js';
+import type {
+  IdempotencyJournalPort,
+  JournalClaimResult,
+  JournalEntry,
+  JournalStatus,
+} from '../src/ports/idempotency.js';
 import type { Work } from '../src/types.js';
 import type { CompleteWorkCommand, CompleteWorkDeps } from '../src/use-cases/index.js';
 import { completeWork } from '../src/use-cases/index.js';
@@ -144,12 +149,68 @@ describe('idempotent completeWork — DENY (D6)', () => {
   });
 });
 
+/** Journal whose claim always loses — simulates a same-key race loser at the
+ * claim boundary: the pre-effect lookup sees nothing, but insertInFlight returns
+ * the typed lost-claim result (a concurrent attempt owns the key). */
+class LostClaimJournal implements IdempotencyJournalPort {
+  async lookup(): Promise<JournalEntry | undefined> {
+    return undefined;
+  }
+  async insertInFlight(): Promise<JournalClaimResult> {
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
+  async complete(): Promise<void> {}
+  async markRetryable(): Promise<void> {}
+}
+
+describe('idempotent completeWork — same-key race loser (D6)', () => {
+  it('a lost claim at the journal boundary returns typed attempt-in-flight — no throw, no effect', async () => {
+    const { deps, work, receipts } = await setup();
+
+    const result = await completeWork(completeCmd(), { ...deps, journal: new LostClaimJournal() });
+
+    expect(result).toEqual({ ok: false, reason: 'attempt-in-flight' });
+    // No effect ran: the work is untouched and NO receipt was issued.
+    expect((await work.get('acme', 'work-1'))?.state).toBe('in_progress');
+    expect((await work.get('acme', 'work-1'))?.version).toBe(2);
+    expect(await receipts.get('acme', 'rcpt:att:acme:key-1')).toBeUndefined();
+  });
+});
+
 describe('JournalStatus domain (IJ marker-distinct)', () => {
   it('the port type admits exactly in_flight | completed | aborted_retryable (compile-time)', () => {
     // Compile-time RED until the port adds the third value: tsc rejects the
     // assignment while the union has only two statuses (pnpm typecheck gate).
     const marker: JournalStatus = 'aborted_retryable';
     expect(marker).toBe('aborted_retryable');
+  });
+});
+
+describe('journal fake — UNRESOLVED sentinel parity with PG (F1/F4)', () => {
+  it('lookup passes through the NON-Work UNRESOLVED_REQUIRES_HUMAN sentinel — never throws (mirrors the PG adapter via the shared recognizer)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+    });
+    await journal.complete('att:acme:key-1', { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('completed');
+    expect(entry?.resultJson).toEqual({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+  });
+
+  it('isUnresolvedJournalResult recognizes ONLY the sentinel shape (a Work / null / array are not it)', async () => {
+    const { isUnresolvedJournalResult } = await import('../src/ports/idempotency.js');
+    expect(isUnresolvedJournalResult({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' })).toBe(
+      true,
+    );
+    expect(isUnresolvedJournalResult({ ok: true, note: 'done' })).toBe(false);
+    expect(isUnresolvedJournalResult({ ok: false, reason: 'something-else' })).toBe(false);
+    expect(isUnresolvedJournalResult(null)).toBe(false);
+    expect(isUnresolvedJournalResult(['UNRESOLVED_REQUIRES_HUMAN'])).toBe(false);
   });
 });
 

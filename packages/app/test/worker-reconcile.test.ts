@@ -1,5 +1,9 @@
 import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
-import type { JournalEntry } from '@io/business-domain/src/ports/idempotency.js';
+import type {
+  IdempotencyJournalPort,
+  JournalClaimResult,
+  JournalEntry,
+} from '@io/business-domain/src/ports/idempotency.js';
 import {
   InMemoryIdempotencyJournalRepository,
   type InMemoryWorkRepository,
@@ -169,7 +173,170 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
     const row = await journal.lookup('acme', 'close-2026-q3');
     expect(row?.status).toBe('in_flight');
   });
+
+  it('a LOST CLAIM re-decides on the fresh row — NEVER proceeds to a second effect (race safety)', async () => {
+    const decision = await reconcilePreEffect(
+      new LostClaimThenWinnerJournal(),
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      'att:acme:loser',
+    );
+    // The claim was lost; the re-decide sees the winner's in_flight row → recovery
+    // (NOT proceed) — exactly one effect is preserved on the worker path too.
+    expect(decision).toEqual({ kind: 'recovery' });
+  });
+
+  it('F2: a LOST CLAIM whose fresh re-decide WOULD be proceed (aborted_retryable + same hash) is mapped to recovery — NEVER proceed without a secured claim', async () => {
+    const decision = await reconcilePreEffect(
+      new LostClaimThenRetryableJournal(),
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      'att:acme:loser',
+    );
+    // The re-decide on the fresh aborted_retryable + same-hash row WOULD be
+    // `proceed` (reopen) — but NO claim was secured, so it MUST be recovery
+    // (exactly-one-effect safety, made structural — not a comment).
+    expect(decision).toEqual({ kind: 'recovery' });
+    expect(decision.kind).not.toBe('proceed');
+  });
+
+  it('F2: a LOST CLAIM whose fresh re-decide WOULD be proceed (row vanished → undefined) is mapped to recovery — NEVER proceed without a secured claim', async () => {
+    const decision = await reconcilePreEffect(
+      new LostClaimThenVanishedJournal(),
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      'att:acme:loser',
+    );
+    expect(decision).toEqual({ kind: 'recovery' });
+    expect(decision.kind).not.toBe('proceed');
+  });
+
+  it('F3: a LOST CLAIM whose fresh re-decide is REPLAY (winner completed, same hash) routes to replay — never a second effect', async () => {
+    const decision = await reconcilePreEffect(
+      new LostClaimThenCompletedJournal('hash-1', { ok: true, note: 'winner-done' }),
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      'att:acme:loser',
+    );
+    expect(decision).toEqual({ kind: 'replay', resultJson: { ok: true, note: 'winner-done' } });
+  });
+
+  it('F3: a LOST CLAIM whose fresh re-decide is DENY (winner completed, different hash) routes to deny — never a second effect', async () => {
+    const decision = await reconcilePreEffect(
+      new LostClaimThenCompletedJournal('hash-WINNER', { ok: true }),
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      'att:acme:loser',
+    );
+    expect(decision).toEqual({ kind: 'deny', reason: 'idempotency-conflict' });
+  });
 });
+
+/** Models a same-key race loser on the worker pre-effect path: the first lookup
+ * sees nothing (decision = proceed), the claim is LOST (typed result), and the
+ * re-decide lookup then sees the winner's committed in_flight row. */
+class LostClaimThenWinnerJournal implements IdempotencyJournalPort {
+  private winnerCommitted = false;
+
+  async lookup(): Promise<JournalEntry | undefined> {
+    if (!this.winnerCommitted) return undefined;
+    return {
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:winner',
+      status: 'in_flight',
+    };
+  }
+
+  async insertInFlight(): Promise<JournalClaimResult> {
+    this.winnerCommitted = true; // the winner committed during our insert
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
+
+  async complete(): Promise<void> {}
+  async markRetryable(): Promise<void> {}
+}
+
+/** Models a same-key race loser whose fresh re-decide WOULD be `proceed` (F2):
+ * the first lookup sees nothing (proceed), the claim is LOST, and the re-decide
+ * lookup then sees the winner's aborted_retryable row under the SAME hash — a
+ * reopen decision. With NO claim secured, proceeding would run the effect
+ * unclaimed; the structural guard must map this to recovery. */
+class LostClaimThenRetryableJournal implements IdempotencyJournalPort {
+  private winnerMarked = false;
+
+  async lookup(): Promise<JournalEntry | undefined> {
+    if (!this.winnerMarked) return undefined;
+    return {
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:winner',
+      status: 'aborted_retryable',
+    };
+  }
+
+  async insertInFlight(): Promise<JournalClaimResult> {
+    this.winnerMarked = true; // the winner committed + marked during our insert
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
+
+  async complete(): Promise<void> {}
+  async markRetryable(): Promise<void> {}
+}
+
+/** Models a same-key race loser whose fresh re-decide WOULD be `proceed` because
+ * the row vanished (undefined → proceed). No claim secured ⇒ must be recovery. */
+class LostClaimThenVanishedJournal implements IdempotencyJournalPort {
+  async lookup(): Promise<JournalEntry | undefined> {
+    return undefined;
+  }
+
+  async insertInFlight(): Promise<JournalClaimResult> {
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
+
+  async complete(): Promise<void> {}
+  async markRetryable(): Promise<void> {}
+}
+
+/** Models a same-key race loser whose fresh re-decide sees the winner's
+ * COMPLETED row (F3): same hash → REPLAY the winner's recorded result; a
+ * different hash → DENY. Either way the loser never reaches a second effect. */
+class LostClaimThenCompletedJournal implements IdempotencyJournalPort {
+  private winnerCommitted = false;
+
+  constructor(
+    private readonly winnerHash: string,
+    private readonly winnerResult: unknown,
+  ) {}
+
+  async lookup(): Promise<JournalEntry | undefined> {
+    if (!this.winnerCommitted) return undefined;
+    return {
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: this.winnerHash,
+      attemptId: 'att:acme:winner',
+      status: 'completed',
+      resultJson: this.winnerResult,
+    };
+  }
+
+  async insertInFlight(): Promise<JournalClaimResult> {
+    this.winnerCommitted = true; // the winner completed during our insert
+    return { ok: false, reason: 'attempt-in-flight' };
+  }
+
+  async complete(): Promise<void> {}
+  async markRetryable(): Promise<void> {}
+}
 
 /** DbConnection double that counts committed vs rolled-back transactions. */
 class TxTrackingConnection implements DbConnection {
