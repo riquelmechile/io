@@ -319,3 +319,147 @@ the greenfield assumption and the `terminal_event_id = receipt_id` backfill reci
 - New tests: 4 in `pg-connection.test.ts` (#1 ×3, #2 ×1) + 2 unit in `business-adapters.test.ts`
   (#3) + 2 integration in `business-pg-roundtrip.integration.test.ts` (#3 parity, live PG).
 - All changes LEFT UNCOMMITTED. business-domain `@io/*` imports = zero (unchanged). No new deps.
+
+---
+
+# Slice C — Use Cases + Idempotency + Validation (PR3, stacked-to-main) — APPENDED
+
+**Slice**: C — Use Cases + Idempotency + Validation (PR3, stacked-to-main) — ONLY. Final
+implementation slice of the change.
+**Mode**: Strict TDD (RED → GREEN → REFACTOR), vitest (`pnpm test`), Node 24
+(`PATH=/data/node24/bin:$PATH`), live PG 18.4 (`postgresql://io:io_dev@localhost:5432/io_dev`,
+container io_pg) — integration tests RAN, none skipped.
+**Status**: ✅ Slice C complete — `pnpm check` fully green (**603 passed | 3 skipped**);
+both PG integration files ran (38/38). All changes UNCOMMITTED (left dirty for native RDD review).
+**Merge note**: Slice A + coherence fix + Slice B + Slice B correction records above are
+preserved untouched; this section appends Slice C evidence.
+
+## Tasks Done (3.1–3.10)
+
+All 10 Slice C tasks checked off in `tasks.md`. Test count: baseline **525 passed / 2 skipped**
+(Slice B correction) → **603 passed / 3 skipped** (+78 new tests). The skips are exactly:
+2 = DeepSeek external-API round-trip (no `DEEPSEEK_API_KEY`, pre-existing, unrelated to PG);
+1 = the NEW CI reachability guard `pg-required.integration.test.ts`, which by design SKIPS
+locally without `IO_REQUIRE_PG=1` and FAILS LOUDLY in CI (task 3.9). PG integration is NOT skipped.
+
+## TDD Cycle Evidence
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1 | `packages/business-domain/test/use-cases.test.ts` | Unit | ✅ 261/0 (bd+db pkgs) | ✅ 18 failed (module missing) | ✅ 18/18 | ✅ all six transitions + conflicts + not-found + invalid-transition + terminal | ✅ shared `applyWorkTransition` helper extracted |
+| 3.2 | `packages/business-domain/src/use-cases/{result,propose,accept,start,complete,verify,reject}-work.ts,index.ts` | Unit | ✅ (above) | ✅ (from 3.1) | ✅ 18/18 | ✅ propose dup / stale expectedVersion / terminal verified | ✅ `UseCaseResult` + reason union typed; save demoted to insert-only (propose) |
+| 3.3 | `packages/business-domain/test/idempotency.test.ts` + `packages/database/test/{idempotency-adapter, business-pg-roundtrip.integration}.test.ts` | Unit + Integration | ✅ (above) | ✅ 21 failed (journal port/adapter/wiring/evidenceId missing) | ✅ unit 21/21; integration 4/4 live PG | ✅ replay vs re-execute (version pinned), DENY, attempt-in-flight, pre-flight no-journal-row, no-partial-write via exploding journal | ✅ `IdempotentFlowAbortError` documented (post-write abort vs pre-write results) |
+| 3.4 | `packages/business-domain/test/validation.test.ts` (command block) | Unit | ✅ (above) | ✅ 9 failed (module missing) | ✅ 9/9 | ✅ non-object ×5, empty/missing/non-string fields, expectedVersion edge cases (0/-1/1.5/'1'/NaN/∞) | ➖ None needed |
+| 3.5 | `packages/business-domain/src/validation/command.ts` | Unit | ✅ (above) | ✅ (from 3.4) | ✅ 9/9 | ✅ runtime-not-type-only via `as unknown as BusinessCommand` | ✅ immutable value construction (TS2540 fix) |
+| 3.6 | `packages/business-domain/test/validation.test.ts` (llm-plan block) | Unit | ✅ (above) | ✅ 4 failed (module missing) | ✅ 13/13 | ✅ 11 malformed shapes + optional intent + source-level no-import test | ✅ import-specific regex (comment ≠ import) |
+| 3.7 | `packages/database/test/row-guards.test.ts` + adapters | Unit | ✅ (above) | ✅ 17 failed (module missing) | ✅ 17/17 | ✅ 11 corrupt work rows + 7 corrupt receipt rows + null→undefined normalization | ✅ guards wired into adapter get() read paths (throw on corrupt row) |
+| 3.8 | `packages/business-domain/test/evidence-id.test.ts` | Unit | ✅ (above) | ✅ RED folded into 3.3 batch (evidenceId referenced by idempotency tests before implementation) | ✅ 6/6 | ✅ retry-stability (twice→same), not now-based, tenant-scoped, key-scoped, namespace collision check | ➖ None needed (pure one-liner) |
+| 3.9 | `packages/database/test/pg-required.integration.test.ts` + ci.yml + README + pnpm-workspace.yaml | Integration (CI guard) | ✅ (above) | N/A (config/docs — triangulation skipped) | ✅ 3-mode verified: local skip / CI pass / CI fail-loudly (ECONNREFUSED) | N/A structural | ✅ ci.yml postgres:18 service + IO_REQUIRE_PG=1 |
+| 3.10 | Verify C — full gate | N/A | ✅ (above) | N/A | ✅ `pnpm check` green; PG integration 38/38 ran | N/A | N/A |
+
+**Test summary**: 78 new tests (525 → 603 passing). Layers: Unit (+76), Integration (+1 CI guard
+skipped locally, +4 live-PG atomic-close scenarios added to business-pg-roundtrip). Approval test
+updated (strict-tdd rule): the database public-surface boundary test now lists the three Slice C
+runtime exports (`PgIdempotencyJournalRepository`, `completeWorkAtomically`,
+`parseWorkRow`/`parseBusinessReceiptRow`) — design-sanctioned additions (D6/D7), not a gate hack.
+One test-bug fix (not a weakening): the new integration assertions called `conn.query(sql)` without
+the port's required params array — fixed in the tests.
+
+## Files Changed (all UNCOMMITTED — left dirty for native RDD review)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `packages/business-domain/src/use-cases/{result,propose-work,accept-work,start-work,complete-work,verify-work,reject-work,index}.ts` | Created | D3 use cases: typed `UseCaseResult<Work>`, no throw-for-control-flow, deps = ports only. `applyWorkTransition` = get + canTransitionWork + CAS (updateIfVersion). propose uses insert-only save; complete implements the idempotent terminal close (D6). |
+| `packages/business-domain/src/ports/idempotency.ts` | Created | `IdempotencyJournalPort` + `JournalEntry`/`NewJournalEntry` (D6). |
+| `packages/business-domain/src/ports/fakes.ts` | Modified | `InMemoryIdempotencyJournalRepository` (mirrors 004 UNIQUEs: one attempt per key, dup attemptId rejected). |
+| `packages/business-domain/src/evidence-id.ts` | Created | `evidenceId = ev:${companyId}:${idempotencyKey}` (D8), used in the receipt path. |
+| `packages/business-domain/src/validation/{command,llm-plan}.ts` | Created | D7 guards: `parseCommand` / `parseLlmPlan(unknown)` → `{ok:true,value}|{ok:false,reason}`, runtime structural checks, zero @io/* imports. |
+| `packages/business-domain/src/index.ts` | Modified | Exports use-cases, journal port + fake, evidenceId. |
+| `packages/business-domain/test/{use-cases,idempotency,evidence-id,validation}.test.ts` | Created | 49 new unit tests (transitions ×18, idempotency ×9, evidenceId ×6, validation ×13 + source-level no-import test). |
+| `packages/database/src/idempotency-adapter.ts` | Created | `PgIdempotencyJournalRepository` over 004 (lookup/insertInFlight/complete; scoped by company_id; empty-input guards). |
+| `packages/database/src/complete-work-flow.ts` | Created | `completeWorkAtomically`: complete-work use case wired to PG adapters inside ONE `DbConnection.transaction` (Atomic Terminal Flow, D6). |
+| `packages/database/src/row-guards.ts` | Created | D7 `parseWorkRow`/`parseBusinessReceiptRow`; wired into the work + receipt adapter get() paths (corrupt row → loud failure). |
+| `packages/database/src/{work,business-receipt}-adapter.ts` | Modified | get() now validates PG rows through the guards before use (SQL shapes unchanged). |
+| `packages/database/src/index.ts` | Modified | Exports the journal adapter, the wiring, and the row guards. |
+| `packages/database/test/idempotency-adapter.test.ts` | Created | Adapter SQL-shape + lifecycle + guard tests (9). |
+| `packages/database/test/row-guards.test.ts` | Created | Work/receipt row guards (17). |
+| `packages/database/test/pg-required.integration.test.ts` | Created | CI reachability guard (3.9): IO_REQUIRE_PG=1 → fail loudly if PG down; else skip. |
+| `packages/database/test/business-pg-roundtrip.integration.test.ts` | Modified | +4 live-PG scenarios: fresh atomic close, replay, diff-hash DENY, no-partial-write (exploding journal → full rollback). |
+| `packages/database/test/boundary.test.ts` | Modified | Public-surface approval updated for the 3 new Slice C exports (D6/D7). |
+| `.github/workflows/ci.yml` | Modified | postgres:18 service container + `DATABASE_URL` + `IO_REQUIRE_PG: '1'` (3.9). |
+| `README.md` | Modified | Honest Estado section (toolchain + packages + CI exist) + documented CI-PG expectation (no silent skip). |
+| `pnpm-workspace.yaml` | Modified | Stale "one transitional package" comment → honest five-package inventory. |
+| `openspec/.../tasks.md` | Modified | Tasks 3.1–3.10 checked `[x]`. |
+
+## Workload / PR Boundary
+
+- Mode: chained PR slice — `auto-chain` / `stacked-to-main`; this batch = **PR3 (Slice C)**, the
+  final implementation slice. Per the change-level forecast this is the highest-risk slice; actual
+  authored diff ≈ **1500+ changed lines** across 27 files (18 new + 9 modified) — above the 400-line
+  guideline and above the ~390 forecast (forecast consistently underestimates test breadth; the
+  live-PG atomicity scenarios and the full guard/validation surfaces are genuine and long).
+  Rollback boundary: revert the 27 files above; Slices A + B stay.
+
+## Deviations from Design
+
+1. **Post-write failures in the idempotent flow THROW (IdempotentFlowAbortError), pre-write
+   decisions RETURN results.** D6 mandates "throw → full rollback" for the atomic terminal close;
+   the no-throw-for-control-flow contract (D3) applies to pre-write decisions (not-found,
+   invalid-transition, version-conflict, invalid-command), which return results and leave NO
+   journal row. A CAS loss AFTER the in_flight insert must abort the transaction or it would commit
+   a zombie in_flight row poisoning every retry — so it throws, and the enclosing
+   `DbConnection.transaction` (completeWorkAtomically) rolls everything back. Documented in the
+   class + the flow; covered by the no-partial-write integration test (via an exploding journal).
+2. **attemptId is deterministic** (`att:${companyId}:${idempotencyKey}`), not random: one attempt
+   per key is already guaranteed by UNIQUE(company_id, idempotency_key), so a key-derived id stays
+   unique AND keeps `business_receipt.terminal_event_id` traceable to the key. receiptId =
+   `rcpt:${attemptId}`. Design D5 said "journal attempt_id = terminal event id" without pinning the
+   derivation.
+3. **Row guards wired into adapter get() as a loud throw** on corrupt rows (integrity violation),
+   while the guards THEMSELVES return `{ok:false,reason}` per the spec — the adapter converts the
+   guard result into a failure at the I/O boundary. SQL shapes untouched (boundary tests pin them).
+4. **completeWork without an idempotencyKey does NOT issue a receipt** — D5 ties
+   terminal_event_id to a journal attempt id, so receipts only exist for journal-backed (idempotent)
+   terminal closes. The plain path is a pure CAS transition.
+5. **"411 tests" in task 3.10 is the stale pre-Slice-A baseline** — the verified count is
+   603 passed / 3 skipped; the task's intent (gate green + domain purity) is met and noted in
+   tasks.md.
+
+## Issues Found
+
+- None blocking. Two test-side fixes during the cycle: (1) the new integration assertions called
+  `conn.query(sql)` without the port's required params array (`params is not iterable`) — fixed in
+  the tests; (2) the llm-plan no-import test's regex matched a doc COMMENT (`@io/llm-client`) — made
+  import-specific (`import\s+[^;]*@io\/llm-client`), which is what the spec forbids. Neither
+  weakened any test. One production fix during GREEN: `parseCommand`/`parseLlmPlan` built value
+  objects by mutating readonly fields (TS2540) — switched to immutable spread construction.
+- The `exploding journal` (no-partial-write) test uses a test-only subclass of
+  PgIdempotencyJournalRepository whose `complete()` throws — real test, real rollback asserted
+  across work + receipt + journal.
+
+## Verify C Evidence (task 3.10)
+
+- `PATH=/data/node24/bin:$PATH pnpm check` → **EXIT 0**: format-check ✅ / typecheck ✅ / build ✅ /
+  lint ✅ / test ✅ — **603 passed | 3 skipped (606)**; 36 files passed, 2 files skipped.
+- PG integration RAN (not skipped): `pnpm vitest run packages/database/test/business-pg-roundtrip.integration.test.ts packages/database/test/pg-roundtrip.integration.test.ts` →
+  **38 passed / 0 failed**, live PG 18.4 (`io_dev`). The 4 new atomic-close scenarios
+  (fresh/replay/DENY/no-partial) are among them.
+- The 3 skips, precisely: 2 = DeepSeek external-API round-trip (no `DEEPSEEK_API_KEY`,
+  pre-existing), 1 = the new CI guard (skips locally by design; fails loudly under `IO_REQUIRE_PG=1` —
+  verified in all 3 modes: local-skip ✅ / CI+PG-pass ✅ / CI+PG-down-FAIL-ECONNREFUSED ✅).
+- Forbidden-coupling invariants: business-domain `@io/*` actual imports = **zero** (grep for
+  `^import[^;]*@io/` → nothing; only comments document the rule); llm-plan guard has **no**
+  @io/llm-client/SDK import (grep + source-level test); `openai` production import confined to
+  `deepseek-client.ts` (the two llm-client TEST matches are string literals in boundary
+  assertions); no package.json/lockfile change (no new deps); no cross-aggregate import introduced.
+- All changes LEFT UNCOMMITTED (git status: 9 modified + 18 untracked, nothing staged/committed).
+
+## Slice C Correction (adversarial review findings)
+
+Adversarial review of Slice C: **VERDICT CLEAN** (no BLOCKER/CRITICAL). The crown-jewel guarantees — idempotent replay, diff-hash DENY, and the atomic terminal close (including the CAS-loss-after-in_flight rollback the author suite did not cover) — were independently reproduced against live PG 18.4.
+
+- **WARNING fixed (candidate-caused)**: `proposeWork` mapped EVERY `save()` throw to `work-already-exists`, so an empty `companyId` (rejected by `requireCompanyId`) was mislabeled. Added `!cmd.companyId` to the pre-guard → now returns `invalid-command`. Test added (`use-cases.test.ts`: empty companyId → invalid-command). Suite green (604 passed / 3 skipped).
+- **Follow-ups (SUGGESTIONs, deferred — low impact, none affect safety properties)**:
+  1. Replay path returns journal `result_json` without a row guard (D7 consistency) — consider `parseWorkRow` on replay. Low: value is written by the same system.
+  2. Same-key concurrent race loser surfaces a thrown error (unique violation) instead of a typed replay/`attempt-in-flight` result. Safety holds (exactly one effect); D6 sanctions throw⇒rollback; loser can retry to a clean replay.
+  3. `completeWorkIdempotent` atomicity is caller-enforced (must be wrapped in one transaction); document the assumption on `IdempotencyJournalPort`. The sanctioned wiring `completeWorkAtomically` always wraps; no shipped path violates it.

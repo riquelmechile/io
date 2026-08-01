@@ -1,6 +1,7 @@
 import type { CasResult, Deliverable, Work, WorkOutcome } from '@io/business-domain/src/index.js';
 
 import type { DbConnection } from './connection.js';
+import { parseWorkRow } from './row-guards.js';
 
 /**
  * PostgreSQL-shaped adapter for the Work repository port (design §PG Adapter
@@ -66,19 +67,13 @@ export class PgWorkRepository {
     );
     if (rows.length === 0) return undefined;
     const row = rows[0];
-    if (!row) return undefined;
-    return {
-      workId: row.workId,
-      companyId: row.companyId,
-      delegationId: row.delegationId,
-      proposer: row.proposer,
-      description: row.description,
-      state: row.state,
-      version: row.version,
-      deliverable: row.deliverable ?? undefined,
-      evidenceRefs: row.evidenceRefs,
-      outcome: row.outcome ?? undefined,
-    };
+    // Rows read from PG are untrusted bytes: validate at runtime before use
+    // (D7). A corrupt row is an integrity violation — fail loudly.
+    const parsed = parseWorkRow(row);
+    if (!parsed.ok) {
+      throw new Error(`corrupt work row: ${parsed.reason}`);
+    }
+    return parsed.value;
   }
 
   /**

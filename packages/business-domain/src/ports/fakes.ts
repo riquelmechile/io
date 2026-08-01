@@ -1,4 +1,5 @@
 import type { BusinessReceipt, Company, Delegation, Work } from '../types.js';
+import type { IdempotencyJournalPort, JournalEntry, NewJournalEntry } from './idempotency.js';
 import type {
   BusinessReceiptRepository,
   CasResult,
@@ -128,5 +129,68 @@ export class InMemoryBusinessReceiptRepository implements BusinessReceiptReposit
     requireCompanyId(companyId);
     const entry = this.entries.get(receiptId);
     return entry !== undefined && entry.companyId === companyId ? entry : undefined;
+  }
+}
+
+/**
+ * In-memory fake for the idempotency journal port (D6): map-backed, immutable
+ * returns, no I/O. Mirrors the 004 table constraints: a second attempt for the
+ * same (companyId, idempotencyKey) is rejected and a duplicate attemptId is
+ * rejected (UNIQUE(company_id, idempotency_key) + UNIQUE(attempt_id)). Not
+ * transactional — the atomic terminal close is demonstrated against live PG;
+ * this fake covers the replay / DENY / in-flight decision logic.
+ */
+export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalPort {
+  private readonly byKey = new Map<string, JournalEntry>();
+  private readonly byAttempt = new Map<string, JournalEntry>();
+
+  private static keyOf(companyId: string, idempotencyKey: string): string {
+    return `${companyId}\u0000${idempotencyKey}`;
+  }
+
+  async lookup(companyId: string, idempotencyKey: string): Promise<JournalEntry | undefined> {
+    requireCompanyId(companyId);
+    if (!idempotencyKey) {
+      throw new Error('a non-empty idempotencyKey is required');
+    }
+    return this.byKey.get(InMemoryIdempotencyJournalRepository.keyOf(companyId, idempotencyKey));
+  }
+
+  async insertInFlight(entry: NewJournalEntry): Promise<void> {
+    requireCompanyId(entry.companyId);
+    if (!entry.idempotencyKey) {
+      throw new Error('a non-empty idempotencyKey is required');
+    }
+    if (!entry.requestHash) {
+      throw new Error('a non-empty requestHash is required');
+    }
+    if (!entry.attemptId) {
+      throw new Error('a non-empty attemptId is required');
+    }
+    const key = InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey);
+    if (this.byKey.has(key)) {
+      // Mirrors UNIQUE(company_id, idempotency_key): one attempt per key.
+      throw new Error(`idempotency key already recorded: ${entry.idempotencyKey}`);
+    }
+    if (this.byAttempt.has(entry.attemptId)) {
+      // Mirrors UNIQUE(attempt_id): one row per attempt.
+      throw new Error(`attempt id already recorded: ${entry.attemptId}`);
+    }
+    const row: JournalEntry = { ...entry, status: 'in_flight' };
+    this.byKey.set(key, row);
+    this.byAttempt.set(entry.attemptId, row);
+  }
+
+  async complete(attemptId: string, resultJson: unknown): Promise<void> {
+    const entry = this.byAttempt.get(attemptId);
+    if (entry === undefined) {
+      throw new Error(`no journal entry for attempt: ${attemptId}`);
+    }
+    const updated: JournalEntry = { ...entry, status: 'completed', resultJson };
+    this.byAttempt.set(attemptId, updated);
+    this.byKey.set(
+      InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey),
+      updated,
+    );
   }
 }

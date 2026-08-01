@@ -3,6 +3,13 @@ name: Toolchain
 # Additive application/toolchain CI: runs the same secret-free, check-only,
 # non-mutating local gates under the enforced Node 24 LTS runtime. This workflow
 # does NOT replace .github/workflows/pr-validation.yml (governance).
+#
+# PostgreSQL integration is REQUIRED in CI (task 3.9): the database slice's
+# integration suites run against the postgres:18 service container below and
+# MUST pass — the IO_REQUIRE_PG=1 marker flips the reachability probe from
+# "skip when PG is missing" (local-dev behavior) to "FAIL LOUDLY", so CI can
+# never silently skip the live-PG tests. The DeepSeek external-API round-trip
+# remains skipped (no DEEPSEEK_API_KEY in CI) — unrelated to PostgreSQL.
 on:
   push:
     branches: [main]
@@ -15,6 +22,25 @@ jobs:
   check:
     name: Quality gates
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: io
+          POSTGRES_PASSWORD: io_dev
+          POSTGRES_DB: io_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U io -d io_dev"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # pgConnectionString() defaults to the same URL; set explicitly so the
+      # wiring is visible and the integration tests are deterministic.
+      DATABASE_URL: postgresql://io:io_dev@localhost:5432/io_dev
+      IO_REQUIRE_PG: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4

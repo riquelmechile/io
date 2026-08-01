@@ -259,7 +259,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
   });
 
   describe('public surface — structural assertions (no extra prod code)', () => {
-    it('exports DbConnection, DbRow, PgEvidenceRepository, PgAuditRepository, PgCompanyRepository, PgDelegationRepository, PgWorkRepository, PgBusinessReceiptRepository, PgDbConnection', () => {
+    it('exports the adapters, the connection, the idempotency wiring, and the row guards (D6/D7 additions)', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
       expect(databaseApi.PgAuditRepository).toBeTypeOf('function');
       expect(databaseApi.PgCompanyRepository).toBeTypeOf('function');
@@ -267,6 +267,12 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(databaseApi.PgWorkRepository).toBeTypeOf('function');
       expect(databaseApi.PgBusinessReceiptRepository).toBeTypeOf('function');
       expect(databaseApi.PgDbConnection).toBeTypeOf('function');
+      // Slice C additions (design D6/D7): the idempotency journal adapter, the
+      // atomic terminal-close wiring, and the PG row guards.
+      expect(databaseApi.PgIdempotencyJournalRepository).toBeTypeOf('function');
+      expect(databaseApi.completeWorkAtomically).toBeTypeOf('function');
+      expect(databaseApi.parseWorkRow).toBeTypeOf('function');
+      expect(databaseApi.parseBusinessReceiptRow).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
@@ -277,7 +283,11 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgDbConnection',
           'PgDelegationRepository',
           'PgEvidenceRepository',
+          'PgIdempotencyJournalRepository',
           'PgWorkRepository',
+          'completeWorkAtomically',
+          'parseBusinessReceiptRow',
+          'parseWorkRow',
         ].sort(),
       );
     });

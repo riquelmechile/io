@@ -20,6 +20,8 @@ export type {
 
 export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 
+export { evidenceId } from './evidence-id.js';
+
 export type {
   CompanyRepository,
   DelegationRepository,
@@ -28,9 +30,35 @@ export type {
   CasResult,
 } from './ports/repositories.js';
 
+export type {
+  IdempotencyJournalPort,
+  JournalEntry,
+  JournalStatus,
+  NewJournalEntry,
+} from './ports/idempotency.js';
+
 export {
   InMemoryCompanyRepository,
   InMemoryDelegationRepository,
   InMemoryWorkRepository,
   InMemoryBusinessReceiptRepository,
+  InMemoryIdempotencyJournalRepository,
 } from './ports/fakes.js';
+
+export type {
+  CompleteWorkCommand,
+  CompleteWorkDeps,
+  ProposeWorkCommand,
+  TransitionWorkCommand,
+  UseCaseReason,
+  UseCaseResult,
+  WorkCommandBase,
+} from './use-cases/index.js';
+export {
+  acceptWork,
+  completeWork,
+  proposeWork,
+  rejectWork,
+  startWork,
+  verifyWork,
+} from './use-cases/index.js';

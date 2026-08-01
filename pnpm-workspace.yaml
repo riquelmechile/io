@@ -1,6 +1,12 @@
-# Workspace now includes one transitional package: packages/trust-kernel. It is a
-# transitional, persistence-free, in-memory module — NOT a canonical product
-# package (see packages/trust-kernel/README.md). No apps/ tree is created.
+# The workspace contains five first-party packages, each a TRANSITIONAL slice
+# of the IO foundation (not canonical product packages — canonical extraction
+# lands under change pressure):
+#   packages/app             — worker-process shell (thin; no vertical logic)
+#   packages/business-domain — pure domain types/ports/use-cases/validation (zero @io/*)
+#   packages/database        — PostgreSQL-shaped DbConnection + adapters over live PG 18.4
+#   packages/llm-client      — DeepSeek V4 adapter over the `openai` SDK (confined)
+#   packages/trust-kernel    — authority kernel: SoD, windows, pipeline (in-memory)
+# No apps/ tree is created beyond packages/app. See each package's README.
 packages:
   - 'packages/*'
 # Strict dependency engines. The root package.json engines.node is always

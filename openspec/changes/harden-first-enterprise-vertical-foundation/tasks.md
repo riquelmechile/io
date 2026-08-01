@@ -57,13 +57,13 @@ All test/build commands run with `PATH=/data/node24/bin` (Node 24).
 
 ## Phase 3: Slice C — Use Cases + Idempotency + Validation (PR3)
 
-- [ ] 3.1 RED business-domain/use-cases.test.ts: accept proposed→accepted, version N→N+1, {ok:true,value}; conflict→{ok:false,reason:'version-conflict'} no throw; raw save not transition path (Use-cases ×3).
-- [ ] 3.2 GREEN business-domain/use-cases/{result,propose,accept,start,complete,verify,reject}-work.ts,index.ts: six transitions, deps=ports only (zero @io/*), typed result, no throw-for-control-flow (D3); demote raw save.
-- [ ] 3.3 RED+GREEN idempotency (D6) database/idempotency-adapter.ts + use-case wiring: lookup→replay(same hash)/DENY(diff)/continue; atomic close in one tx (journal in_flight→CAS→receipt terminal_event_id=attempt_id→complete); throw→rollback. Tests: replay, diff-hash DENY, no partial write.
-- [ ] 3.4 RED business-domain/validation.test.ts: valid→{ok:true,value}, invalid→{ok:false,reason} no throw, runtime-not-type-only (Contract ×3); parseCommand valid/invalid (Command ×2).
-- [ ] 3.5 GREEN business-domain/validation/command.ts: parseCommand(unknown) runtime checks, no @io/* import.
-- [ ] 3.6 RED+GREEN business-domain/validation/llm-plan.ts: parseLlmPlan plain {steps:{action,args}[],intent?} valid/malformed; NO @io/llm-client import; plan non-authority (LLM ×3).
-- [ ] 3.7 RED+GREEN database/row-guards.ts + test: valid row passes, corrupt row rejected with reason (PG-rows ×2).
-- [ ] 3.8 GREEN evidenceId (D8): stable `ev:${companyId}:${idempotencyKey}` across retries (not actionId/nonce/now).
-- [ ] 3.9 Hygiene: README/workspace honesty comment + CI runs PG integration visibly (fail if unavailable, no silent skip).
-- [ ] 3.10 Verify C: `pnpm check` green; 411 tests; domain-pure (no @io/* in business-domain).
+- [x] 3.1 RED business-domain/use-cases.test.ts: accept proposed→accepted, version N→N+1, {ok:true,value}; conflict→{ok:false,reason:'version-conflict'} no throw; raw save not transition path (Use-cases ×3).
+- [x] 3.2 GREEN business-domain/use-cases/{result,propose,accept,start,complete,verify,reject}-work.ts,index.ts: six transitions, deps=ports only (zero @io/*), typed result, no throw-for-control-flow (D3); demote raw save.
+- [x] 3.3 RED+GREEN idempotency (D6) database/idempotency-adapter.ts + use-case wiring: lookup→replay(same hash)/DENY(diff)/continue; atomic close in one tx (journal in_flight→CAS→receipt terminal_event_id=attempt_id→complete); throw→rollback. Tests: replay, diff-hash DENY, no partial write.
+- [x] 3.4 RED business-domain/validation.test.ts: valid→{ok:true,value}, invalid→{ok:false,reason} no throw, runtime-not-type-only (Contract ×3); parseCommand valid/invalid (Command ×2).
+- [x] 3.5 GREEN business-domain/validation/command.ts: parseCommand(unknown) runtime checks, no @io/* import.
+- [x] 3.6 RED+GREEN business-domain/validation/llm-plan.ts: parseLlmPlan plain {steps:{action,args}[],intent?} valid/malformed; NO @io/llm-client import; plan non-authority (LLM ×3).
+- [x] 3.7 RED+GREEN database/row-guards.ts + test: valid row passes, corrupt row rejected with reason (PG-rows ×2).
+- [x] 3.8 GREEN evidenceId (D8): stable `ev:${companyId}:${idempotencyKey}` across retries (not actionId/nonce/now).
+- [x] 3.9 Hygiene: README/workspace honesty comment + CI runs PG integration visibly (fail if unavailable, no silent skip).
+- [x] 3.10 Verify C: `pnpm check` green; domain-pure (no @io/* in business-domain); PG integration RAN (not skipped). Note: the "411 tests" figure in the original task line is the pre-Slice-A baseline; the verified full-suite count is now 603 passed / 3 skipped.

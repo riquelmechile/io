@@ -1,6 +1,7 @@
 import type { BusinessReceipt } from '@io/business-domain/src/index.js';
 
 import type { DbConnection } from './connection.js';
+import { parseBusinessReceiptRow } from './row-guards.js';
 
 /**
  * PostgreSQL-shaped adapter for the BusinessReceipt repository port (design §PG
@@ -62,6 +63,14 @@ export class PgBusinessReceiptRepository {
         'FROM business_receipt WHERE company_id = $1 AND receipt_id = $2',
       [companyId, receiptId],
     );
-    return rows[0];
+    const row = rows[0];
+    if (row === undefined) return undefined;
+    // Rows read from PG are untrusted bytes: validate at runtime before use
+    // (D7). A corrupt row is an integrity violation — fail loudly.
+    const parsed = parseBusinessReceiptRow(row);
+    if (!parsed.ok) {
+      throw new Error(`corrupt business receipt row: ${parsed.reason}`);
+    }
+    return parsed.value;
   }
 }

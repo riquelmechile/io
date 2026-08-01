@@ -5,12 +5,17 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { BusinessReceipt, Company, Delegation, Work } from '@io/business-domain/src/index.js';
+import type { CompleteWorkCommand, CompleteWorkDeps } from '@io/business-domain/src/index.js';
+import { completeWork } from '@io/business-domain/src/index.js';
+import { evidenceId } from '@io/business-domain/src/index.js';
 import { InMemoryCompanyRepository } from '@io/business-domain/src/index.js';
 
 import { PgBusinessReceiptRepository } from '../src/business-receipt-adapter.js';
 import { PgCompanyRepository } from '../src/company-adapter.js';
 import { PgDelegationRepository } from '../src/delegation-adapter.js';
 import { PgWorkRepository } from '../src/work-adapter.js';
+import { PgIdempotencyJournalRepository } from '../src/idempotency-adapter.js';
+import { completeWorkAtomically } from '../src/complete-work-flow.js';
 import { PgDbConnection, pgConnectionString } from '../src/pg-connection.js';
 
 import { InMemoryDbConnection } from './connection-fake.js';
@@ -529,4 +534,144 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       expect(await receiptRepo.get('acme-corp', 'receipt-001')).toBeUndefined();
     });
   });
+
+  describe('idempotent complete-work — atomic terminal close (D6) — live PG', () => {
+    /** A work in_progress at version 2, ready for the terminal close. */
+    async function seedInProgress(): Promise<Work> {
+      const w: Work = {
+        ...sampleWork(),
+        state: 'in_progress',
+        version: 2,
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+      return w;
+    }
+
+    function closeCmd(overrides: Partial<CompleteWorkCommand> = {}): CompleteWorkCommand {
+      return {
+        companyId: 'acme-corp',
+        actor: 'principal-2',
+        workId: 'work-001',
+        idempotencyKey: 'close-key-1',
+        requestHash: 'hash-1',
+        policyHash: 'sha256:policy-hash-123',
+        artifactHash: 'sha256:artifact-hash-789',
+        outcome: { result: 'closed successfully', success: true },
+        evidenceRefs: ['evid-2'],
+        ...overrides,
+      };
+    }
+
+    it('fresh key: completes the work, issues the receipt (terminal_event_id = attempt id + stable evidence id), and closes the journal — one tx', async () => {
+      await seedInProgress();
+
+      const result = await completeWorkAtomically(conn, closeCmd());
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.state).toBe('completed');
+        expect(result.value.version).toBe(3);
+        expect(result.value.evidenceRefs).toEqual(['evid-1', 'evid-2']);
+      }
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('completed');
+      expect(stored?.version).toBe(3);
+
+      const receipt = await receiptRepo.get('acme-corp', 'rcpt:att:acme-corp:close-key-1');
+      expect(receipt).toBeDefined();
+      expect(receipt?.terminalEventId).toBe('att:acme-corp:close-key-1');
+      expect(receipt?.terminalState).toBe('completed');
+      expect(receipt?.actor).toBe('principal-2');
+      expect(receipt?.evidenceRefs).toContain(evidenceId('acme-corp', 'close-key-1'));
+
+      const journal = await conn.query<{ status: string; request_hash: string }>(
+        'SELECT status, request_hash FROM idempotency_journal WHERE attempt_id = $1',
+        ['att:acme-corp:close-key-1'],
+      );
+      expect(journal).toEqual([{ status: 'completed', request_hash: 'hash-1' }]);
+    });
+
+    it('replay: the SAME key + hash returns the stored result WITHOUT re-running the effect', async () => {
+      await seedInProgress();
+      const first = await completeWorkAtomically(conn, closeCmd());
+      expect(first.ok).toBe(true);
+
+      const second = await completeWorkAtomically(conn, closeCmd());
+
+      expect(second.ok).toBe(true);
+      if (first.ok && second.ok) {
+        expect(second.value.state).toBe('completed');
+        expect(second.value.version).toBe(3); // NOT 4 — no re-execution.
+      }
+      // Exactly one journal row, one receipt — no second attempt recorded.
+      const journalRows = await conn.query<{ attempt_id: string }>(
+        'SELECT attempt_id FROM idempotency_journal',
+        [],
+      );
+      expect(journalRows).toEqual([{ attempt_id: 'att:acme-corp:close-key-1' }]);
+      expect(await workRepo.get('acme-corp', 'work-001')).toMatchObject({
+        state: 'completed',
+        version: 3,
+      });
+    });
+
+    it('DENY: the SAME key with a DIFFERENT request hash is rejected as idempotency-conflict', async () => {
+      await seedInProgress();
+      await completeWorkAtomically(conn, closeCmd());
+
+      const result = await completeWorkAtomically(
+        conn,
+        closeCmd({ requestHash: 'hash-DIFFERENT' }),
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toBe('idempotency-conflict');
+      // Nothing new was written.
+      const journalRows = await conn.query<{ attempt_id: string }>(
+        'SELECT attempt_id FROM idempotency_journal',
+        [],
+      );
+      expect(journalRows).toEqual([{ attempt_id: 'att:acme-corp:close-key-1' }]);
+      expect(await workRepo.get('acme-corp', 'work-001')).toMatchObject({
+        state: 'completed',
+        version: 3,
+      });
+    });
+
+    it('no partial write: a throw mid-flow rolls back the journal row, the CAS, AND the receipt', async () => {
+      await seedInProgress();
+      const cmd = closeCmd();
+
+      await expect(
+        conn.transaction(async (tx) => {
+          const deps: CompleteWorkDeps = {
+            work: new PgWorkRepository(tx),
+            receipts: new PgBusinessReceiptRepository(tx),
+            journal: new ExplodingJournalRepository(tx),
+          };
+          return completeWork(cmd, deps);
+        }),
+      ).rejects.toThrow(/exploded/);
+
+      // FULL rollback: work untouched, no receipt, no journal row.
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('in_progress');
+      expect(stored?.version).toBe(2);
+      expect(await receiptRepo.get('acme-corp', 'rcpt:att:acme-corp:close-key-1')).toBeUndefined();
+      const journalRows = await conn.query<{ attempt_id: string }>(
+        'SELECT attempt_id FROM idempotency_journal',
+        [],
+      );
+      expect(journalRows).toEqual([]);
+    });
+  });
 });
+
+/** Journal adapter whose terminal close ALWAYS fails — proves the enclosing
+ * transaction rolls everything back (D6: throw → full rollback, no partial). */
+class ExplodingJournalRepository extends PgIdempotencyJournalRepository {
+  override async complete(): Promise<void> {
+    throw new Error('journal complete exploded');
+  }
+}

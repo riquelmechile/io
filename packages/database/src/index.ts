@@ -13,5 +13,8 @@ export { PgCompanyRepository } from './company-adapter.js';
 export { PgDelegationRepository } from './delegation-adapter.js';
 export { PgWorkRepository } from './work-adapter.js';
 export { PgBusinessReceiptRepository } from './business-receipt-adapter.js';
+export { PgIdempotencyJournalRepository } from './idempotency-adapter.js';
+export { completeWorkAtomically } from './complete-work-flow.js';
+export { parseWorkRow, parseBusinessReceiptRow } from './row-guards.js';
 export { PgDbConnection } from './pg-connection.js';
 export { PERSISTENT_PORT_DISCLOSURE } from './disclosure.js';
