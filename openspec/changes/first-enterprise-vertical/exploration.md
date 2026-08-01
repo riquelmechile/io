@@ -1,154 +1,277 @@
-# Exploration: First Enterprise Vertical (Increment 4)
+# Exploration: First Enterprise Vertical (Increment 4 — Change 3)
 
 **Change:** `first-enterprise-vertical` · Project: io · Hybrid artifact store
+**Supersedes:** the stale parent exploration in this folder (pre-reset cycle)
+**Baseline verified:** `3125c7d` (= origin/main, clean tree) · 604 passed / 3 skipped · live PG 18.4 integration 38/38 ran
 
-## Current State
+## Supersedes
 
-IO has completed Increments 1–3 (foundation, trust kernel, persistence). Three packages exist:
+This exploration SUPERSEDES the parent exploration previously stored at
+`openspec/changes/first-enterprise-vertical/exploration.md` and is written
+afresh for the current repo state. It does not pretend the parent never
+existed — it records why the parent is now historical.
 
-- **`packages/trust-kernel/`** (`@io/trust-kernel`) — pure TypeScript, zero infra deps. Exposes `evaluate(input): Promise<EvaluationResult>` running a 16-step authority pipeline (classification → authority → identity → assignment → bounded scope → evidence → SOD → expiry → action scope → final). Supports optional async evidence/audit repository injection. Includes: `classify()`, `checkGrant()`, `checkSod()`, `captureEvidence()`, `issueReceipt()`, `resolveActiveIdentity()`. Exports types: `PrincipalIdentity`, `Grant`, `KernelAction`, `SodAssignment`, `RiskClass`, `Decision`, etc.
+**What the parent recommended:** "Approach A — Three Separate SDD Changes", with
+build order `domain-foundation → deepseek-client → first-enterprise-vertical`;
+it named `domain-foundation` as "The FIRST SDD change to tackle", counted
+"264 tests", described `packages/app/` as an empty shell, and predated the
+deepseek-client change and the clean harden cycle entirely.
 
-- **`packages/database/`** (`@io/database`) — PG persistence adapter. Exposes `PgDbConnection` (over `pg.Pool`), `DbConnection` port, evidence/audit adapters backed by real PostgreSQL 18.4. SQL is PG-shaped (`$N` placeholders). Includes `pgConnectionString()` and schema builders.
+**Why it is now historical:**
 
-- **`packages/app/`** — empty shell (only `node_modules/@io` symlinks). The previous attempt (`first-vertical-flow`) built an `evaluateAuthority` orchestrator wiring PG to `evaluate()` — pure infrastructure plumbing, not a product vertical. It was scrapped. No source remains.
+| Parent assumption | Current reality |
+|---|---|
+| "Change 1 `domain-foundation` is next" | ✅ DONE + ARCHIVED (`openspec/changes/archive/2026-07-31-domain-foundation/`) |
+| "Change 2 `deepseek-client` is next" | ✅ DONE + ARCHIVED (`openspec/changes/archive/2026-07-31-deepseek-client/`) |
+| No harden cycle existed | ✅ DONE + ARCHIVED (`openspec/changes/archive/2026-07-31-harden-first-enterprise-vertical-foundation/`) — 7 specs synced, verify 18/18 req, 61/61 scenarios, 0 blockers |
+| "264 tests" | 604 passed / 3 skipped (re-verified by a live `pnpm vitest run` on 2026-07-31) |
+| Build order question | The parent's three-change plan is fulfilled EXCEPT Change 3 — this exploration covers exactly that remaining change |
 
-**Existing specs (8):** `trust-kernel`, `persistence-port-boundary`, `db-connection-port`, `development-toolchain`, `io-domain-contract`, `io-ports-trust-contract`, `io-persistence-recovery-contract`, `io-delivery-quality-contract`. 264 tests pass. Strict TDD is active.
+The roadmap (`docs/PASOS_SIGUIENTES_INCREMENTO_4.md`, Rev 2, Paso 2) explicitly
+mandates superseding the stale exploration before proposing ("**Supersederlo
+antes de proponer**"). This document is that supersession.
 
-**What Increment 4 requires (architecture doc §15):** A single minimal, verifiable product conduct:
+## Current State (verified from the live repo)
 
-```
-Founder → proposes low-risk work → classification + explicit grant →
-independent review/approval → worker executes reversible sandbox action →
-independent verification → Work + evidence persisted →
-business receipt registers identity, authority, terminal result
-```
+- **Packages (5):** `app` (empty shell — only `node_modules/@io` symlinks to
+  `database` + `trust-kernel`, NO `package.json`, NO `src/` — confirmed still
+  reserved for the vertical's application layer), `business-domain` (pure,
+  zero `@io/*`), `database` (PG adapters), `llm-client` (DeepSeek adapter,
+  `openai` confined to `deepseek-client.ts`), `trust-kernel` (pure, zero
+  infra deps).
+- **Specs in `openspec/specs/` (14 files):** business-receipt, company-identity,
+  db-connection-port, delegation-lifecycle, development-toolchain,
+  io-delivery-quality-contract, io-domain-contract,
+  io-persistence-recovery-contract, io-ports-trust-contract, llm-client-port,
+  persistence-port-boundary, runtime-validation, trust-kernel, work-lifecycle.
+- **Tests:** `pnpm vitest run` → **604 passed / 3 skipped** (2 = DeepSeek
+  external-API round-trip without `DEEPSEEK_API_KEY`; 1 = local CI
+  reachability guard). Both PG integration files re-run against live
+  PostgreSQL 18.4 (`io_pg`, `postgresql://io:io_dev@localhost:5432/io_dev`):
+  **38 passed / 38 ran, 0 skipped**. Matches the harden archive-report exactly;
+  no source changed since the archive commit (`3125c7d` is docs-only).
+- **Archives:** `domain-foundation`, `deepseek-client`,
+  `harden-first-enterprise-vertical-foundation` (7 specs synced).
 
-Uses Company as scope, Delegation separate from Work (ADR-0002), internal worker process, and PostgreSQL as authoritative state. Does NOT require full company, semantic memory, multiple departments, or broad autonomy.
+## What the Vertical Builds On (harden cycle additions — the vertical CALLS these, it does not re-build them)
+
+| Foundation piece | Where | What the vertical uses it for |
+|---|---|---|
+| 6 transition use-cases (propose/accept/start/complete/verify/reject) | `business-domain/src/use-cases/` | Worker claims and advances Work via typed `UseCaseResult`, get + CAS, no throw-for-control-flow |
+| `DbConnection.transaction(fn)` (PG + fake) | `database/src/{connection,pg-connection,test/connection-fake}.ts` | The terminal transaction wraps journal + CAS + receipt + journal.close atomically |
+| CAS `updateIfVersion` — single winner | `WorkRepository` port + PG adapter + fake | Claim = `startWork` with expectedVersion; concurrent workers → exactly one winner, explicit `version-conflict` |
+| Idempotency journal (replay / DENY / atomic terminal close) | `business-domain/src/ports/idempotency.ts` + `database/src/{idempotency-adapter,complete-work-flow}.ts` | `completeWorkAtomically` already implements the full terminal close: journal lookup → replay \| DENY \| continue → in_flight → CAS → receipt → complete, all inside ONE transaction |
+| Runtime validation guards (command / LLM plan / PG rows) | `business-domain/src/validation/{command,llm-plan}.ts` + `database/src/row-guards.ts` | Worker parses untrusted LLM output (`parseLlmPlan`), validates commands (`parseCommand`), and PG rows are guarded on read |
+| `companyId` scope enforcement | ports/fakes/adapters + `company-identity` spec | Every worker operation is tenant-scoped; empty companyId rejected; wrong-tenant get → not-found |
+| Stable `evidenceId` (`ev:${companyId}:${idempotencyKey}`) | `business-domain/src/evidence-id.ts` | Retry-stable evidence identity — the receipt's evidenceRefs survive restarts |
+| `UNIQUE (work_id, terminal_event_id)` receipts | `database/sql/004_harden_constraints.sql` + receipt adapter | No duplicate business receipts — E2E proves single issuance |
+| Hardened SoD: `ABSOLUTE_PAIRS` (approver≠executor, verifier≠executor, proposer≠approver at EVERY tier), `isWindowActive`, `DEFERRED` markers | `trust-kernel/src/{sod,model,grant,identity,pipeline}.ts` | Verifier ≠ executor is enforced even at low risk — the worker must supply DISTINCT principals |
+| `LlmClient` port with tool calls + `LlmError('failed' \| 'unknown')` | `llm-client/src/llm-client.ts` | `LlmError('unknown')` (timeout/disconnect) is the adapter's explicit hook for the worker's reconciliation responsibility; `FakeLlmClient` preserves `reasoningContent` and records requests in order |
+
+Also reusable as-is: `evaluate()` 16-step pipeline (`EvaluationInput` /
+`EvaluationResult`), `checkSod`, `checkGrant`, `classify`, `captureEvidence`,
+the `PgDbConnection` + `pgConnectionString()`, `InMemoryDbConnection` fake,
+and the `InMemory*Repository` fakes.
+
+**Not present anywhere (must be built):** any worker/orchestration code, any
+sandbox/tools port, any `packages/app` source. Grep for `SandboxPort` /
+`worker` / `claim` finds only docs-comment references and the LLM port's
+"executed by the worker (Change 3)" comments.
+
+## Scope
+
+### In scope (roadmap Paso 2 + architecture §13.1 abbreviated low-risk form)
+
+- **Worker cycle:** `claim → authority → intent → effect OUTSIDE the transaction → reconcile → verify → terminal transaction`. §13.1's full loop is abbreviated for low risk (no memory retrieval, no scorecard, no episodes — those belong to later increments).
+- **Reversible `SandboxPort`** — a driven port (in the application layer) plus a reversible fake and a reversible adapter. The effect MUST be reversible: post-effect failure and failed verification reverse the effect instead of leaking it.
+- **E2E integration:** LLM fake (`FakeLlmClient`) + REAL PostgreSQL — the worker wired end-to-end through the real adapters and the real terminal transaction.
+- **Tests for:** restart (worker dies mid-cycle and recovers), retry (same key + same hash → replay; different hash → DENY), unique receipt (no duplicate business receipts), revocation (delegation revoked while work is in-flight → authority DENY at action time), post-effect failure (effect succeeded but terminal tx failed → reconcile: reverse effect + close the attempt), verifier ≠ executor (distinct principals even at low risk).
+- **`packages/app/` hosts the application layer:** use cases / worker / orchestration (gains its missing `package.json` + `src/`).
+
+### Out of scope (stated explicitly)
+
+Memory OS, minions, skills, learning, CEO agent, crypto/signed receipts.
+Also out of scope for this change: context compilation for KV-cache prefix
+ordering (§7.2 — the worker's prompt can hard-code a minimal stable prefix;
+the full compiler is Paso 3), real DeepSeek E2E, heartbeats, outbox/sagas,
+and any change to `business-domain` or `trust-kernel` purity boundaries.
 
 ## Affected Areas
 
-- `packages/trust-kernel/src/` — reusable as-is: `evaluate()`, `classify()`, `checkGrant()`, `checkSod()`, `captureEvidence()`, `issueReceipt()`, ports, fakes. The vertical CALLS these; it does not modify them.
-- `packages/database/src/` — reusable: `PgDbConnection`, `DbConnection` port, evidence/audit adapters. The vertical adds NEW adapters for Company/Delegation/Work/Receipt tables following the same pattern.
-- `packages/app/` — currently empty; will host the vertical's application layer (use cases, worker process, orchestration).
-- **NEW packages needed:**
-  - Domain types for Company/Delegation/Work/Receipt (pure, zero infra deps)
-  - DeepSeek client adapter (driven adapter, OpenAI SDK dependency)
-  - Worker process (orchestration use case)
-- `openspec/specs/` — new capabilities will be added (company, delegation, work, deepseek-client, worker-process)
-- `migrations/` — PG schema for new tables
+- `packages/app/` — NEW application layer: `package.json`, `src/` with the worker orchestration, the `SandboxPort` + reversible fake/adapter, and the E2E wiring. No existing source is modified (none exists).
+- `packages/database/` — READ-ONLY reuse: `completeWorkAtomically`, `PgWorkRepository`, `PgDelegationRepository`, `PgBusinessReceiptRepository`, `PgCompanyRepository`, `PgIdempotencyJournalRepository`, `PgDbConnection`. At most new integration tests land here (or in `packages/app/test/`) — no production code change anticipated.
+- `packages/business-domain/`, `packages/trust-kernel/`, `packages/llm-client/` — READ-ONLY reuse. The vertical MUST NOT modify them (purity invariants: business-domain and trust-kernel keep zero `@io/*` cross-imports and zero infra deps; `openai` stays confined to `deepseek-client.ts`).
+- `openspec/specs/` — new capability spec(s) for the vertical (e.g., `worker-cycle`, `sandbox-port`), plus the change artifacts.
+- `pnpm-workspace.yaml` comment — the "five packages / app = thin shell" honesty note must be updated when `packages/app` gains logic.
 
 ## Approaches
 
-### Approach A: Three Separate SDD Changes (Recommended)
+### Approach A: One change, three chained slices (RECOMMENDED)
 
-Break the vertical into three independent SDD changes, each with its own full lifecycle (explore → propose → spec → design → tasks → apply → verify → archive):
+Single SDD change `first-enterprise-vertical` (the parent's Change 3), split
+into stacked slices like the harden cycle that just succeeded:
 
-#### Change 1: `domain-foundation`
-Company + Delegation + Work + BusinessReceipt domain types, invariants, lifecycle state machines, repository ports, and PG-backed persistence.
+- **Slice A — Sandbox + app shell:** `packages/app` scaffolding (package.json,
+  tsconfig) + `SandboxPort` (driven port) + reversible fake + reversible
+  adapter, fully TDD'd in isolation.
+- **Slice B — Worker core:** the orchestration `claim → authority → intent →
+  effect → reconcile → verify → terminal` over fakes (InMemory fakes for all
+  repos + `InMemoryDbConnection` + `FakeLlmClient`), all the lifecycle
+  scenarios (restart, retry, revocation, post-effect failure, verifier ≠
+  executor) as unit tests.
+- **Slice C — E2E:** worker wired to REAL PostgreSQL + `FakeLlmClient` +
+  the shipped reversible sandbox adapter; the full happy path, replay/DENY,
+  single receipt, and atomic-close scenarios against live PG.
 
-- **What it builds:**
-  - `Company` — minimal: `companyId`, `purpose` (scope/identity per architecture doc §4: "Company represents identity and scope for all capabilities")
-  - `Delegation` — delegator, delegate, authority scope, budget, duration, escalation, revocation, expected outcome (ADR-0002 invariants)
-  - `Work` — execution state, deliverable, acceptance, evidence refs, outcome (ADR-0002 invariants)
-  - `BusinessReceipt` — links Work ID + Delegation authority + actor identity + policy + evidence + terminal state + artifact hash (architecture doc §9.8: "Business receipts are immutable and link Work, the Delegation or authority used, actor, policy, evidence, terminal state, and artifact version/hash")
-  - Lifecycle state machines: Delegation (`draft → active → revoked | expired`), Work (`proposed → accepted → in_progress → completed → verified | rejected`)
-  - Repository ports (following `EvidenceRepository`/`AuditRepository` pattern — generic, async, driver-free)
-  - PG-backed adapters (following `PgEvidenceRepository` pattern — SQL in adapter, not domain)
-  - Migration SQL for tables
-- **Pros:** Foundation that everything references; no external deps (no LLM); fully TDD'd with unit tests; follows established patterns; independently deliverable
-- **Cons:** No product value by itself — it's domain plumbing (but NECESSARY plumbing, not gratuitous)
-- **Effort:** Medium (~350-400 lines)
+- **Pros:** matches the parent's change unit; mirrors the A→B→C stacked
+  pattern that just completed cleanly; each slice is independently
+  RED→GREEN-able and reviewable; the 400-line budget is respected per slice
+  (each slice flags `size:exception` like harden did — forecast ~350–450 /
+  ~450–550 / ~550–700 authored lines, honest 2–3× of naive estimates).
+- **Cons:** three slice boundaries to sequence; Slice A alone has no product
+  value (pure enabling infrastructure).
+- **Effort:** High overall; Medium per slice.
 
-#### Change 2: `deepseek-client`
-DeepSeek V4 driven adapter behind a hexagonal port.
+### Approach B: Two changes (`reversible-sandbox`, then `first-enterprise-vertical`)
 
-- **What it builds:**
-  - Domain-side port: `LlmClient` interface (pure, zero SDK deps — like `DbConnection`)
-  - DeepSeek implementation using `openai` npm package (`baseURL: https://api.deepseek.com`)
-  - Model selection: `deepseek-v4-flash` (low risk), `deepseek-v4-pro` (high risk)
-  - Thinking mode: `{ thinking: { type: "enabled" }, reasoning_effort: "high" }`
-  - Tool calls support (for sandbox actions — OpenAI-compatible tool/function format)
-  - Cost tracking: prompt/completion/cached tokens, cache hit/miss
-  - API key from `DEEPSEEK_API_KEY` env var
-  - In-memory fake for unit tests (returns canned responses)
-- **Pros:** Isolated from domain; testable without real API (fake); follows hexagonal pattern; can use real API in integration tests
-- **Cons:** Requires `openai` npm dependency; testing requires either fake or real API key
-- **Effort:** Medium (~300-350 lines)
+Ship the sandbox port + reversible adapter as its own complete SDD change
+(explore → propose → spec → design → tasks → apply → verify → archive),
+then the worker + E2E as the vertical change.
 
-#### Change 3: `first-enterprise-vertical` (the actual vertical)
-Worker process + sandbox execution + full vertical integration.
+- **Pros:** sandbox independently reviewed and archived; the vertical change
+  then lands on a stable, verified sandbox.
+- **Cons:** two full SDD lifecycles (coordinated archives); the sandbox
+  boundary is designed WITHOUT a consumer — the worker will likely reshape
+  it (the deepseek-client precedent shipped its port alongside its single
+  consumer); adds inter-change churn the roadmap did not anticipate.
+- **Effort:** High total (two changes), each Medium.
 
-- **What it builds:**
-  - Worker cycle implementation (architecture doc §13.1 — abbreviated for low-risk: wake → verify contract → classify risk → verify authority → compile context → select Flash → reason → produce plan → validate SOD → execute reversible action → verify → register episode → issue business receipt)
-  - Sandbox action execution: DeepSeek tool calls that perform reversible actions (e.g., write a file, send a test message, create a document)
-  - Vertical orchestration use case: wires founder proposal → trust kernel `evaluate()` → independent approval → worker execution → verification → Work persistence → business receipt issuance
-  - End-to-end integration test: full flow against real PostgreSQL
-- **Pros:** Delivers the actual product vertical; integrates all prior work; produces verifiable evidence
-- **Cons:** Most complex slice; depends on changes 1 and 2; integration testing requires all components
-- **Effort:** High (~350-400 lines)
+### Approach C: One change, single PR (no chaining)
 
-**Dependencies:** Change 1 and Change 2 are independent — they can be developed in parallel. Change 3 depends on both.
+Everything in one PR.
 
----
+- **Pros:** no slice boundaries; single review.
+- **Cons:** ~1,500+ authored lines (harden's honest ratio says so); blows the
+  400-line budget by ~4×; exactly the scope-drift profile that killed the
+  earlier `first-vertical-flow` attempt. Verification cannot be staged.
+- **Effort:** Very High.
 
-### Approach B: Single Large SDD Change
+### Sub-decision: where the SandboxPort boundary sits
 
-Implement the entire vertical as one SDD change with multiple slices (chained PRs).
+- **Recommended:** the port + reversible adapter live in `packages/app` (the
+  composition root owns its driven port — same shape as business-domain owning
+  its repository ports). Keeps the 5-package inventory; no new workspace entry;
+  `packages/app` is already designated as the vertical's home.
+- **Rejected for now:** a 6th package (`packages/sandbox`, the §14 `tools`
+  embryo). §14's 30-package inventory is explicitly "a hypothesis, not a
+  mandate"; the repo rule is to extract packages only under real change
+  pressure. One consumer (the worker) does not justify it yet — the change
+  records this as the future extraction trigger.
+- **Rejected:** inlining the sandbox into business-domain (breaks purity:
+  a sandbox is infrastructure with I/O, and business-domain is zero-infra).
 
-- **Pros:** Single spec/design covering the whole vertical; no inter-change coordination
-- **Cons:** Very large (1000+ lines across all slices); high risk of scope drift (what happened with `first-vertical-flow`); harder to review; violates 400-line review budget per unit; harder to verify incrementally
-- **Effort:** Very High
+### Sub-decision: how reconciliation after post-effect failure is modeled
 
----
+Recommended model — **journal-anchored effect ledger**: the idempotency
+journal (already built, D6) is the single source of truth for attempt state;
+the sandbox undo log is the source of truth for whether the effect ran.
 
-### Approach C: Domain + Vertical (Two Changes)
-
-Skip the separate DeepSeek change — inline the client into the vertical change.
-
-- **Pros:** Fewer changes to coordinate; DeepSeek client is only used by the worker anyway
-- **Cons:** The vertical change becomes larger; mixing LLM adapter with orchestration violates single responsibility; harder to test the DeepSeek adapter in isolation
-- **Effort:** Medium (domain) + High (vertical+deepseek)
-
----
+- Pre-effect: `insertInFlight` BEFORE the effect (D6's exact pattern).
+- Effect runs OUTSIDE the transaction against the reversible sandbox (records
+  an undo entry).
+- Post-effect failure (terminal tx throws, verification fails, restart):
+  consult journal + sandbox undo log. Applied effect → `undo()` (reverse),
+  close the journal attempt with the terminal result, and let the work sit in
+  `in_progress` (retry) or move to `rejected` (policy decision). No effect
+  detected → retry cleanly (replay path).
+- Unresolvable state → `UNRESOLVED_REQUIRES_HUMAN` per §9.8 (a typed result;
+  the low-risk vertical records it, does not fabricate resolution).
+- This preserves the §9.8 invariant: the external effect and the durable
+  bookkeeping never share one transaction; the journal + undo log reconcile
+  the two.
 
 ## Recommendation
 
-**Approach A — Three Separate SDD Changes.**
+**Approach A — one change, three chained slices.** Rationale:
 
-Rationale:
-1. **Each change delivers coherent, verifiable value** — domain types + persistence, LLM adapter, and vertical integration are each complete units.
-2. **Stays within the 400-line review budget** — each change is independently reviewable.
-3. **Follows established patterns** — the domain change mirrors the trust-kernel/database pattern; the DeepSeek change mirrors the DbConnection/port pattern.
-4. **Enables incremental construction** — architecture doc principle 10: "The minimal company MUST run and produce evidence before autonomy grows."
-5. **Prevents scope drift** — the #1 risk from the previous attempt. Each change has a narrow, clear scope.
-6. **Parallelizable** — Changes 1 and 2 have no dependency on each other and can proceed in parallel.
+1. **It is the parent's Change 3** — the roadmap treats the vertical as one
+   unit; splitting it into a separate change (B) adds coordination the
+   roadmap did not anticipate.
+2. **It mirrors the proven pattern** — the just-archived harden cycle
+   succeeded precisely because A→B→C stacking kept every slice reviewable
+   and RED→GREEN-staged. The vertical repeats the recipe.
+3. **It defuses the failure that killed `first-vertical-flow`** — scope drift.
+   A single-PR vertical (C) is the same trap; slicing the sandbox from the
+   worker core from the E2E forces the scope decision at every boundary.
+4. **Budget honesty** — harden slices forecast ~330–390 and landed
+   793 / 1,155 / 1,500 changed lines. This exploration therefore forecasts
+   per-slice in the same honest band (Slice A ~350–450, B ~450–550, C
+   ~550–700) and flags every slice as `size:exception` against the 400-line
+   budget, exactly as harden did. No slice pretends to fit.
+5. **The harden foundation makes the vertical mostly orchestration** —
+   terminal transaction, CAS, journal, guards, receipts, and SoD already
+   exist; the change assembles them, which is why per-slice effort stays
+   Medium rather than exploding.
 
-**Build order:** Change 1 (`domain-foundation`) → Change 2 (`deepseek-client`) → Change 3 (`first-enterprise-vertical`).
-
-**The FIRST SDD change to tackle is `domain-foundation`** because:
-- It is the foundation: Delegation, Work, and Company are referenced by every other change.
-- It has zero external dependencies (no LLM API, no network).
-- It follows the exact pattern already proven in `packages/trust-kernel/` and `packages/database/`.
-- It can be fully TDD'd with pure unit tests and PG integration tests.
-- It delivers durable business objects ready for the worker process.
+**Build order:** Slice A (sandbox + app shell) → Slice B (worker core, fakes)
+→ Slice C (E2E, real PG). Slice A is first because the worker cannot be
+exercised without the effect boundary; Slice C is last because it proves the
+whole.
 
 ## Risks
 
-1. **Over-architecting the domain types** — Architecture doc risk #1. Company must be minimal (ID + purpose), NOT a full organizational hierarchy. Delegation and Work must have only the fields ADR-0002 requires. Resist adding fields "we might need later."
-2. **Scope drift into infrastructure** — The previous `first-vertical-flow` attempt drifted into plumbing. The domain change MUST produce business objects with lifecycle semantics, not just CRUD repositories.
-3. **DeepSeek API coupling in domain** — The `LlmClient` port MUST be defined in the domain layer with zero SDK imports, exactly like `DbConnection`. The `openai` package lives ONLY in the adapter.
-4. **Business receipt vs honest receipt confusion** — The trust kernel's `UnsignedInMemoryReceipt` is a trust-evaluation artifact (unsigned, non-persistent). The vertical's `BusinessReceipt` is a business record (immutable, persisted, links Work + Delegation + identity + terminal result + artifact hash). They are DIFFERENT types with DIFFERENT purposes.
-5. **SOD for low-risk vertical** — ADR-0003 allows function combination for low-risk, but "no principal may self-approve or self-verify." The vertical must use DISTINCT principals for proposer/approver/verifier even though functions may combine.
-6. **Thinking mode `reasoning_content` passthrough** — When using DeepSeek tool calls in thinking mode, `reasoning_content` MUST be passed back to the API in all subsequent turns (DeepSeek docs). Forgetting this produces 400 errors.
-7. **KV cache prefix stability** — Architecture doc §7.2 mandates canonical context ordering. The worker's context compilation MUST place stable prefixes (protocol, constitution, policies, company, role) before dynamic suffix (memory, work, evidence, tool results). No dates, IDs, or nonces in the prefix.
-8. **400-line budget per change** — The domain foundation with types, validation, ports, adapters, and tests may approach the budget. If it exceeds, split into `domain-types` (types + invariants + ports + fakes) and `domain-persistence` (PG adapters + migrations + integration tests).
+1. **Scope drift into Paso 3 territory** (context compiler, real DeepSeek E2E,
+   heartbeats, memory) — HIGH. Same failure mode as `first-vertical-flow`.
+   Mitigation: explicit out-of-scope list above; the LLM prompt for the worker
+   is a hard-coded minimal stable prefix, NOT the §7.2 compiler.
+2. **Per-slice line budgets exceed 400** — HIGH (established pattern: harden
+   793/1,155/1,500 vs forecasts 330–390). Mitigation: flag each slice
+   `size:exception` up front; never merge slices to "compensate".
+3. **Post-effect failure reconciliation is subtle** — MEDIUM. The danger:
+   reversing an effect that actually ran, or NOT reversing one that did. The
+   journal + undo-log model addresses it, but the restart scenario needs
+   careful triangulation (effect applied before crash, after crash, mid-apply).
+4. **Restart recovery depends on journal rows surviving the process** — MEDIUM.
+   The journal is PG-backed (durable); the in-flight row is the recovery
+   anchor. The fake must mirror this or restart tests are vacuous.
+5. **SoD at low risk** — MEDIUM. Low-risk MAY combine functions but NEVER
+   self-approve/self-verify; `ABSOLUTE_PAIRS` denies `verifier==executor` at
+   every tier. The worker must thread distinct principals for executor and
+   verifier even in the E2E fake.
+6. **Revocation semantics for in-flight work** — LOW/MEDIUM. ADR-0002 says
+   revocation's effect on active work "is decided explicitly by policy";
+   this change must pick one (deny at action time, work stays in_progress)
+   and record it — not leave it ambiguous.
+7. **`packages/app` imports from four packages** — LOW. Allowed (app is the
+   composition root), but a boundary test must pin that app does NOT re-export
+   domain/kernel internals and that `openai` never leaks past
+   `deepseek-client.ts`.
+8. **Deferred harden follow-ups interact** (replay row-guard on
+   `result_json`, typed same-key race loser, journal transaction-boundary
+   doc) — LOW. Non-blocking; the vertical's replay path should read them and
+   adopt the documented behavior without re-opening the archived change.
 
 ## Ready for Proposal
 
-**Yes.** The orchestrator should proceed to `sdd-propose` for the **`domain-foundation`** change. The proposal should define:
+**Yes.** Proceed to `sdd-propose` for `first-enterprise-vertical` with:
 
-- **Intent:** Build Company, Delegation, Work, and BusinessReceipt domain types with lifecycle invariants (ADR-0001/0002/0003), repository ports, and PG-backed persistence — the durable business object foundation for the first enterprise vertical.
-- **Scope:** Pure domain types + validation + state machines + async repository ports + PG-backed adapters + migrations. NO LLM, NO worker process, NO orchestration.
-- **Rollback:** Delete the new package(s), drop the new tables, remove migrations. No existing code is modified.
+- **Intent:** assemble the first enterprise vertical on the archived
+  foundation — reversible sandbox, worker cycle (claim → authority → intent →
+  effect outside tx → reconcile → verify → terminal transaction), and an
+  end-to-end E2E with `FakeLlmClient` + real PostgreSQL.
+- **Scope:** worker + SandboxPort + `packages/app` application layer + E2E +
+  lifecycle tests. NO Memory OS, minions, skills, learning, CEO, crypto
+  receipts, context compiler, or real DeepSeek E2E.
+- **Slicing:** 3 chained PRs (sandbox → worker core → E2E), each flagged
+  `size:exception` with honest forecasts.
+- **Rollback:** delete `packages/app` sources + new specs; existing packages
+  untouched (the change is additive by design).
+- **Purity invariants to preserve:** business-domain and trust-kernel stay
+  `@io/*`-free and infra-free; `openai` stays confined to `deepseek-client.ts`;
+  the vertical CALLS the foundation, it does not modify it.
 
-The `deepseek-client` and `first-enterprise-vertical` changes will follow as separate proposals.
+## Evidence
+
+- `PATH=/data/node24/bin pnpm vitest run` → **604 passed / 3 skipped (607)**, 36 passed files / 2 skipped (2026-07-31).
+- `pnpm vitest run packages/database/test/business-pg-roundtrip.integration.test.ts packages/database/test/pg-roundtrip.integration.test.ts` → **38 passed / 38 ran** against live PG 18.4.
+- Archive report (`2026-07-31-harden-first-enterprise-vertical-foundation`): 18/18 req, 61/61 scenarios, 0 blockers, `pass_with_warnings` — cited as the source for verify metrics (code unchanged since `4cc0b15`).
