@@ -28,10 +28,11 @@ describe('@io/app workspace shell (Slice A1)', () => {
     expect(pkg.type).toBe('module');
   });
 
-  it('declares the four first-party deps as workspace:* (business-domain, database, trust-kernel, llm-client)', () => {
+  it('declares the five first-party deps as workspace:* (business-domain, context, database, trust-kernel, llm-client)', () => {
     const deps = (pkg.dependencies ?? {}) as Record<string, string>;
     expect(deps).toEqual({
       '@io/business-domain': 'workspace:*',
+      '@io/context': 'workspace:*',
       '@io/database': 'workspace:*',
       '@io/llm-client': 'workspace:*',
       '@io/trust-kernel': 'workspace:*',

@@ -135,11 +135,13 @@ export async function runWorker(input: unknown, deps: WorkerDeps): Promise<Worke
     return { ok: false, reason: 'denied', detail: authority.reason, current: work };
   }
 
-  // 3. Intent (B4): LLM plan + runtime validation + stable evidenceId.
+  // 3. Intent (B4): LLM plan + runtime validation + stable evidenceId. The
+  //    delegation checkAuthority surfaced (D5) drives context compilation.
   const intent = await prepareIntent({
     companyId: cmd.companyId,
     idempotencyKey,
     work,
+    delegation: authority.delegation,
     llm: deps.llm,
   });
   if (!intent.ok) {

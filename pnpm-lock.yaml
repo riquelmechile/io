@@ -29,6 +29,9 @@ importers:
       '@io/business-domain':
         specifier: workspace:*
         version: link:../business-domain
+      '@io/context':
+        specifier: workspace:*
+        version: link:../context
       '@io/database':
         specifier: workspace:*
         version: link:../database

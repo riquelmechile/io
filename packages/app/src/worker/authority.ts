@@ -5,6 +5,7 @@ import { isWindowActive } from '@io/trust-kernel/src/index.js';
 import type { KernelAction } from '@io/trust-kernel/src/index.js';
 import type { SodAssignment } from '@io/trust-kernel/src/index.js';
 import type { DelegationRepository } from '@io/business-domain/src/ports/repositories.js';
+import type { Delegation } from '@io/business-domain/src/types.js';
 
 import type { WorkerPrincipals } from './types.js';
 
@@ -22,7 +23,9 @@ import type { WorkerPrincipals } from './types.js';
 /** The command a worker cycle executes (the grant is bound to it). */
 export const WORK_EXECUTE_COMMAND = 'work.execute';
 
-export type AuthorityDecision = { ok: true } | { ok: false; reason: string };
+export type AuthorityDecision =
+  | { ok: true; delegation: Delegation }
+  | { ok: false; reason: string };
 
 export interface AuthorityContext {
   readonly companyId: string;
@@ -82,5 +85,7 @@ export async function checkAuthority(
     return { ok: false, reason: `sod-denied: ${sod.reason}` };
   }
 
-  return { ok: true };
+  // D5 additive success: surface the delegation this cycle ALREADY fetched so
+  // prepareIntent reuses it for context compilation — no second repository read.
+  return { ok: true, delegation };
 }

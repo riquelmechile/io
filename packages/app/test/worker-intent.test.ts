@@ -1,23 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { STABLE_SYSTEM_PREFIX } from '../src/llm/stable-prefix.js';
-import { attemptIdFor, buildUserTail, prepareIntent } from '../src/worker/intent.js';
+import { compileContext } from '@io/context/src/index.js';
+import { attemptIdFor, prepareIntent } from '../src/worker/intent.js';
 import { runWorker } from '../src/worker/worker.js';
-import { acceptedWork, cannedLlm, harness, seed, workerInput } from './worker-helpers.js';
+import {
+  acceptedWork,
+  activeDelegation,
+  cannedLlm,
+  harness,
+  seed,
+  workerInput,
+} from './worker-helpers.js';
 
 /**
- * B4 — Intent-before-effect + runtime validation + evidenceId + LLM prefix
+ * B4 — Intent-before-effect + runtime validation + evidenceId + compiled context
  * (WC intent-before-effect / runtime-validation / evidenceId-stable): the
  * durable in-flight record is committed via `insertInFlight` BEFORE the first
  * external side effect; malformed LLM plans are rejected by `parseLlmPlan` and
  * malformed commands by `parseCommand` (typed rejects, never passed through);
  * `evidenceId` is "ev:" + companyId + ":" + idempotencyKey — stable across retry;
- * the request uses the hard-coded STABLE_SYSTEM_PREFIX + a dynamic user tail.
+ * the request compiles the canonical context via `compileContext` (segments 1–9
+ * stable prefix + segments 10–13 work tail) with `user` = the derived cache
+ * cohort, and sends it through the injected LlmClient.
  */
 describe('prepareIntent (B4)', () => {
   it('computes a stable evidenceId (ev:companyId:idempotencyKey) identical across retries', async () => {
     const llm = cannedLlm();
-    const input = { companyId: 'acme', idempotencyKey: 'close-2026-q3', work: acceptedWork(), llm };
+    const input = {
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      work: acceptedWork(),
+      delegation: activeDelegation(),
+      llm,
+    };
 
     const first = await prepareIntent(input);
     const second = await prepareIntent(input);
@@ -29,15 +44,51 @@ describe('prepareIntent (B4)', () => {
     }
   });
 
-  it('the LLM request carries the STABLE system prefix and a dynamic user tail', async () => {
+  it('the LLM request carries the compiled system prefix, the work user tail, and the derived cache cohort', async () => {
     const llm = cannedLlm();
+    const delegation = activeDelegation();
+    const work = acceptedWork();
 
-    await prepareIntent({ companyId: 'acme', idempotencyKey: 'k', work: acceptedWork(), llm });
+    await prepareIntent({ companyId: 'acme', idempotencyKey: 'k', work, delegation, llm });
+
+    // Expected bytes come from the compiler itself — the worker MUST emit
+    // exactly what compileContext produces (no hard-coded strings here).
+    const compiled = compileContext({
+      companyId: 'acme',
+      process: delegation.authorityScope.scope,
+      delegation,
+      work,
+    });
+    const request = llm.requests[0];
+    expect(request?.messages[0]).toEqual({
+      role: 'system',
+      content: compiled.messages[0]?.content,
+    });
+    expect(request?.messages[0]?.content).toContain('Business process: low-risk-documents.');
+    expect(request?.user).toBe(compiled.user);
+    expect(request?.user).toBe('io:acme:low-risk-documents:v1');
+    expect(request?.messages[1]?.role).toBe('user');
+    expect(request?.messages[1]?.content).toBe(compiled.messages[1]?.content);
+    expect(request?.messages[1]?.content).toContain('execute the quarterly close');
+  });
+
+  it('processTokenFor drives the cohort: a different delegation scope yields a different process and user', async () => {
+    const llm = cannedLlm();
+    const delegation = activeDelegation({
+      authorityScope: { scope: 'onboarding', actions: ['work.execute', 'create-document'] },
+    });
+
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work: acceptedWork(),
+      delegation,
+      llm,
+    });
 
     const request = llm.requests[0];
-    expect(request?.messages[0]).toEqual({ role: 'system', content: STABLE_SYSTEM_PREFIX });
-    expect(request?.messages[1]?.role).toBe('user');
-    expect(request?.messages[1]?.content).toContain('execute the quarterly close');
+    expect(request?.user).toBe('io:acme:onboarding:v1');
+    expect(request?.messages[0]?.content).toContain('Business process: onboarding.');
   });
 
   it('malformed LLM output is rejected with a typed invalid-plan result (never acted on)', async () => {
@@ -45,6 +96,7 @@ describe('prepareIntent (B4)', () => {
       companyId: 'acme',
       idempotencyKey: 'k',
       work: acceptedWork(),
+      delegation: activeDelegation(),
       llm: cannedLlm('not-json'),
     });
     expect(notJson.ok).toBe(false);
@@ -54,6 +106,7 @@ describe('prepareIntent (B4)', () => {
       companyId: 'acme',
       idempotencyKey: 'k',
       work: acceptedWork(),
+      delegation: activeDelegation(),
       llm: cannedLlm(JSON.stringify({ steps: 'nope' })),
     });
     expect(badShape.ok).toBe(false);
@@ -63,6 +116,7 @@ describe('prepareIntent (B4)', () => {
       companyId: 'acme',
       idempotencyKey: 'k',
       work: acceptedWork(),
+      delegation: activeDelegation(),
       llm: cannedLlm(JSON.stringify({ steps: [{ action: 'append-line', args: { line: 'x' } }] })),
     });
     expect(noDocumentStep.ok).toBe(false);
@@ -72,13 +126,6 @@ describe('prepareIntent (B4)', () => {
   it('attemptIdFor uses the stable att: scheme (receipt traceability anchor)', () => {
     expect(attemptIdFor('acme', 'close-2026-q3')).toBe('att:acme:close-2026-q3');
     expect(attemptIdFor('acme', 'close-2026-q3')).toBe(attemptIdFor('acme', 'close-2026-q3'));
-  });
-
-  it('buildUserTail is a dynamic per-work message (NOT the stable prefix)', () => {
-    const tail = buildUserTail(acceptedWork());
-    expect(tail).toContain('work-1');
-    expect(tail).toContain('acme');
-    expect(tail).not.toBe(STABLE_SYSTEM_PREFIX);
   });
 });
 

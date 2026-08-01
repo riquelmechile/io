@@ -67,9 +67,10 @@ export interface Segment {
 }
 
 /**
- * Segment 1 — DeepSeek protocol (design: migrated STABLE_SYSTEM_PREFIX). The
- * byte-identical legacy stable prefix keeps the cache cohort and the worker
- * cycle prompts stable (same cohort ⇒ identical prefix bytes, Req R2).
+ * Segment 1 — DeepSeek protocol (design: migrated from the legacy hard-coded
+ * stable system prefix). The byte-identical legacy prefix keeps the cache cohort
+ * and the worker cycle prompts stable (same cohort ⇒ identical prefix bytes,
+ * Req R2).
  */
 const STABLE_PROTOCOL_TEXT =
   'You are the IO worker cycle planner. Plan exactly ONE low-risk, reversible ' +
@@ -144,8 +145,8 @@ export function buildDynamicSuffix(
  * per-delegation detail (expectedOutcome/actions/scope), which is per-request
  * DYNAMIC content, NOT cohort-stable. Rendering it in the stable prefix made the
  * prefix vary with delegation while the cohort stayed fixed — an R2 violation
- * (DeepSeek KV-cache poisoning). The legacy prompts (STABLE_SYSTEM_PREFIX +
- * buildUserTail) never contained a role contract, so ABSENT matches legacy and
+ * (DeepSeek KV-cache poisoning). The legacy prompts (the old hard-coded prefix
+ * + buildUserTail) never contained a role contract, so ABSENT matches legacy and
  * restores R2: the prefix is a pure function of {companyId, process, version}.
  */
 export const SEGMENTS: readonly Segment[] = Object.freeze([

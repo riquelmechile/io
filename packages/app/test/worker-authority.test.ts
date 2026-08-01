@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { checkAuthority } from '../src/worker/authority.js';
 import { runWorker } from '../src/worker/worker.js';
@@ -38,13 +38,17 @@ function ctx(
 }
 
 describe('checkAuthority (WC authority)', () => {
-  it('an active grant window with unrevoked delegation and distinct principals ALLOWs', async () => {
+  it('an active grant window with unrevoked delegation and distinct principals ALLOWs and surfaces the delegation it already fetched', async () => {
     const h = harness();
     await h.delegation.save(activeDelegation());
+    const getSpy = vi.spyOn(h.delegation, 'get');
 
     const decision = await checkAuthority(ctx(), { delegation: h.delegation });
 
-    expect(decision).toEqual({ ok: true });
+    expect(decision).toEqual({ ok: true, delegation: activeDelegation() });
+    // D5 additive success: the surfaced delegation is the one already fetched —
+    // exactly one repository read, no second round-trip for prepareIntent.
+    expect(getSpy).toHaveBeenCalledTimes(1);
   });
 
   it('a revoked delegation DENIES at action time', async () => {

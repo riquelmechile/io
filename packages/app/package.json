@@ -6,6 +6,7 @@
   "description": "Composition root / worker-process shell for the first enterprise vertical: sandbox port, reversible fakes + adapter, journal marker wiring. Not a canonical package.",
   "dependencies": {
     "@io/business-domain": "workspace:*",
+    "@io/context": "workspace:*",
     "@io/database": "workspace:*",
     "@io/llm-client": "workspace:*",
     "@io/trust-kernel": "workspace:*"
