@@ -9,6 +9,7 @@ const pkgRoot = join(here, '..');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
 const SCHEMA_005 = join(pkgRoot, 'sql', '005_journal_retryable_status.sql');
 const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
+const SCHEMA_007 = join(pkgRoot, 'sql', '007_skills.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -178,6 +179,60 @@ describe('sql/006_business_events.sql (business_event table — R4, design §006
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
     expect(statements.length).toBeGreaterThanOrEqual(4);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
+  });
+});
+
+describe('sql/007_skills.sql (skill table — R6, design §007)', () => {
+  function read007(): string {
+    return existsSync(SCHEMA_007) ? readFileSync(SCHEMA_007, 'utf8') : '';
+  }
+
+  it('ships sql/007_skills.sql', () => {
+    expect(existsSync(SCHEMA_007)).toBe(true);
+  });
+
+  it('creates skill with the ten design columns, all NOT NULL (IF NOT EXISTS)', () => {
+    const sql = read007();
+    expect(sql).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+skill/i);
+    for (const column of [
+      'id SERIAL PRIMARY KEY',
+      'skill_id TEXT NOT NULL',
+      'company_id TEXT NOT NULL',
+      'name TEXT NOT NULL',
+      'version INTEGER NOT NULL',
+      'body TEXT NOT NULL',
+      'scope JSONB NOT NULL',
+      'state TEXT NOT NULL',
+      'created_at BIGINT NOT NULL',
+      'updated_at BIGINT NOT NULL',
+    ]) {
+      expect(sql).toContain(column);
+    }
+  });
+
+  it('adds the UNIQUE(company_id, skill_id, version) index and the tenant index (IF NOT EXISTS)', () => {
+    const sql = read007();
+    expect(sql).toMatch(
+      /CREATE\s+UNIQUE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+uq_skill_company_skill_version\s+ON\s+skill\s*\(\s*company_id\s*,\s*skill_id\s*,\s*version\s*\)/i,
+    );
+    expect(sql).toMatch(
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_skill_company_id\s+ON\s+skill\s*\(\s*company_id\s*\)/i,
+    );
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read007()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(3);
     for (const statement of statements) {
       expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
     }

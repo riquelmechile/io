@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseBusinessEventRow, parseBusinessReceiptRow, parseWorkRow } from '../src/row-guards.js';
+import {
+  parseBusinessEventRow,
+  parseBusinessReceiptRow,
+  parseSkillRow,
+  parseWorkRow,
+} from '../src/row-guards.js';
 
 /**
  * PostgreSQL row-guard tests (design D7, runtime-validation spec). Rows read
@@ -202,6 +207,101 @@ describe('parseBusinessEventRow (R4, design §006 — untrusted PG bytes, guarde
 
     for (const bad of corrupt) {
       const result = parseBusinessEventRow(bad);
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).not.toBe('');
+    }
+  });
+});
+
+describe('parseSkillRow (R6, design §007 — untrusted PG bytes, guarded)', () => {
+  function skillRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      skillId: 'skill-1',
+      companyId: 'acme',
+      name: 'Quarterly close procedure',
+      version: 1,
+      body: 'Execute the Q4 financial close end-to-end.',
+      scope: { process: 'financial-close', schemaVersion: 1 },
+      state: 'active',
+      createdAt: 1750000000000,
+      updatedAt: 1750000000000,
+      ...overrides,
+    };
+  }
+
+  it('accepts a well-formed skill row → {ok:true, value} preserving all 9 fields', () => {
+    const result = parseSkillRow(skillRow());
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.skillId).toBe('skill-1');
+      expect(result.value.companyId).toBe('acme');
+      expect(result.value.name).toBe('Quarterly close procedure');
+      expect(result.value.version).toBe(1);
+      expect(result.value.body).toBe('Execute the Q4 financial close end-to-end.');
+      expect(result.value.scope).toEqual({ process: 'financial-close', schemaVersion: 1 });
+      expect(result.value.state).toBe('active');
+      expect(result.value.createdAt).toBe(1750000000000);
+      expect(result.value.updatedAt).toBe(1750000000000);
+    }
+  });
+
+  it('accepts schemaVersion exactly 1 (boundary — design says ≥1)', () => {
+    const result = parseSkillRow(skillRow({ scope: { process: 'p', schemaVersion: 1 } }));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.scope.schemaVersion).toBe(1);
+    }
+  });
+
+  it('accepts every SkillState value (draft | active | retired)', () => {
+    for (const state of ['draft', 'active', 'retired']) {
+      const result = parseSkillRow(skillRow({ state }));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.state).toBe(state);
+    }
+  });
+
+  it('rejects a corrupt skill row with a NON-EMPTY reason, WITHOUT throwing', () => {
+    const corrupt: unknown[] = [
+      null,
+      'row',
+      [],
+      skillRow({ skillId: '' }),
+      skillRow({ skillId: undefined }),
+      skillRow({ companyId: 42 }),
+      skillRow({ companyId: null }),
+      skillRow({ name: '' }),
+      skillRow({ name: undefined }),
+      skillRow({ body: '' }),
+      skillRow({ body: 7 }),
+      skillRow({ version: 0 }),
+      skillRow({ version: -1 }),
+      skillRow({ version: 1.5 }),
+      skillRow({ version: '2' }),
+      skillRow({ createdAt: 'not-a-number' }),
+      skillRow({ createdAt: undefined }),
+      skillRow({ updatedAt: 'not-a-number' }),
+      skillRow({ updatedAt: null }),
+      skillRow({ state: 'bogus' }),
+      skillRow({ state: 'published' }),
+      skillRow({ state: 42 }),
+      skillRow({ scope: null }),
+      skillRow({ scope: [] }),
+      skillRow({ scope: 'json-text' }),
+      skillRow({ scope: undefined }),
+      skillRow({ scope: { process: 'p', schemaVersion: 0 } }),
+      skillRow({ scope: { process: 'p', schemaVersion: -1 } }),
+      skillRow({ scope: { process: 'p', schemaVersion: '1' } }),
+      skillRow({ scope: { process: '', schemaVersion: 1 } }),
+      skillRow({ scope: { process: undefined, schemaVersion: 1 } }),
+      skillRow({ scope: { schemaVersion: 1 } }),
+      skillRow({ scope: { process: 'p' } }),
+    ];
+
+    for (const bad of corrupt) {
+      const result = parseSkillRow(bad);
       expect(result.ok).toBe(false);
       if (result.ok === false) expect(result.reason).not.toBe('');
     }

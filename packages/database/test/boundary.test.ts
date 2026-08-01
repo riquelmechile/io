@@ -297,6 +297,46 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
     });
   });
 
+  describe('skill adapter — INSERT-only versioned (R6 mutation guard, design §007)', () => {
+    function readSkillAdapterSource(): string {
+      const path = join(srcDir, 'skill-adapter.ts');
+      return existsSync(path) ? readFileSync(path, 'utf8') : '';
+    }
+
+    /** Concatenated string literals are the adapter style: strip quotes and
+     * whitespace so the full SQL text reads as one continuous token. */
+    function normalizedSql(source: string): string {
+      return source.replace(/[\s'"`+]/g, '');
+    }
+
+    it('ships src/skill-adapter.ts', () => {
+      expect(existsSync(join(srcDir, 'skill-adapter.ts'))).toBe(true);
+    });
+
+    it('adapter SQL contains an INSERT INTO skill statement with all 9 columns', () => {
+      expect(normalizedSql(readSkillAdapterSource())).toMatch(
+        /INSERTINTOskill\(skill_id,company_id,name,version,body,scope,state,created_at,updated_at\)VALUES/i,
+      );
+    });
+
+    it('adapter SQL contains NO UPDATE or DELETE statement (append-only)', () => {
+      const normalized = normalizedSql(readSkillAdapterSource());
+      expect(normalized).not.toMatch(/UPDATEskill/i);
+      expect(normalized).not.toMatch(/DELETEFROMskill/i);
+      expect(normalized).not.toMatch(/DELETEFROM/i);
+    });
+
+    it('the adapter class surface is EXACTLY save + get + listByCompany (no mutation methods)', () => {
+      const source = readSkillAdapterSource();
+      // Only the three port operations may exist as method declarations on the
+      // repository class body.
+      expect(source).toMatch(/async\s+save\s*\(/);
+      expect(source).toMatch(/async\s+get\s*\(/);
+      expect(source).toMatch(/async\s+listByCompany\s*\(/);
+      expect(source).not.toMatch(/async\s+(update|delete|remove|overwrite)\s*\(/i);
+    });
+  });
+
   describe('public surface — structural assertions (no extra prod code)', () => {
     it('exports the adapters, the connection, the idempotency wiring, and the row guards (D6/D7 additions)', () => {
       expect(databaseApi.PgEvidenceRepository).toBeTypeOf('function');
@@ -315,6 +355,10 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       // PR2 additions (design §006): the business_event adapter + row guard.
       expect(databaseApi.PgBusinessEventRepository).toBeTypeOf('function');
       expect(databaseApi.parseBusinessEventRow).toBeTypeOf('function');
+      // PR2 (first-skill) additions (design §007): the versioned skill adapter
+      // + row guard.
+      expect(databaseApi.PgSkillRepository).toBeTypeOf('function');
+      expect(databaseApi.parseSkillRow).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
@@ -327,10 +371,12 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgDelegationRepository',
           'PgEvidenceRepository',
           'PgIdempotencyJournalRepository',
+          'PgSkillRepository',
           'PgWorkRepository',
           'completeWorkAtomically',
           'parseBusinessEventRow',
           'parseBusinessReceiptRow',
+          'parseSkillRow',
           'parseWorkRow',
         ].sort(),
       );

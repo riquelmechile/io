@@ -2,10 +2,13 @@ import type {
   BusinessEvent,
   BusinessReceipt,
   Deliverable,
+  Skill,
+  SkillState,
   Work,
   WorkOutcome,
   WorkState,
 } from '@io/business-domain/src/index.js';
+import { isSkillState } from '@io/business-domain/src/index.js';
 
 /**
  * PostgreSQL row guards (design D7, runtime-validation spec). Rows read from
@@ -189,6 +192,66 @@ export function parseBusinessEventRow(input: unknown): RowGuardResult<BusinessEv
       occurredAt: row.occurredAt,
       payload: row.payload as Readonly<Record<string, unknown>>,
       source: row.source as string,
+    },
+  };
+}
+
+/**
+ * Validate a `skill` table row (as aliased by the adapter) before use. The
+ * identity/name/body strings must be non-empty, `version` a positive integer
+ * (≥1), the two timestamps numbers, `state` one of the explicit Skill
+ * lifecycle values (R4 — reuses the domain `isSkillState` guard, design
+ * "PG reuses"), and `scope` a plain object carrying a non-empty `process`
+ * and a `schemaVersion` ≥ 1 (design §007 cohort discriminators). Rows read
+ * from PG are UNTRUSTED bytes (D7): a corrupt row is an integrity violation —
+ * fail loudly.
+ */
+export function parseSkillRow(input: unknown): RowGuardResult<Skill> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return fail('skill row must be an object');
+  }
+  const row = input as Record<string, unknown>;
+
+  for (const field of ['skillId', 'companyId', 'name', 'body'] as const) {
+    if (!isNonEmptyString(row[field])) {
+      return fail(`skill row ${field} must be a non-empty string`);
+    }
+  }
+  if (!isPositiveInteger(row.version)) {
+    return fail('skill row version must be a positive integer');
+  }
+  if (typeof row.createdAt !== 'number') {
+    return fail('skill row createdAt must be a number');
+  }
+  if (typeof row.updatedAt !== 'number') {
+    return fail('skill row updatedAt must be a number');
+  }
+  if (typeof row.state !== 'string' || !isSkillState(row.state)) {
+    return fail('skill row state must be one of: draft, active, retired');
+  }
+  if (!isPlainObject(row.scope)) {
+    return fail('skill row scope must be a plain object');
+  }
+  const scope = row.scope as Record<string, unknown>;
+  if (!isNonEmptyString(scope.process)) {
+    return fail('skill row scope.process must be a non-empty string');
+  }
+  if (!isPositiveInteger(scope.schemaVersion)) {
+    return fail('skill row scope.schemaVersion must be a positive integer');
+  }
+
+  return {
+    ok: true,
+    value: {
+      skillId: row.skillId as string,
+      companyId: row.companyId as string,
+      name: row.name as string,
+      version: row.version,
+      body: row.body as string,
+      scope: { process: scope.process as string, schemaVersion: scope.schemaVersion },
+      state: row.state as SkillState,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     },
   };
 }
