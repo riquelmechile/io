@@ -137,11 +137,16 @@ export async function runWorker(input: unknown, deps: WorkerDeps): Promise<Worke
 
   // 3. Intent (B4): LLM plan + runtime validation + stable evidenceId. The
   //    delegation checkAuthority surfaced (D5) drives context compilation.
+  //    The tenant skill store is fetched ONCE here (skill R7 seam — read-only):
+  //    the compiler cohort-selects the active matching skills into segment 7,
+  //    so skills condition the plan via context only — never executed here.
+  const skills = await deps.skills.listByCompany(cmd.companyId);
   const intent = await prepareIntent({
     companyId: cmd.companyId,
     idempotencyKey,
     work,
     delegation: authority.delegation,
+    skills,
     llm: deps.llm,
   });
   if (!intent.ok) {

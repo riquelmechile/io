@@ -4,6 +4,7 @@ import {
   PgBusinessReceiptRepository,
   PgDelegationRepository,
   PgIdempotencyJournalRepository,
+  PgSkillRepository,
   PgWorkRepository,
 } from '@io/database/src/index.js';
 import type { LlmClient } from '@io/llm-client/src/index.js';
@@ -46,6 +47,7 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): WorkerDeps {
   return {
     work: new PgWorkRepository(connection),
     delegation: new PgDelegationRepository(connection),
+    skills: new PgSkillRepository(connection),
     receipts: new PgBusinessReceiptRepository(connection),
     journal: new PgIdempotencyJournalRepository(connection),
     sandbox: new FileDocumentSandbox(sandboxRoot),

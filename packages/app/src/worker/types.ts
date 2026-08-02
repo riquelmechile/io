@@ -3,6 +3,7 @@ import type {
   BusinessEventRepository,
   BusinessReceiptRepository,
   DelegationRepository,
+  SkillRepository,
   WorkRepository,
 } from '@io/business-domain/src/ports/repositories.js';
 import type { BusinessReceipt, Work } from '@io/business-domain/src/types.js';
@@ -80,6 +81,11 @@ export interface WorkerRepositories {
 export interface WorkerDeps {
   work: WorkRepository;
   delegation: DelegationRepository;
+  /** Tenant skill store (skill R7 seam): the cycle fetches the company's
+   * skills once after authority and passes them into the compiled context as
+   * segment 7. The worker stays PG-agnostic — the adapter is bound at the
+   * composition root. Read-only: the worker NEVER saves skills. */
+  skills: SkillRepository;
   receipts: BusinessReceiptRepository;
   journal: IdempotencyJournalPort;
   sandbox: SandboxPort;

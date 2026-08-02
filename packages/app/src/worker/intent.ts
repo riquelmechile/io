@@ -1,5 +1,5 @@
 import { evidenceId } from '@io/business-domain/src/evidence-id.js';
-import type { Delegation, Work } from '@io/business-domain/src/types.js';
+import type { Delegation, Skill, Work } from '@io/business-domain/src/types.js';
 import { parseLlmPlan } from '@io/business-domain/src/validation/llm-plan.js';
 import type { LlmPlanShape } from '@io/business-domain/src/validation/llm-plan.js';
 import { compileContext } from '@io/context/src/index.js';
@@ -42,6 +42,10 @@ export interface IntentInput {
   readonly work: Work;
   /** The delegation checkAuthority already fetched (D5 — no second fetch). */
   readonly delegation: Delegation;
+  /** The tenant skill store, fetched once after authority (skill R7): the
+   * compiler cohort-selects the ACTIVE matching skills into segment 7. Skills
+   * only condition the plan via context — the worker never executes them. */
+  readonly skills?: readonly Skill[];
   readonly llm: LlmClient;
 }
 
@@ -55,6 +59,7 @@ export async function prepareIntent(input: IntentInput): Promise<IntentResult> {
     process: processTokenFor(input.delegation),
     delegation: input.delegation,
     work: input.work,
+    skills: input.skills,
   });
   const request: LlmRequest = {
     model: 'deepseek-v4-flash',

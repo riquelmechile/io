@@ -3,6 +3,7 @@ import {
   InMemoryBusinessReceiptRepository,
   InMemoryDelegationRepository,
   InMemoryIdempotencyJournalRepository,
+  InMemorySkillRepository,
   InMemoryWorkRepository,
 } from '@io/business-domain/src/ports/fakes.js';
 import type {
@@ -14,11 +15,13 @@ import type {
 import type {
   BusinessEventRepository,
   BusinessReceiptRepository,
+  SkillRepository,
 } from '@io/business-domain/src/ports/repositories.js';
 import type {
   BusinessEvent,
   BusinessReceipt,
   Delegation,
+  Skill,
   Work,
 } from '@io/business-domain/src/types.js';
 import type { LlmPlanShape } from '@io/business-domain/src/validation/llm-plan.js';
@@ -214,10 +217,32 @@ export class RecordingEvents implements BusinessEventRepository {
   }
 }
 
+/** Skill-store double (R7 worker seam): delegates to the in-memory skill
+ * repository and records every `listByCompany` call so tests can assert the
+ * cycle fetches the tenant skills EXACTLY once, after authority. */
+export class RecordingSkills implements SkillRepository {
+  readonly listCalls: string[] = [];
+  private readonly inner = new InMemorySkillRepository();
+
+  async save(skill: Skill): Promise<Readonly<Skill>> {
+    return this.inner.save(skill);
+  }
+
+  async get(companyId: string, skillId: string): Promise<Skill | undefined> {
+    return this.inner.get(companyId, skillId);
+  }
+
+  async listByCompany(companyId: string): Promise<readonly Skill[]> {
+    this.listCalls.push(companyId);
+    return this.inner.listByCompany(companyId);
+  }
+}
+
 /** A fully wired in-memory worker harness (all four packages over fakes). */
 export interface WorkerHarness extends WorkerDeps {
   work: InMemoryWorkRepository;
   delegation: InMemoryDelegationRepository;
+  skills: RecordingSkills;
   receipts: RecordingReceipts;
   journal: RecordingJournal;
   events: RecordingEvents;
@@ -232,6 +257,7 @@ export function harness(overrides: Partial<WorkerDeps> = {}): WorkerHarness {
   const base: WorkerHarness = {
     work: new InMemoryWorkRepository(),
     delegation: new InMemoryDelegationRepository(),
+    skills: new RecordingSkills(),
     receipts: new RecordingReceipts(),
     journal: new RecordingJournal(trace),
     events: new RecordingEvents(),

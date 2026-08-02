@@ -2,8 +2,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, expectTypeOf, it } from 'vitest';
-import type { CompileContextInput, CompiledContext, SegmentId } from '../../context/src/index.js';
-import { compileContext, SEGMENTS } from '../../context/src/index.js';
+import type { CompiledContext } from '../../context/src/index.js';
+import { compileContext } from '../../context/src/index.js';
 import type { SkillRepository as IndexedRepository, Skill as IndexedSkill } from '../src/index.js';
 import {
   activeSkillsFor as IndexedActiveSkillsFor,
@@ -403,32 +403,148 @@ describe('public surface + isolation (R1, R8)', () => {
       expect(pkg[field] ?? {}).toEqual({});
     }
   });
+});
 
-  it('packages/context is untouched — compileContext stays deterministic and segment 7 (active-skills) stays ABSENT', () => {
-    // R8: Skills MUST NOT feed compileContext; segment 7 must remain ABSENT.
-    // PR1 must not alter the compiler's output for an identical input.
-    const work: Work = {
-      workId: 'work-1',
-      companyId: 'acme',
-      delegationId: 'delegation-1',
-      proposer: 'founder',
-      description: 'execute the quarterly close',
-      state: 'accepted',
-      version: 1,
-      evidenceRefs: [],
-    };
-    const input: CompileContextInput = { companyId: 'acme', process: 'planning', work };
+describe('skill R7 — segment 7 renders cohort-selected active skills (S1/S2/S3)', () => {
+  const work: Work = {
+    workId: 'work-1',
+    companyId: 'acme',
+    delegationId: 'delegation-1',
+    proposer: 'founder',
+    description: 'execute the quarterly close',
+    state: 'accepted',
+    version: 1,
+    evidenceRefs: [],
+  };
+  // The compiler renders segment 7 against CONTEXT_SCHEMA_VERSION (2) — a
+  // PRESENT fixture MUST scope schemaVersion 2 (churn sweep: no v1 PRESENT).
+  const activeScope: SkillScope = { process: 'planning', schemaVersion: 2 };
 
-    // Determinism: identical input ⇒ identical compiled bytes (unchanged).
-    const first: CompiledContext = compileContext(input);
-    const second: CompiledContext = compileContext(input);
+  function compileWith(skills?: readonly Skill[]): CompiledContext {
+    return compileContext({ companyId: 'acme', process: 'planning', work, skills });
+  }
+
+  it('matching active skills render into the stable prefix — fixed fields, skillId ASC, exact bytes (S1)', () => {
+    const compiled = compileWith([
+      sampleSkill({
+        skillId: 'reporting',
+        name: 'Reporting',
+        body: 'Summarize quarterly metrics.',
+        version: 1,
+        scope: activeScope,
+      }),
+      sampleSkill({
+        skillId: 'billing',
+        name: 'Billing',
+        body: 'Reconcile invoices.',
+        version: 1,
+        scope: activeScope,
+      }),
+    ]);
+    const system = compiled.messages[0]?.content ?? '';
+    // Exact segment-7 bytes (fixed template, only skillId/name/version/body).
+    expect(system).toContain(
+      'Active skills:\n' +
+        '- id=billing name=Billing v=1\nReconcile invoices.\n' +
+        '- id=reporting name=Reporting v=1\nSummarize quarterly metrics.',
+    );
+    // Ordering proof independent of the full-string match: billing precedes
+    // reporting (skillId ASC) and both precede the trailing segments.
+    expect(system.indexOf('- id=billing name=Billing v=1')).toBeGreaterThanOrEqual(0);
+    expect(system.indexOf('- id=billing name=Billing v=1')).toBeLessThan(
+      system.indexOf('- id=reporting name=Reporting v=1'),
+    );
+    expect(system).toContain('Business process: planning.');
+  });
+
+  it('non-matching / inactive skills are filtered — only the cohort selection renders (S1)', () => {
+    const compiled = compileWith([
+      sampleSkill({
+        skillId: 'match',
+        name: 'Match',
+        body: 'Eligible body.',
+        version: 1,
+        scope: activeScope,
+      }),
+      sampleSkill({
+        skillId: 'draft-skill',
+        name: 'Draft',
+        body: 'Not yet live.',
+        version: 1,
+        scope: activeScope,
+        state: 'draft',
+      }),
+      sampleSkill({
+        skillId: 'retired-skill',
+        name: 'Retired',
+        body: 'Gone.',
+        version: 1,
+        scope: activeScope,
+        state: 'retired',
+      }),
+      sampleSkill({
+        skillId: 'other-company',
+        name: 'Other',
+        body: 'Wrong tenant.',
+        version: 1,
+        scope: activeScope,
+        companyId: 'other',
+      }),
+      sampleSkill({
+        skillId: 'wrong-process',
+        name: 'Process',
+        body: 'Wrong process.',
+        version: 1,
+        scope: { process: 'close', schemaVersion: 2 },
+      }),
+      sampleSkill({
+        skillId: 'wrong-schema',
+        name: 'Schema',
+        body: 'Wrong schema version.',
+        version: 1,
+        scope: { process: 'planning', schemaVersion: 1 },
+      }),
+    ]);
+    const system = compiled.messages[0]?.content ?? '';
+    expect(system).toContain('Active skills:\n- id=match name=Match v=1\nEligible body.');
+    for (const excluded of [
+      'draft-skill',
+      'retired-skill',
+      'other-company',
+      'wrong-process',
+      'wrong-schema',
+      'Not yet live.',
+      'Wrong tenant.',
+      'Wrong process.',
+      'Wrong schema version.',
+    ]) {
+      expect(system).not.toContain(excluded);
+    }
+  });
+
+  it('empty and undefined skills keep segment 7 ABSENT — zero bytes, backward compatible (S3)', () => {
+    const empty = compileWith([]);
+    const absent = compileWith(undefined);
+    expect(empty.messages[0]?.content ?? '').not.toContain('Active skills:');
+    expect(absent.messages[0]?.content ?? '').not.toContain('Active skills:');
+    // [] and undefined are equivalent: no active-skills bytes in either.
+    expect(empty).toEqual(absent);
+  });
+
+  it('renders byte-identically for the same cohort + store (deterministic, S2)', () => {
+    const skills = [
+      sampleSkill({
+        skillId: 'billing',
+        name: 'Billing',
+        body: 'Reconcile invoices.',
+        version: 1,
+        scope: activeScope,
+      }),
+    ];
+    const first = compileWith(skills);
+    const second = compileWith(skills);
     expect(second).toEqual(first);
     expect(second.messages[0]?.content).toBe(first.messages[0]?.content);
-
-    // Segment 7 stays ABSENT — no active-skills text can enter the prefix.
-    const segment7 = SEGMENTS.find((segment) => segment.position === 7);
-    expect(segment7?.id).toBe('active-skills' satisfies SegmentId);
-    expect(segment7?.render(input).present).toBe(false);
-    expect(first.messages[0]?.content).not.toContain('skill');
+    expect(first.messages[0]?.content).toContain('Active skills:\n- id=billing name=Billing v=1');
   });
 });

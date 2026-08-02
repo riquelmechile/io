@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import type { Skill } from '@io/business-domain/src/types.js';
 import { compileContext } from '@io/context/src/index.js';
 import { attemptIdFor, prepareIntent } from '../src/worker/intent.js';
 import { runWorker } from '../src/worker/worker.js';
@@ -66,7 +67,7 @@ describe('prepareIntent (B4)', () => {
     });
     expect(request?.messages[0]?.content).toContain('Business process: low-risk-documents.');
     expect(request?.user).toBe(compiled.user);
-    expect(request?.user).toBe('io:acme:low-risk-documents:v1');
+    expect(request?.user).toBe('io:acme:low-risk-documents:v2');
     expect(request?.messages[1]?.role).toBe('user');
     expect(request?.messages[1]?.content).toBe(compiled.messages[1]?.content);
     expect(request?.messages[1]?.content).toContain('execute the quarterly close');
@@ -87,8 +88,44 @@ describe('prepareIntent (B4)', () => {
     });
 
     const request = llm.requests[0];
-    expect(request?.user).toBe('io:acme:onboarding:v1');
+    expect(request?.user).toBe('io:acme:onboarding:v2');
     expect(request?.messages[0]?.content).toContain('Business process: onboarding.');
+  });
+
+  it('passes supplied skills into the compiled context — segment 7 renders into the system prefix', async () => {
+    const llm = cannedLlm();
+    const delegation = activeDelegation();
+    const skill: Skill = {
+      skillId: 'invoice-extraction',
+      companyId: 'acme',
+      name: 'Invoice extraction',
+      version: 1,
+      body: 'Extract vendor and amount fields from invoice documents.',
+      scope: { process: 'low-risk-documents', schemaVersion: 2 },
+      state: 'active',
+      createdAt: 1750000000000,
+      updatedAt: 1750000000000,
+    };
+
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work: acceptedWork(),
+      delegation,
+      llm,
+      skills: [skill],
+    });
+
+    // The segment-7 block (fixed template, skillId/name/version/body only)
+    // appears in the LLM request's system prefix when a matching skill is passed.
+    const request = llm.requests[0];
+    expect(request?.messages[0]?.content).toContain('Active skills:');
+    expect(request?.messages[0]?.content).toContain(
+      '- id=invoice-extraction name=Invoice extraction v=1',
+    );
+    expect(request?.messages[0]?.content).toContain(
+      'Extract vendor and amount fields from invoice documents.',
+    );
   });
 
   it('malformed LLM output is rejected with a typed invalid-plan result (never acted on)', async () => {
@@ -161,6 +198,72 @@ describe('cycle intent (WC intent-before-effect)', () => {
       expect(result.attemptId).toBe('att:acme:close-2026-q3');
       expect(await h.sandbox.wasApplied(result.effect.undo.handleId)).toBe(true);
     }
+  });
+
+  it('fetches the tenant skills EXACTLY ONCE after authority and renders segment 7 into the LLM request (skill R7 seam)', async () => {
+    const h = harness();
+    await seed(h);
+    await h.skills.save({
+      skillId: 'invoice-extraction',
+      companyId: 'acme',
+      name: 'Invoice extraction',
+      version: 1,
+      body: 'Extract vendor and amount fields from invoice documents.',
+      scope: { process: 'low-risk-documents', schemaVersion: 2 },
+      state: 'active',
+      createdAt: 1750000000000,
+      updatedAt: 1750000000000,
+    });
+
+    const result = await runWorker(workerInput(), h);
+
+    expect(result.ok).toBe(true);
+    // Fetch-once: the cycle reads the tenant store for the company exactly once.
+    expect(h.skills.listCalls).toEqual(['acme']);
+    // The fetched skill reached the context: segment 7 renders into the system prefix.
+    const system = h.llm.requests[0]?.messages[0]?.content;
+    expect(system).toContain('Active skills:');
+    expect(system).toContain('- id=invoice-extraction name=Invoice extraction v=1');
+  });
+
+  it('does NOT fetch skills when authority is denied — the fetch happens AFTER authority OK', async () => {
+    const h = harness();
+    await h.work.save(acceptedWork());
+    await h.delegation.save(activeDelegation({ state: 'revoked' }));
+
+    const result = await runWorker(workerInput(), h);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('denied');
+    expect(h.skills.listCalls).toEqual([]);
+  });
+
+  it('passes the RAW tenant store — non-matching skills are filtered by the compiler, never the worker', async () => {
+    const h = harness();
+    await seed(h);
+    // Process mismatch: the cohort process is 'low-risk-documents' (delegation
+    // scope), this skill targets 'onboarding' — the compiler must filter it.
+    await h.skills.save({
+      skillId: 'tax-filing',
+      companyId: 'acme',
+      name: 'Tax filing',
+      version: 1,
+      body: 'File quarterly tax forms.',
+      scope: { process: 'onboarding', schemaVersion: 2 },
+      state: 'active',
+      createdAt: 1750000000000,
+      updatedAt: 1750000000000,
+    });
+
+    const result = await runWorker(workerInput(), h);
+
+    expect(result.ok).toBe(true);
+    // The worker STILL fetched the store once (raw pass-through, no pre-filter).
+    expect(h.skills.listCalls).toEqual(['acme']);
+    // But the non-matching skill never enters the context: segment 7 ABSENT.
+    const system = h.llm.requests[0]?.messages[0]?.content;
+    expect(system).not.toContain('Active skills:');
+    expect(system).not.toContain('tax-filing');
   });
 
   it('a malformed LLM plan stops the cycle: no journal insert, no effect', async () => {

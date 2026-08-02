@@ -8,6 +8,7 @@ import {
   PgBusinessReceiptRepository,
   PgDelegationRepository,
   PgIdempotencyJournalRepository,
+  PgSkillRepository,
   PgWorkRepository,
 } from '@io/database/src/index.js';
 import type { LlmClient, LlmRequest, LlmResponse } from '@io/llm-client/src/index.js';
@@ -78,6 +79,10 @@ describe('buildWorkerDeps — composition root wiring + injectivity (task 1.1)',
       expect(deps.delegation).toBeInstanceOf(PgDelegationRepository);
       expect(deps.receipts).toBeInstanceOf(PgBusinessReceiptRepository);
       expect(deps.journal).toBeInstanceOf(PgIdempotencyJournalRepository);
+      // The tenant skill store is wired through the port (R7 seam): the
+      // composition root binds the PG adapter so the worker can fetch the
+      // company's skills WITHOUT knowing the adapter exists.
+      expect(deps.skills).toBeInstanceOf(PgSkillRepository);
       expect(deps.sandbox).toBeInstanceOf(FileDocumentSandbox);
       expect(deps.connection).toBe(conn);
       expect(deps.principals).toBe(E2E_PRINCIPALS);
