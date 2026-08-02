@@ -29,8 +29,8 @@ startSupervisor ──interval──► tickAll
          │ 1. cursors.get(companyId)                      │
          │ 2. evaluateHeartbeatGate({events}, id, cursor) │  ← gate's listByCompany
          │ 3. events.listByCompany(id) → tailCursor       │  ← supervisor read
-         │ 4. if tail: cursors.upsert(id, tail)           │  ← BOTH paths
-         │ 5. if activate: onActivate(id)                 │  ← after upsert
+         │ 4. if activate: onActivate(id)                 │  ← side effect FIRST
+         │ 5. if tail: cursors.upsert(id, tail)           │  ← checkpoint LAST (both paths)
          └────────────────────────────────────────────────┘
 ```
 

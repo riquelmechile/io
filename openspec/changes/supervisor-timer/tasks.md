@@ -38,8 +38,8 @@ Chain strategy: stacked-to-main
 
 ## Batch 3 — supervisor module (PR 2, **complex — isolated**, unit over fakes)
 
-- [ ] **3.1 Supervisor core** — create `app/src/supervisor/types.ts`, `tick.ts`, `supervisor.ts`, `app/test/supervisor/supervisor.test.ts`. RED→GREEN (injected `schedule`, no real timers): one interval ticks both companies; `stop()` blocks later ticks; cursor advances on no-llm AND activate; activate once then renew after new `work.completed`; sequential call order; restart resumes from persisted cursor; `onActivate` recorded no-op. AC: `now?` reserved/unused (not in decision logic); gate receives stored cursor.
+- [x] **3.1 Supervisor core** — create `app/src/supervisor/types.ts`, `tick.ts`, `supervisor.ts`, `app/test/supervisor/supervisor.test.ts`. RED→GREEN (injected `schedule`, no real timers): one interval ticks both companies; `stop()` blocks later ticks; cursor advances on no-llm AND activate; activate once then renew after new `work.completed`; sequential call order; restart resumes from persisted cursor; `onActivate` recorded no-op. AC: `now?` reserved/unused (not in decision logic); gate receives stored cursor.
 
 ## Batch 4 — composition (PR 2, integration)
 
-- [ ] **4.1 `buildSupervisorDeps`** — create `app/src/composition/supervisor-deps.ts` + integration test. RED→GREEN: wires `PgBusinessEventRepository` + `PgHeartbeatCursorRepository` over `DbConnection`; one tick advances a real cursor. AC: not called by `buildWorkerDeps`; pool-bound only.
+- [x] **4.1 `buildSupervisorDeps`** — create `app/src/composition/supervisor-deps.ts` + integration test. RED→GREEN: wires `PgBusinessEventRepository` + `PgHeartbeatCursorRepository` over `DbConnection`; one tick advances a real cursor. AC: not called by `buildWorkerDeps`; pool-bound only.
