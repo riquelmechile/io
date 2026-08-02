@@ -1,5 +1,6 @@
 import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
 import type { HeartbeatCursor } from '../heartbeat.js';
+import { ACTIONABLE_WORK_STATES } from '../transitions.js';
 import type { HeartbeatCursorStore } from './cursors.js';
 import type {
   IdempotencyJournalPort,
@@ -110,6 +111,21 @@ export class InMemoryWorkRepository implements WorkRepository {
     const updated: Work = { ...work, version: expectedVersion + 1 };
     this.entries.set(work.workId, updated);
     return { ok: true, value: updated };
+  }
+
+  async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
+    requireCompanyId(companyId);
+    const actionable = ACTIONABLE_WORK_STATES as readonly string[];
+    // Map iteration order == insertion order: the oldest accepted Work first
+    // (the dispatch "oldest-first" queue). Tenant-scoped by companyId
+    // (ADR-0002) — another company's Work is never returned.
+    const result: Work[] = [];
+    for (const work of this.entries.values()) {
+      if (work.companyId === companyId && actionable.includes(work.state)) {
+        result.push(work);
+      }
+    }
+    return result;
   }
 }
 

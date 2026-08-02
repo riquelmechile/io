@@ -214,6 +214,58 @@ describe('InMemoryWorkRepository', () => {
   });
 });
 
+describe('InMemoryWorkRepository.listActionableByCompany (work-lifecycle scenarios 1-3)', () => {
+  /** An ACCEPTED Work — the only actionable state (ACTIONABLE_WORK_STATES). */
+  function accepted(id: string, companyId: string): Work {
+    return { ...sampleWork(id, companyId), state: 'accepted' };
+  }
+
+  it("scenario 1: returns ONLY the tenant's accepted Work, oldest first across mixed state/tenant", async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(accepted('work-1', 'acme'));
+    await repo.save(sampleWork('work-2', 'acme')); // proposed — not actionable
+    await repo.save(accepted('work-3', 'other')); // another tenant — excluded
+    await repo.save(accepted('work-4', 'acme'));
+    await repo.save({ ...sampleWork('work-5', 'acme'), state: 'in_progress' });
+
+    const actionable = await repo.listActionableByCompany('acme');
+    expect(actionable.map((w) => w.workId)).toEqual(['work-1', 'work-4']);
+    // Insertion order, not lexicographic: work-1 predates work-4.
+    expect(actionable[0]?.companyId).toBe('acme');
+    expect(actionable[1]?.companyId).toBe('acme');
+  });
+
+  it('scenario 2: no accepted Work for the tenant resolves to an empty list', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save({ ...sampleWork('work-1', 'acme'), state: 'in_progress' });
+    await repo.save(accepted('work-2', 'other')); // another tenant's accepted Work is not ours
+
+    expect(await repo.listActionableByCompany('acme')).toEqual([]);
+  });
+
+  it('scenario 3: an empty companyId rejects BEFORE any store read', async () => {
+    const repo = new InMemoryWorkRepository();
+    await repo.save(accepted('work-1', 'acme'));
+
+    // The fake's storage is observable at runtime (TS `private` is compile-time
+    // only): instrument the Map iterator so ANY store read is countable. Data
+    // IS seeded, so a read would have produced a result — a guard error plus
+    // zero reads proves the rejection precedes every store read (ADR-0002).
+    const store = (repo as unknown as { entries: Map<string, Work> }).entries;
+    const originalValues = store.values.bind(store);
+    let reads = 0;
+    store.values = (() => {
+      reads += 1;
+      return originalValues();
+    }) as typeof store.values;
+
+    await expect(repo.listActionableByCompany('')).rejects.toThrow(
+      'a non-empty companyId is required',
+    );
+    expect(reads).toBe(0);
+  });
+});
+
 describe('InMemoryWorkRepository CAS (updateIfVersion, ADR-0002/D4)', () => {
   async function seededRepo(version = 1): Promise<{ repo: InMemoryWorkRepository; work: Work }> {
     const repo = new InMemoryWorkRepository();

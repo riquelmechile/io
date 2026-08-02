@@ -49,7 +49,12 @@ export {
   MATERIAL_EVENT_TYPES,
   tailCursor,
 } from './heartbeat.js';
-export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
+export {
+  ACTIONABLE_WORK_STATES,
+  canTransitionDelegation,
+  canTransitionWork,
+  isDelegationActive,
+} from './transitions.js';
 export type {
   AuthorityScope,
   Budget,

@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import type { DelegationState, WorkState } from '../src/types.js';
 import type { Delegation } from '../src/types.js';
 import {
+  ACTIONABLE_WORK_STATES,
   canTransitionDelegation,
   canTransitionWork,
   isDelegationActive,
@@ -160,5 +161,23 @@ describe('Window-active delegation (ADR-0002)', () => {
 
   it('is NOT active on the boundary now == validUntil', () => {
     expect(isDelegationActive(delegation(), 9000)).toBe(false);
+  });
+});
+
+describe('ACTIONABLE_WORK_STATES (work-lifecycle delta, mirrors MATERIAL_EVENT_TYPES)', () => {
+  it('declares exactly one actionable Work state: accepted', () => {
+    expect(ACTIONABLE_WORK_STATES).toEqual(['accepted']);
+  });
+
+  it('is a readonly-tuple constant typed as readonly ["accepted"]', () => {
+    expectTypeOf(ACTIONABLE_WORK_STATES).toEqualTypeOf<readonly ['accepted']>();
+  });
+
+  it('accepted Work is actionable; every other state is not', () => {
+    const actionable = ACTIONABLE_WORK_STATES as readonly string[];
+    expect(actionable.includes('accepted')).toBe(true);
+    for (const state of ['proposed', 'in_progress', 'completed', 'verified', 'rejected'] as const) {
+      expect(actionable.includes(state)).toBe(false);
+    }
   });
 });

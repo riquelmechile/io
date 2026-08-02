@@ -1,3 +1,4 @@
+import { ACTIONABLE_WORK_STATES } from '@io/business-domain/src/index.js';
 import type { CasResult, Deliverable, Work, WorkOutcome } from '@io/business-domain/src/index.js';
 
 import type { DbConnection } from './connection.js';
@@ -114,5 +115,35 @@ export class PgWorkRepository {
     // and PG bumped the stored column with `version=version+1`; the caller's
     // `work.version` could be stale, so the new version is `expectedVersion + 1`.
     return { ok: true, value: { ...work, version: expectedVersion + 1 } };
+  }
+
+  /**
+   * Tenant-scoped actionable read (work-lifecycle delta, design migration 009):
+   * the company's Work in `ACTIONABLE_WORK_STATES` (currently only `accepted`),
+   * oldest first (`ORDER BY id ASC` — the dispatch queue). `state = ANY($2)`
+   * binds the declarative state set, so adding an actionable state never
+   * touches this SQL. An empty `companyId` is rejected BEFORE SQL (fake
+   * parity). Rows read from PG are UNTRUSTED bytes: every row passes
+   * {@link parseWorkRow} (D7) and a corrupt row throws loudly.
+   */
+  async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
+    if (!companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
+    const rows = await this.conn.query<
+      Work & { deliverable: Deliverable | null; outcome: WorkOutcome | null }
+    >(
+      'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
+        'state, version, deliverable, evidence_refs AS "evidenceRefs", outcome ' +
+        'FROM work WHERE company_id = $1 AND state = ANY($2) ORDER BY id ASC',
+      [companyId, ACTIONABLE_WORK_STATES],
+    );
+    return rows.map((row) => {
+      const parsed = parseWorkRow(row);
+      if (!parsed.ok) {
+        throw new Error(`corrupt work row: ${parsed.reason}`);
+      }
+      return parsed.value;
+    });
   }
 }

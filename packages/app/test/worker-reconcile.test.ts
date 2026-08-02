@@ -395,6 +395,10 @@ class RacingWorkRepository implements WorkRepository {
   updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
     return this.inner.updateIfVersion(work, expectedVersion);
   }
+
+  async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listActionableByCompany(companyId);
+  }
 }
 
 describe('cycle reconciliation (WC reconciliation pre-effect)', () => {

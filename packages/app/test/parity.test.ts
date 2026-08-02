@@ -160,6 +160,10 @@ class RacingWorkRepository implements WorkRepository {
   updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
     return this.inner.updateIfVersion(work, expectedVersion);
   }
+
+  async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listActionableByCompany(companyId);
+  }
 }
 
 describe('B11 parity 1 — app pre-effect replay/DENY ≡ completeWork lookup', () => {

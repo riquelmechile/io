@@ -77,7 +77,11 @@ export class InMemoryDbConnection implements DbConnection {
     let rows = this.table(select.table);
     for (const condition of select.where) {
       const wanted = params[condition.param - 1];
-      rows = rows.filter((row) => row[condition.column] === wanted);
+      rows = rows.filter((row) =>
+        condition.any
+          ? Array.isArray(wanted) && wanted.includes(row[condition.column])
+          : row[condition.column] === wanted,
+      );
     }
     if (select.orderBy) {
       const order = select.orderBy;
@@ -183,7 +187,12 @@ interface SelectItem {
 interface ParsedSelect {
   readonly items: readonly SelectItem[];
   readonly table: string;
-  readonly where: readonly { readonly column: string; readonly param: number }[];
+  readonly where: readonly {
+    readonly column: string;
+    readonly param: number;
+    /** True when the condition is `col = ANY($N)` (array membership). */
+    readonly any?: boolean;
+  }[];
   readonly orderBy?: { readonly column: string; readonly dir: 'ASC' | 'DESC' };
 }
 
@@ -245,13 +254,16 @@ function parseUpdate(sql: string): ParsedUpdate | undefined {
 }
 
 /**
- * Parse `SELECT <list> FROM <table> [WHERE col = $N (AND col = $M)?]
- * [ORDER BY col ASC|DESC]`. Supports up to two equality WHERE conditions so
- * scoped reads (`WHERE company_id = $1 AND <id> = $2`, ADR-0002) round-trip.
+ * Parse `SELECT <list> FROM <table> [WHERE col = $N (AND col = $M | AND col =
+ * ANY($M))?] [ORDER BY col ASC|DESC]`. Supports up to two WHERE conditions so
+ * scoped reads (`WHERE company_id = $1 AND <id> = $2`, ADR-0002) and the
+ * actionable read (`WHERE company_id = $1 AND state = ANY($2)`, work-dispatch)
+ * round-trip. An `ANY($N)` condition filters by array membership — the param is
+ * the JS array the adapter binds for `state = ANY($2)`.
  */
 function parseSelect(sql: string): ParsedSelect | undefined {
   const match =
-    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*\$(\d+))?)?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
+    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*(?:ANY\(\$(\d+)\)|\$(\d+)))?)?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
       sql,
     );
   const list = match?.[1];
@@ -269,16 +281,26 @@ function parseSelect(sql: string): ParsedSelect | undefined {
     return { column, alias: column };
   });
 
-  const where: Array<{ readonly column: string; readonly param: number }> = [];
+  const where: Array<{
+    readonly column: string;
+    readonly param: number;
+    readonly any?: boolean;
+  }> = [];
   const firstColumn = match?.[3];
   const firstParam = match?.[4];
   if (firstColumn && firstParam) where.push({ column: firstColumn, param: Number(firstParam) });
   const secondColumn = match?.[5];
-  const secondParam = match?.[6];
-  if (secondColumn && secondParam) where.push({ column: secondColumn, param: Number(secondParam) });
+  const secondAnyParam = match?.[6];
+  const secondPlainParam = match?.[7];
+  if (secondColumn) {
+    if (secondAnyParam)
+      where.push({ column: secondColumn, param: Number(secondAnyParam), any: true });
+    else if (secondPlainParam)
+      where.push({ column: secondColumn, param: Number(secondPlainParam) });
+  }
 
-  const orderColumn = match?.[7];
-  const orderDir = match?.[8];
+  const orderColumn = match?.[8];
+  const orderDir = match?.[9];
   const orderBy =
     orderColumn && orderDir
       ? { column: orderColumn, dir: orderDir.toUpperCase() as 'ASC' | 'DESC' }

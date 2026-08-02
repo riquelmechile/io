@@ -48,6 +48,14 @@ export interface WorkRepository {
    * overwrites the stored work.
    */
   updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult>;
+  /**
+   * Tenant-scoped actionable read (work-lifecycle delta): the company's Work in
+   * the states declared by `ACTIONABLE_WORK_STATES` (currently only `accepted`),
+   * in INSERTION order — the dispatch "oldest first" queue. An empty
+   * `companyId` MUST be rejected BEFORE any storage read (ADR-0002/R8), and the
+   * result MUST never include another company's Work.
+   */
+  listActionableByCompany(companyId: string): Promise<readonly Work[]>;
 }
 
 export interface BusinessReceiptRepository {

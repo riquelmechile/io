@@ -52,6 +52,11 @@ function work(id: string): Work {
   };
 }
 
+/** An ACCEPTED Work — the only actionable state (ACTIONABLE_WORK_STATES). */
+function acceptedWork(id: string): Work {
+  return { ...work(id), state: 'accepted' };
+}
+
 function receipt(id: string): BusinessReceipt {
   return {
     receiptId: id,
@@ -299,6 +304,55 @@ describe('PgWorkRepository', () => {
     it('get(companyId, unknownId) returns undefined', async () => {
       const repo = new PgWorkRepository(new InMemoryDbConnection());
       expect(await repo.get('acme', 'missing')).toBeUndefined();
+    });
+  });
+
+  describe('listActionableByCompany — tenant-scoped actionable read (work-dispatch)', () => {
+    it('emits WHERE company_id = $1 AND state = ANY($2) ORDER BY id ASC, binding the actionable states', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      await repo.save(acceptedWork('work-1'));
+      await repo.listActionableByCompany('acme');
+
+      const selects = db.operations.filter((op) => op.sql.startsWith('SELECT'));
+      const actionable = selects.at(-1);
+      expect(actionable?.sql).toBe(
+        'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
+          'state, version, deliverable, evidence_refs AS "evidenceRefs", outcome ' +
+          'FROM work WHERE company_id = $1 AND state = ANY($2) ORDER BY id ASC',
+      );
+      expect(actionable?.params).toEqual(['acme', ['accepted']]);
+    });
+
+    it("returns ONLY the tenant's accepted Work, oldest first (insertion order via id ASC)", async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save(acceptedWork('work-1'));
+      await repo.save({ ...acceptedWork('work-2'), state: 'proposed' });
+      await repo.save({ ...acceptedWork('work-3'), companyId: 'other' });
+      await repo.save(acceptedWork('work-4'));
+
+      const actionable = await repo.listActionableByCompany('acme');
+      expect(actionable.map((w) => w.workId)).toEqual(['work-1', 'work-4']);
+    });
+
+    it('resolves to an empty list when the tenant has no accepted Work', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...acceptedWork('work-1'), state: 'in_progress' });
+      await repo.save({ ...acceptedWork('work-2'), companyId: 'other' });
+
+      expect(await repo.listActionableByCompany('acme')).toEqual([]);
+    });
+
+    it('rejects an empty companyId BEFORE issuing any query (guard precedes SQL)', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      await repo.save(acceptedWork('work-1'));
+      const operationsBefore = db.operations.length;
+
+      await expect(repo.listActionableByCompany('')).rejects.toThrow(
+        'a non-empty companyId is required',
+      );
+      expect(db.operations.length).toBe(operationsBefore);
     });
   });
 

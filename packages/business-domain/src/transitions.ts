@@ -26,6 +26,15 @@ const WORK_TRANSITIONS: Readonly<Record<WorkState, readonly WorkState[]>> = {
   rejected: [],
 };
 
+/**
+ * Extensible set of Work states that count as "actionable" for dispatch
+ * (work-lifecycle delta): a Work is actionable iff its `state` is declared
+ * here. Declared as a constant so the set stays extensible without touching
+ * the filter — mirrors the `MATERIAL_EVENT_TYPES`/`isMaterialEvent` precedent
+ * in heartbeat.ts.
+ */
+export const ACTIONABLE_WORK_STATES: readonly ['accepted'] = ['accepted'];
+
 export function canTransitionDelegation(from: DelegationState, to: DelegationState): boolean {
   return DELEGATION_TRANSITIONS[from].includes(to);
 }

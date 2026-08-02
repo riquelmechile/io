@@ -101,6 +101,10 @@ class RacingWorkRepository implements WorkRepository {
   updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
     return this.inner.updateIfVersion(work, expectedVersion);
   }
+
+  async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listActionableByCompany(companyId);
+  }
 }
 
 /** Claimed (in_progress) work + committed in_flight journal row + applied effect. */

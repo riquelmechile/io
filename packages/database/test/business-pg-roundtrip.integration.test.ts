@@ -8,7 +8,10 @@ import type { BusinessReceipt, Company, Delegation, Work } from '@io/business-do
 import type { CompleteWorkCommand, CompleteWorkDeps } from '@io/business-domain/src/index.js';
 import { completeWork } from '@io/business-domain/src/index.js';
 import { evidenceId } from '@io/business-domain/src/index.js';
-import { InMemoryCompanyRepository } from '@io/business-domain/src/index.js';
+import {
+  InMemoryCompanyRepository,
+  InMemoryWorkRepository,
+} from '@io/business-domain/src/index.js';
 
 import { PgBusinessReceiptRepository } from '../src/business-receipt-adapter.js';
 import { PgCompanyRepository } from '../src/company-adapter.js';
@@ -26,6 +29,7 @@ const SCHEMA_001 = join(pkgRoot, 'sql', '001_create_tables.sql');
 const SCHEMA_002 = join(pkgRoot, 'sql', '002_create_business_tables.sql');
 const SCHEMA_003 = join(pkgRoot, 'sql', '003_harden_columns.sql');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
+const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
 
 /**
  * Integration test — REAL PostgreSQL round-trip for all four business-domain
@@ -79,6 +83,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     await conn.execute(readFileSync(SCHEMA_002, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_003, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_004, 'utf8'), []);
+    await conn.execute(readFileSync(SCHEMA_009, 'utf8'), []);
     companyRepo = new PgCompanyRepository(conn);
     delegationRepo = new PgDelegationRepository(conn);
     workRepo = new PgWorkRepository(conn);
@@ -309,6 +314,69 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       // The stored work reflects the winner's write, version N+1.
       const stored = await workRepo.get('acme-corp', 'work-001');
       expect(stored?.version).toBe(2);
+    });
+  });
+
+  describe('Work listActionableByCompany — insertion order, tenant scope, InMemory parity (work-dispatch, 009)', () => {
+    /** An ACCEPTED Work — the only actionable state (ACTIONABLE_WORK_STATES). */
+    function accepted(workId: string, companyId: string): Work {
+      return { ...sampleWork(), workId, companyId, state: 'accepted' };
+    }
+
+    it("returns ONLY the tenant's accepted Work, oldest first (insertion order, mixed state/tenant)", async () => {
+      await workRepo.save(accepted('work-a1', 'acme-corp'));
+      await workRepo.save({ ...accepted('work-a2', 'acme-corp'), state: 'proposed' });
+      await workRepo.save(accepted('work-b1', 'other-corp'));
+      await workRepo.save(accepted('work-a3', 'acme-corp'));
+      await workRepo.save({ ...accepted('work-a4', 'acme-corp'), state: 'in_progress' });
+
+      const actionable = await workRepo.listActionableByCompany('acme-corp');
+      expect(actionable.map((w) => w.workId)).toEqual(['work-a1', 'work-a3']);
+    });
+
+    it('returns empty for a tenant with no accepted Work', async () => {
+      await workRepo.save({ ...accepted('work-a1', 'acme-corp'), state: 'in_progress' });
+      await workRepo.save(accepted('work-b1', 'other-corp'));
+
+      expect(await workRepo.listActionableByCompany('acme-corp')).toEqual([]);
+    });
+
+    it('rejects an empty companyId before issuing SQL, exactly like the InMemory fake', async () => {
+      await workRepo.save(accepted('work-a1', 'acme-corp'));
+      const pgError = await workRepo
+        .listActionableByCompany('')
+        .then(() => undefined)
+        .catch((error: Error) => error);
+      const fakeError = await new InMemoryWorkRepository()
+        .listActionableByCompany('')
+        .then(() => undefined)
+        .catch((error: Error) => error);
+
+      expect(pgError).toBeInstanceOf(Error);
+      expect(fakeError).toBeInstanceOf(Error);
+      expect(pgError?.message).toBe('a non-empty companyId is required');
+      expect(pgError?.message).toBe(fakeError?.message); // same shape, same message
+    });
+
+    it('parity: InMemory and PG return IDENTICAL actionable lists for the SAME seed (parity.test.ts pattern)', async () => {
+      const seed: Work[] = [
+        accepted('work-a1', 'acme-corp'),
+        { ...accepted('work-a2', 'acme-corp'), state: 'proposed' },
+        accepted('work-b1', 'other-corp'),
+        accepted('work-a3', 'acme-corp'),
+        { ...accepted('work-a4', 'acme-corp'), state: 'completed' },
+      ];
+      const pg = new PgWorkRepository(conn);
+      const fake = new InMemoryWorkRepository();
+      for (const w of seed) {
+        await pg.save(w);
+        await fake.save(w);
+      }
+
+      const pgList = await pg.listActionableByCompany('acme-corp');
+      const fakeList = await fake.listActionableByCompany('acme-corp');
+      expect(pgList).toEqual(fakeList);
+      expect(pgList.map((w) => w.workId)).toEqual(['work-a1', 'work-a3']);
     });
   });
 

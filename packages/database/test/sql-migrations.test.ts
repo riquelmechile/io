@@ -11,6 +11,7 @@ const SCHEMA_005 = join(pkgRoot, 'sql', '005_journal_retryable_status.sql');
 const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
 const SCHEMA_007 = join(pkgRoot, 'sql', '007_skills.sql');
 const SCHEMA_008 = join(pkgRoot, 'sql', '008_heartbeat_cursor.sql');
+const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -264,6 +265,37 @@ describe('sql/008_heartbeat_cursor.sql (heartbeat_cursor table — supervisor-ti
 
   it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
     const sql = read008()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(1);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
+  });
+});
+
+describe('sql/009_work_company_state_index.sql (company-scoped actionable read — work-dispatch)', () => {
+  function read009(): string {
+    return existsSync(SCHEMA_009) ? readFileSync(SCHEMA_009, 'utf8') : '';
+  }
+
+  it('ships sql/009_work_company_state_index.sql', () => {
+    expect(existsSync(SCHEMA_009)).toBe(true);
+  });
+
+  it('creates the (company_id, state) index on work CONCURRENTLY (non-blocking) with IF NOT EXISTS', () => {
+    expect(read009()).toMatch(
+      /CREATE\s+INDEX\s+CONCURRENTLY\s+IF\s+NOT\s+EXISTS\s+idx_work_company_state\s+ON\s+work\s*\(\s*company_id\s*,\s*state\s*\)/i,
+    );
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read009()
       .split('\n')
       .filter((line) => !line.trim().startsWith('--'))
       .join('\n');
