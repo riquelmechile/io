@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { runWorker } from '../../src/worker/worker.js';
-import { evaluateHeartbeatForCompany } from '../../src/heartbeat/evaluate.js';
+import { evaluateHeartbeatGate } from '../../src/heartbeat/cycle.js';
 import type { E2eHarness } from '../e2e/harness.js';
 import {
   createE2eHarness,
@@ -14,11 +14,14 @@ import {
 } from '../e2e/harness.js';
 
 /**
- * Read-only heartbeat seam against LIVE PostgreSQL (heartbeat R6, R7 — tasks
- * 2.4): after a full `runWorker` cycle the company's REAL event stream holds
- * exactly one `work.completed` event, so the seam MUST return the Flash
- * activation decision for that company and `no-llm-heartbeat` for a fresh
- * company with no events — with ZERO writes to the live store.
+ * Worker-boundary heartbeat gate against LIVE PostgreSQL (heartbeat-activation
+ * R3, S3.1 — task 4.1): after a full `runWorker` cycle the company's REAL
+ * event stream holds exactly one `work.completed` event, so the GATE MUST
+ * return the Flash activation decision for that company and
+ * `no-llm-heartbeat` for a fresh company with no events — with ZERO writes to
+ * the live store. The gate is a thin delegate over the read-only evaluator
+ * seam; the work-bearing cycle itself bypasses the gate (`worker.ts` is
+ * untouched).
  *
  * Honest 3-mode guard (copied from worker-e2e.integration.test.ts): SKIP
  * locally when PG is unreachable and IO_REQUIRE_PG is unset; RUN when PG is
@@ -30,7 +33,7 @@ import {
 const reachable = await pgReachable();
 
 describe.skipIf(!reachable && !e2eRequirePg)(
-  'heartbeat R6: read-only evaluator against live PG after a worker cycle',
+  'heartbeat-activation: worker-boundary gate against live PG after a worker cycle',
   () => {
     let harness: E2eHarness;
 
@@ -61,16 +64,14 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       );
       expect(liveEventCount[0]?.count).toBe(1);
 
-      // The seam reads the company's REAL stream (pool-bound adapter on deps)
-      // and returns the PURE domain decision.
-      const decision = await evaluateHeartbeatForCompany(
-        { events: harness.deps.events },
-        E2E_COMPANY,
-      );
+      // The GATE reads the company's REAL stream (pool-bound adapter on deps)
+      // and returns the PURE domain decision — the future supervisor's entry
+      // point for choosing whether to run the work-bearing cycle.
+      const decision = await evaluateHeartbeatGate({ events: harness.deps.events }, E2E_COMPANY);
       expect(decision).toEqual({ kind: 'activate', model: 'flash' });
 
       // A fresh company has no events in the live store → no-llm-heartbeat.
-      const fresh = await evaluateHeartbeatForCompany(
+      const fresh = await evaluateHeartbeatGate(
         { events: harness.deps.events },
         'fresh-co-unknown',
       );
