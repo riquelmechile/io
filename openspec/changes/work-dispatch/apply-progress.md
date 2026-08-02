@@ -1,12 +1,12 @@
-# Apply Progress: Work Dispatch — PR 1 (tasks 1.1–1.6) + PR 2 (tasks 2.1–2.7)
+# Apply Progress: Work Dispatch — PR 1 (tasks 1.1–1.6) + PR 2 (tasks 2.1–2.7) + REMEDIATION (verify CRITICAL)
 
-**Change**: work-dispatch · **Batches**: PR 1 of 2 (committed `1339791`) + PR 2 of 2 (UNCOMMITTED candidate) · **Mode**: STRICT TDD
+**Change**: work-dispatch · **Batches**: PR 1 of 2 (committed `1339791`) + PR 2 of 2 (UNCOMMITTED candidate) + remediation fix-batch (UNCOMMITTED) · **Mode**: STRICT TDD
 **Artifact store**: HYBRID (openspec file + engram `sdd/work-dispatch/apply-progress`)
 **Date**: 2026-08-02 · **Delivery**: auto-chain · chain-strategy `stacked-to-main` · review budget 400 lines/PR
 
 ## Status
 
-**success** — all 13 tasks complete (PR1 1.1–1.6 committed; PR2 2.1–2.7 GREEN, full gate GREEN, live-PG sequential GREEN, candidate normalized, nothing committed for PR2).
+**success** — all 13 tasks complete (PR1 1.1–1.6 committed; PR2 2.1–2.7 GREEN, full gate GREEN, live-PG sequential GREEN, nothing committed for PR2) **plus remediation fix-batch** (verify CRITICAL-1: dispatch-key delimiter collision) — RED→GREEN closed, focused + sequential gates GREEN, nothing committed.
 
 ---
 
@@ -150,4 +150,64 @@ Otherwise none — implementation matches design.md (B1 key/hash, R2 one-oldest-
 
 ## Next Recommended
 
-`sdd-verify` on the full work-dispatch change (PR 1 committed + PR 2 candidate) after the PR 2 candidate is reviewed/merged — or `sdd-archive` to sync the delta specs once verification passes.
+`sdd-verify` on the full work-dispatch change (PR 1 committed + PR 2 candidate + remediation) after the PR 2 candidate is reviewed/merged — or `sdd-archive` to sync the delta specs once verification passes.
+
+---
+
+## PART 3 — REMEDIATION (verify CRITICAL-1: dispatch-key delimiter collision)
+
+**Trigger**: `sdd-verify` result `gentle-ai.verify-result/v1` — verdict `fail`, 1 blocker + 1 CRITICAL, evidence_revision `sha256:032dd5dea57cbd9611d4e1b9262689b794ceab399e47755cdb9214944f562ce6`, verified revision `65f1a046ec78fd6ee96b8364083da0ffe1776af9`.
+**Findings bound**: CRITICAL — `dispatchIdempotencyKeyFor('a:b', 'c')` and `('a', 'b:c')` both yield `wk:a:b:c`; R1 "collision-free" violated for valid identifier strings; green suite lacked the adversarial delimiter case (`keys.test.ts:50-59` fixtures had no `:`).
+**Fix decision** (per verify SUGGESTION): constrain the identifier grammar — reject `:` (the key delimiter) in `companyId`/`workId` rather than changing the mandated `wk:${companyId}:${workId}` format.
+**Fix scope**: guard-first validation inside `dispatchIdempotencyKeyFor`; existing `wk:${companyId}:${workId}` format preserved for valid inputs.
+
+### TDD Cycle Evidence (remediation)
+
+| Step | File | Layer | Result |
+|------|------|-------|--------|
+| Safety Net | `app/test/dispatch/keys.test.ts` | Unit | ✅ 9/9 baseline passing before edits |
+| RED | `app/test/dispatch/keys.test.ts` (+4 tests) | Unit | ✅ Written first — 3 failed / 10 passed (guard absent): rejects `companyId` with `:`, rejects `workId` with `:`, message names component + forbidden char; the valid-input anchor (no-throw + exact `wk:` key) passed pre-fix and pins the format |
+| GREEN | `app/src/dispatch/keys.ts` (+10 lines) | Unit | ✅ 13/13 pass — `throw new Error('dispatchIdempotencyKeyFor: {companyId|workId} "…" contains the forbidden ":" delimiter')` before returning `wk:${companyId}:${workId}` |
+| TRIANGULATE | same file | Unit | ✅ 4 cases: companyId `:`, workId `:`, message content, valid identifiers still exact `wk:` key (both components) |
+| REFACTOR | `keys.ts` | — | ✅ Biome-normalized throw wrapping (gate formatter); no behavioral change; tests still 13/13 |
+
+### Files Changed (remediation — UNCOMMITTED)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `packages/app/src/dispatch/keys.ts` | Modified | Guard at top of `dispatchIdempotencyKeyFor`: throws descriptive error naming the offending component and the `":"` delimiter; format unchanged for valid inputs |
+| `packages/app/test/dispatch/keys.test.ts` | Modified | +4 RED tests: reject `('a:b','c')`, reject `('a','b:c')`, rejection message names component/char, valid inputs still exact `wk:` key |
+
+**Byte-identity**: the 8 supervisor/worker files (`supervisor/supervisor.ts`, `tick.ts`, `types.ts`, `worker/worker.ts`, `heartbeat/cycle.ts`, `heartbeat/evaluate.ts`, `composition/supervisor-deps.ts`, `composition/worker-deps.ts`) verified 0-byte diff against HEAD — untouched by remediation.
+
+### Test Evidence (remediation)
+
+- **Focused RED**: `pnpm vitest run packages/app/test/dispatch/keys.test.ts` → **3 failed | 10 passed (13)** (guard missing).
+- **Focused GREEN**: same command → **13 passed (13)**.
+- **Full gate**: `PATH=/data/node24/bin:$PATH pnpm check` — format ✅ · typecheck ✅ · build ✅ · lint ✅ · test: **1070 passed | 1 failed | 6 skipped** where the single failure is the KNOWN pre-existing PR 1 flake (`business-pg-roundtrip.integration.test.ts` concurrent-terminal-close duplicate-key race — documented in Part 2 "Issues Found" #3); it passes in isolation (**40/40**) and in the full sequential rerun.
+- **Sequential gate** (`pnpm vitest run --no-file-parallelism`): **Test Files 82 passed | 3 skipped (85) · Tests 1071 passed | 6 skipped (1077)** (1067 prior + 4 new remediation tests).
+- **Collision probe (verify's adversarial case)**: `dispatchIdempotencyKeyFor('a:b','c')` → throws (companyId) and `('a','b:c')` → throws (workId) — no `wk:a:b:c` collision possible.
+
+### Work Unit Evidence (remediation)
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `pnpm vitest run packages/app/test/dispatch/keys.test.ts` → RED 3 failed/10 passed → GREEN 13/13 |
+| Runtime harness command/scenario and exact result | Full sequential suite `pnpm vitest run --no-file-parallelism` → 1071/1071; the only parallel-gate failure is the pre-existing PR 1 flake (isolated 40/40) |
+| Rollback boundary | revert `keys.ts` guard + the 4 added tests (30 changed lines total: 10 src + 20 test) — zero impact on any other file; 8 supervisor/worker files remain byte-identical |
+
+### Candidate State (remediation — UNCOMMITTED)
+
+```
+$ git status --short
+ M packages/app/src/dispatch/keys.ts
+ M packages/app/test/dispatch/keys.test.ts
+?? openspec/changes/work-dispatch/verify-report.md   (verify artifact — not touched by remediation)
+
+$ git diff --stat
+ packages/app/src/dispatch/keys.ts       | 10 ++++++++++
+ packages/app/test/dispatch/keys.test.ts | 20 ++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+```
+
+**Nothing committed** — remediation changes left uncommitted for the orchestrator's native review, per bounded-remediation contract.

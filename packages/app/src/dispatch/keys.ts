@@ -16,6 +16,16 @@ import type { Work } from '@io/business-domain/src/types.js';
  * effect or issuing a second receipt (`UNIQUE(work_id, terminal_event_id)`).
  */
 export function dispatchIdempotencyKeyFor(companyId: string, workId: string): string {
+  if (companyId.includes(':')) {
+    throw new Error(
+      `dispatchIdempotencyKeyFor: companyId "${companyId}" contains the forbidden ":" delimiter`,
+    );
+  }
+  if (workId.includes(':')) {
+    throw new Error(
+      `dispatchIdempotencyKeyFor: workId "${workId}" contains the forbidden ":" delimiter`,
+    );
+  }
   return `wk:${companyId}:${workId}`;
 }
 
