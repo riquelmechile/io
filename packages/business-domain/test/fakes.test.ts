@@ -2,20 +2,23 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type { BusinessReceipt, Company, Delegation, Work } from '../src/types.js';
+import type { BusinessEvent, BusinessReceipt, Company, Delegation, Work } from '../src/types.js';
 import type { CasResult } from '../src/ports/repositories.js';
 import type { JournalEntry } from '../src/ports/idempotency.js';
 import {
   DurableJournalFake,
+  InMemoryBusinessEventRepository,
   InMemoryBusinessReceiptRepository,
   InMemoryCompanyRepository,
   InMemoryDelegationRepository,
+  InMemoryHeartbeatCursorStore,
   InMemoryIdempotencyJournalRepository,
   InMemoryWorkRepository,
 } from '../src/ports/fakes.js';
 import type { JournalFakePersistence } from '../src/ports/fakes.js';
+import type { HeartbeatCursorStore } from '../src/ports/cursors.js';
 
 function sampleCompany(id: string): Company {
   return { companyId: id, purpose: `purpose-${id}` };
@@ -62,6 +65,19 @@ function sampleReceipt(id: string, companyId = 'acme'): BusinessReceipt {
     terminalEventId: 'attempt-1',
     artifactHash: 'sha256:artifact-hash',
     issuedAt: 1750000000000,
+  };
+}
+
+function sampleEvent(eventId: string, companyId: string): BusinessEvent {
+  return {
+    eventId,
+    companyId,
+    aggregateKind: 'work',
+    aggregateId: 'work-1',
+    eventType: 'work.completed',
+    occurredAt: 1750000000000,
+    payload: { workId: 'work-1' },
+    source: 'worker',
   };
 }
 
@@ -551,6 +567,89 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       attemptId: 'att:acme:key-1',
     });
     expect(lost).toEqual({ ok: false, reason: 'attempt-in-flight' });
+  });
+});
+
+describe('InMemoryHeartbeatCursorStore (supervisor-timer)', () => {
+  it('get on a company with no checkpoint resolves to no cursor', async () => {
+    const store = new InMemoryHeartbeatCursorStore();
+    expect(await store.get('acme')).toBeUndefined();
+  });
+
+  it('upsert creates the checkpoint, readable by get', async () => {
+    const store = new InMemoryHeartbeatCursorStore();
+    await store.upsert('acme', { lastEventId: 'evt:5' });
+    expect(await store.get('acme')).toEqual({ lastEventId: 'evt:5' });
+  });
+
+  it('a second upsert REPLACES the checkpoint (atomic upsert, not insert-only)', async () => {
+    const store = new InMemoryHeartbeatCursorStore();
+    await store.upsert('acme', { lastEventId: 'evt:5' });
+    await store.upsert('acme', { lastEventId: 'evt:9' });
+    expect(await store.get('acme')).toEqual({ lastEventId: 'evt:9' });
+  });
+
+  it('upsert for company A leaves company B unchanged (tenant isolation)', async () => {
+    const store = new InMemoryHeartbeatCursorStore();
+    await store.upsert('company-a', { lastEventId: 'evt:a-3' });
+    await store.upsert('company-b', { lastEventId: 'evt:b-1' });
+    await store.upsert('company-a', { lastEventId: 'evt:a-7' });
+
+    expect(await store.get('company-a')).toEqual({ lastEventId: 'evt:a-7' });
+    expect(await store.get('company-b')).toEqual({ lastEventId: 'evt:b-1' });
+  });
+
+  it('rejects an empty companyId on get and upsert (requireCompanyId parity)', async () => {
+    const store = new InMemoryHeartbeatCursorStore();
+    await expect(store.get('')).rejects.toThrow(/companyId/i);
+    await expect(store.upsert('', { lastEventId: 'evt:1' })).rejects.toThrow(/companyId/i);
+  });
+
+  it('is assignable to the HeartbeatCursorStore port contract', () => {
+    const port: HeartbeatCursorStore = new InMemoryHeartbeatCursorStore();
+    expect(port).toBeInstanceOf(InMemoryHeartbeatCursorStore);
+    expectTypeOf<keyof HeartbeatCursorStore>().toEqualTypeOf<'get' | 'upsert'>();
+  });
+});
+
+describe('InMemoryBusinessEventRepository — listCompanyIds (supervisor-timer)', () => {
+  it('returns each company exactly once, in insertion-first-seen order', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    await repo.append(sampleEvent('evt:a-1', 'company-a'));
+    await repo.append(sampleEvent('evt:b-1', 'company-b'));
+    await repo.append(sampleEvent('evt:a-2', 'company-a'));
+    await repo.append(sampleEvent('evt:b-2', 'company-b'));
+
+    expect(await repo.listCompanyIds()).toEqual(['company-a', 'company-b']);
+  });
+
+  it('repeated appends for one company never duplicate its id (triangulation)', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    await repo.append(sampleEvent('evt:a-1', 'company-a'));
+    await repo.append(sampleEvent('evt:a-2', 'company-a'));
+    await repo.append(sampleEvent('evt:b-1', 'company-b'));
+    await repo.append(sampleEvent('evt:a-3', 'company-a'));
+
+    expect(await repo.listCompanyIds()).toEqual(['company-a', 'company-b']);
+  });
+
+  it('an empty log resolves to an empty list', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    expect(await repo.listCompanyIds()).toEqual([]);
+  });
+
+  it('is read-only: the event log snapshot is unchanged by listing', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const a1 = sampleEvent('evt:a-1', 'company-a');
+    const b1 = sampleEvent('evt:b-1', 'company-b');
+    await repo.append(a1);
+    await repo.append(b1);
+
+    expect(await repo.listCompanyIds()).toEqual(['company-a', 'company-b']);
+
+    // The append-only log is untouched: same count, same events, same order.
+    expect(await repo.listByCompany('company-a')).toEqual([a1]);
+    expect(await repo.listByCompany('company-b')).toEqual([b1]);
   });
 });
 

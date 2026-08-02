@@ -16,11 +16,13 @@ export type { DbConnection, DbRow } from './connection.js';
 export { PgDelegationRepository } from './delegation-adapter.js';
 export { PERSISTENT_PORT_DISCLOSURE } from './disclosure.js';
 export { PgEvidenceRepository } from './evidence-adapter.js';
+export { PgHeartbeatCursorRepository } from './heartbeat-cursor-adapter.js';
 export { PgIdempotencyJournalRepository } from './idempotency-adapter.js';
 export { PgDbConnection } from './pg-connection.js';
 export {
   parseBusinessEventRow,
   parseBusinessReceiptRow,
+  parseHeartbeatCursorRow,
   parseSkillRow,
   parseWorkRow,
 } from './row-guards.js';

@@ -74,4 +74,17 @@ export class PgBusinessEventRepository {
       return parsed.value;
     });
   }
+
+  async listCompanyIds(): Promise<readonly string[]> {
+    // Read-only distinct company discovery (supervisor-timer, design): each
+    // company represented in the log exactly once. No ORDER BY — the design
+    // leaves PG DISTINCT row order unspecified ("no ORDER required by spec");
+    // the in-memory fake is the deterministic insertion-first-seen variant.
+    // The SELECT is READ-ONLY — it never appends, updates, or deletes events.
+    const rows = await this.conn.query<{ companyId: string }>(
+      'SELECT DISTINCT company_id AS "companyId" FROM business_event',
+      [],
+    );
+    return rows.map((row) => row.companyId);
+  }
 }

@@ -8,7 +8,10 @@ import type {
   HeartbeatCursor as IndexedCursor,
   HeartbeatDecision as IndexedDecision,
 } from '../src/index.js';
-import { evaluateHeartbeat as indexedEvaluate } from '../src/index.js';
+import {
+  evaluateHeartbeat as indexedEvaluate,
+  tailCursor as indexedTailCursor,
+} from '../src/index.js';
 import { InMemoryBusinessEventRepository } from '../src/ports/fakes.js';
 import type { BusinessEvent } from '../src/types.js';
 
@@ -188,6 +191,28 @@ describe('deterministic novelty filter (R3)', () => {
   it('module source contains no clock, randomness, or generated-id sources', () => {
     const source = readFileSync(new URL('../src/heartbeat.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/Date\.now\(|new Date\(|Math\.random\(|performance\.now\(|crypto\./);
+  });
+});
+
+describe('tailCursor (supervisor-timer: pure tail cursor)', () => {
+  it('returns the FINAL event id in stream order as lastEventId for a non-empty stream', () => {
+    const events = [sampleEvent('evt:1'), sampleEvent('evt:2'), sampleEvent('evt:3')];
+    expect(heartbeat.tailCursor(events)).toEqual({ lastEventId: 'evt:3' });
+  });
+
+  it('returns no cursor for an empty stream', () => {
+    expect(heartbeat.tailCursor([])).toBeUndefined();
+  });
+
+  it('is stream-ordered, never lexicographic: the APPENDED-LAST event is the tail', () => {
+    // 'evt:aaa' sorts earlier than 'evt:zzz' but was appended LAST → it is the tail.
+    const events = [sampleEvent('evt:zzz'), sampleEvent('evt:aaa')];
+    expect(heartbeat.tailCursor(events)).toEqual({ lastEventId: 'evt:aaa' });
+  });
+
+  it('index re-exports tailCursor with runtime parity', () => {
+    const events = [sampleEvent('evt:1'), sampleEvent('evt:2')];
+    expect(indexedTailCursor(events)).toEqual(heartbeat.tailCursor(events));
   });
 });
 

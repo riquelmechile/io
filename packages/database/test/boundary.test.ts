@@ -359,6 +359,10 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       // + row guard.
       expect(databaseApi.PgSkillRepository).toBeTypeOf('function');
       expect(databaseApi.parseSkillRow).toBeTypeOf('function');
+      // supervisor-timer additions (design migration 008): the heartbeat cursor
+      // adapter + row guard.
+      expect(databaseApi.PgHeartbeatCursorRepository).toBeTypeOf('function');
+      expect(databaseApi.parseHeartbeatCursorRow).toBeTypeOf('function');
       // Type exports are erased; assert the namespace carries the runtime classes.
       expect(Object.keys(databaseApi).sort()).toEqual(
         [
@@ -370,12 +374,14 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgDbConnection',
           'PgDelegationRepository',
           'PgEvidenceRepository',
+          'PgHeartbeatCursorRepository',
           'PgIdempotencyJournalRepository',
           'PgSkillRepository',
           'PgWorkRepository',
           'completeWorkAtomically',
           'parseBusinessEventRow',
           'parseBusinessReceiptRow',
+          'parseHeartbeatCursorRow',
           'parseSkillRow',
           'parseWorkRow',
         ].sort(),

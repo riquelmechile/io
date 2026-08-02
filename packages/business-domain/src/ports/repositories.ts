@@ -58,9 +58,11 @@ export interface BusinessReceiptRepository {
 /**
  * Append-only repository for business facts (R2): events are WRITE-ONCE records
  * of what happened. The surface is deliberately limited to `append` (persist one
- * event, return an immutable view) and `listByCompany` (tenant-scoped read in
- * insertion order). There is NO update, delete, overwrite, or get-by-id — an
- * event is a fact, and facts are never mutated. Every read MUST be scoped by a
+ * event, return an immutable view), `listByCompany` (tenant-scoped read in
+ * insertion order), and read-only `listCompanyIds` (each company represented in
+ * the log exactly once, in insertion-first-seen order — the supervisor's company
+ * discovery). There is NO update, delete, overwrite, or get-by-id — an event is
+ * a fact, and facts are never mutated. Every scoped read MUST be guarded by a
  * mandatory, non-empty `companyId` (ADR-0002/R8) and MUST NOT return another
  * company's events. Methods return a `Promise` — a real adapter is I/O-bound.
  * The port carries ZERO persistence knowledge; a downstream adapter (PG, file,
@@ -69,6 +71,9 @@ export interface BusinessReceiptRepository {
 export interface BusinessEventRepository {
   append(event: BusinessEvent): Promise<Readonly<BusinessEvent>>;
   listByCompany(companyId: string): Promise<readonly BusinessEvent[]>;
+  /** Read-only distinct company discovery (supervisor-timer): each company
+   * appears exactly once, in insertion-first-seen order; never mutates events. */
+  listCompanyIds(): Promise<readonly string[]>;
 }
 
 /**

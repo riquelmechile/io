@@ -2,6 +2,7 @@ import type {
   BusinessEvent,
   BusinessReceipt,
   Deliverable,
+  HeartbeatCursor,
   Skill,
   SkillState,
   Work,
@@ -193,6 +194,27 @@ export function parseBusinessEventRow(input: unknown): RowGuardResult<BusinessEv
       payload: row.payload as Readonly<Record<string, unknown>>,
       source: row.source as string,
     },
+  };
+}
+
+/**
+ * Validate a `heartbeat_cursor` table row (as aliased by the adapter) before
+ * use. `lastEventId` must be a non-empty string — the checkpoint's single
+ * meaningful field (the row's PK `company_id` and `updated_at` are write-time
+ * metadata the adapter never returns). Rows read from PG are UNTRUSTED bytes
+ * (D7): a corrupt row is an integrity violation — fail loudly.
+ */
+export function parseHeartbeatCursorRow(input: unknown): RowGuardResult<HeartbeatCursor> {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return fail('heartbeat cursor row must be an object');
+  }
+  const row = input as Record<string, unknown>;
+  if (!isNonEmptyString(row.lastEventId)) {
+    return fail('heartbeat cursor row lastEventId must be a non-empty string');
+  }
+  return {
+    ok: true,
+    value: { lastEventId: row.lastEventId as string },
   };
 }
 

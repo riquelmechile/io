@@ -1,4 +1,6 @@
 import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
+import type { HeartbeatCursor } from '../heartbeat.js';
+import type { HeartbeatCursorStore } from './cursors.js';
 import type {
   IdempotencyJournalPort,
   JournalClaimResult,
@@ -162,6 +164,40 @@ export class InMemoryBusinessEventRepository implements BusinessEventRepository 
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
     requireCompanyId(companyId);
     return this.entries.filter((entry) => entry.companyId === companyId);
+  }
+
+  async listCompanyIds(): Promise<readonly string[]> {
+    // Read-only distinct discovery: insertion-first-seen order (the design's
+    // fake parity for `SELECT DISTINCT company_id`), never mutating the log.
+    const seen = new Set<string>();
+    for (const entry of this.entries) {
+      seen.add(entry.companyId);
+    }
+    return [...seen];
+  }
+}
+
+/**
+ * In-memory fake for the heartbeat cursor store port (supervisor-timer):
+ * map-backed, immutable returns, atomic upsert, no I/O. Mirrors the 008
+ * `heartbeat_cursor` table semantics: one checkpoint per company
+ * (PRIMARY KEY company_id), upsert creates-or-replaces exactly that one row,
+ * and a read for a company without a checkpoint resolves to `undefined`.
+ * Not durable — restart/durability is demonstrated against live PG (Batch 2);
+ * this fake covers the get/upsert decision logic.
+ */
+export class InMemoryHeartbeatCursorStore implements HeartbeatCursorStore {
+  private readonly entries = new Map<string, HeartbeatCursor>();
+
+  async get(companyId: string): Promise<HeartbeatCursor | undefined> {
+    requireCompanyId(companyId);
+    return this.entries.get(companyId);
+  }
+
+  async upsert(companyId: string, cursor: HeartbeatCursor): Promise<void> {
+    requireCompanyId(companyId);
+    // Atomic create-or-replace for THIS company only (008 ON CONFLICT parity).
+    this.entries.set(companyId, cursor);
   }
 }
 

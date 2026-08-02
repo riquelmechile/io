@@ -10,6 +10,7 @@ const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
 const SCHEMA_005 = join(pkgRoot, 'sql', '005_journal_retryable_status.sql');
 const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
 const SCHEMA_007 = join(pkgRoot, 'sql', '007_skills.sql');
+const SCHEMA_008 = join(pkgRoot, 'sql', '008_heartbeat_cursor.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -233,6 +234,44 @@ describe('sql/007_skills.sql (skill table — R6, design §007)', () => {
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
     expect(statements.length).toBeGreaterThanOrEqual(3);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
+  });
+});
+
+describe('sql/008_heartbeat_cursor.sql (heartbeat_cursor table — supervisor-timer)', () => {
+  function read008(): string {
+    return existsSync(SCHEMA_008) ? readFileSync(SCHEMA_008, 'utf8') : '';
+  }
+
+  it('ships sql/008_heartbeat_cursor.sql', () => {
+    expect(existsSync(SCHEMA_008)).toBe(true);
+  });
+
+  it('creates heartbeat_cursor with a PRIMARY KEY on company_id (IF NOT EXISTS)', () => {
+    const sql = read008();
+    expect(sql).toMatch(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+heartbeat_cursor/i);
+    // One checkpoint per company (tenant scoping, ADR-0002) — PK on company_id.
+    for (const column of [
+      'company_id TEXT PRIMARY KEY',
+      'last_event_id TEXT NOT NULL',
+      'updated_at BIGINT NOT NULL',
+    ]) {
+      expect(sql).toContain(column);
+    }
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read008()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(1);
     for (const statement of statements) {
       expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
     }

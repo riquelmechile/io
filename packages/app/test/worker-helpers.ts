@@ -220,6 +220,10 @@ export class RecordingEvents implements BusinessEventRepository {
     this.listCalls.push(companyId);
     return this.inner.listByCompany(companyId);
   }
+
+  async listCompanyIds(): Promise<readonly string[]> {
+    return this.inner.listCompanyIds();
+  }
 }
 
 /** Skill-store double (R7 worker seam): delegates to the in-memory skill

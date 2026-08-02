@@ -68,3 +68,17 @@ export function evaluateHeartbeat(
     ? { kind: 'activate', model: 'flash' }
     : { kind: 'no-llm-heartbeat' };
 }
+
+/**
+ * Tail of the event stream in INSERTION (stream) order (supervisor-timer):
+ * the `lastEventId` of the final event, or `undefined` for an empty stream.
+ * Never lexicographic — the LAST-APPENDED event is the tail, mirroring the
+ * repository's `ORDER BY id ASC` read order. Pure: the supervisor's durable
+ * cursor is derived ONLY from the stream, never from clocks, LLMs, randomness,
+ * or generated identifiers.
+ */
+export function tailCursor(events: readonly BusinessEvent[]): HeartbeatCursor | undefined {
+  const tail = events.at(-1);
+  if (tail === undefined) return undefined;
+  return { lastEventId: tail.eventId };
+}

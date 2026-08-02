@@ -174,4 +174,43 @@ describe.skipIf(!reachable)('integration: real PG business_event round-trip (R4,
       expect(await eventsRepo.listByCompany('acme')).toHaveLength(2);
     });
   });
+
+  describe('listCompanyIds — read-only distinct company discovery (supervisor-timer)', () => {
+    it('returns each company exactly once across interleaved events (DISTINCT)', async () => {
+      await eventsRepo.append(sampleEvent('attempt-a1', 'company-a'));
+      await eventsRepo.append(sampleEvent('attempt-b1', 'company-b'));
+      await eventsRepo.append(sampleEvent('attempt-a2', 'company-a'));
+      await eventsRepo.append(sampleEvent('attempt-a3', 'company-a'));
+      await eventsRepo.append(sampleEvent('attempt-b2', 'company-b'));
+
+      const ids = await eventsRepo.listCompanyIds();
+      // DISTINCT selection: A and B each appear EXACTLY once (spec scenario).
+      // The design leaves PG DISTINCT row order unspecified ("no ORDER required
+      // by spec"; the fake guarantees insertion-first-seen) — assert set
+      // membership, not order, so the test is deterministic on real PG.
+      expect([...ids].sort()).toEqual(['company-a', 'company-b']);
+      expect(ids).toHaveLength(2);
+    });
+
+    it('is read-only: the event snapshot stays unchanged (no mutation)', async () => {
+      await eventsRepo.append(sampleEvent('attempt-a1', 'company-a'));
+      await eventsRepo.append(sampleEvent('attempt-b1', 'company-b'));
+      const beforeA = await eventsRepo.listByCompany('company-a');
+      const beforeB = await eventsRepo.listByCompany('company-b');
+
+      await eventsRepo.listCompanyIds();
+
+      // Snapshot unchanged after discovery — terminal-close facts remain the
+      // only worker-emitted events (spec: Discovery preserves event facts).
+      expect(await eventsRepo.listByCompany('company-a')).toEqual(beforeA);
+      expect(await eventsRepo.listByCompany('company-b')).toEqual(beforeB);
+      const all = [...beforeA, ...beforeB];
+      expect(all.every((entry) => entry.source === 'worker')).toBe(true);
+      expect(all.every((entry) => entry.eventType === 'work.completed')).toBe(true);
+    });
+
+    it('a table with no events yields an empty list (DISTINCT over zero rows)', async () => {
+      expect(await eventsRepo.listCompanyIds()).toEqual([]);
+    });
+  });
 });

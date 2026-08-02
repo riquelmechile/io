@@ -13,6 +13,7 @@ export {
   InMemoryBusinessReceiptRepository,
   InMemoryCompanyRepository,
   InMemoryDelegationRepository,
+  InMemoryHeartbeatCursorStore,
   InMemoryIdempotencyJournalRepository,
   InMemorySkillRepository,
   InMemoryWorkRepository,
@@ -25,6 +26,7 @@ export type {
   NewJournalEntry,
 } from './ports/idempotency.js';
 export { isUnresolvedJournalResult } from './ports/idempotency.js';
+export type { HeartbeatCursorStore } from './ports/cursors.js';
 export type {
   BusinessEventRepository,
   BusinessReceiptRepository,
@@ -45,6 +47,7 @@ export {
   hasMaterialNovelty,
   isMaterialEvent,
   MATERIAL_EVENT_TYPES,
+  tailCursor,
 } from './heartbeat.js';
 export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 export type {
