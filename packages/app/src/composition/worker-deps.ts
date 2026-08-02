@@ -48,6 +48,11 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): WorkerDeps {
     work: new PgWorkRepository(connection),
     delegation: new PgDelegationRepository(connection),
     skills: new PgSkillRepository(connection),
+    // Read-only heartbeat seam (R6): pool-bound PG event adapter at the TOP
+    // LEVEL of WorkerDeps — the app evaluator reads the company's event
+    // stream here, OUTSIDE the worker cycle and outside any transaction.
+    // The worker cycle never calls this seam this slice (read-only surface).
+    events: new PgBusinessEventRepository(connection),
     receipts: new PgBusinessReceiptRepository(connection),
     journal: new PgIdempotencyJournalRepository(connection),
     sandbox: new FileDocumentSandbox(sandboxRoot),

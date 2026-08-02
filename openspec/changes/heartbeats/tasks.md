@@ -42,10 +42,10 @@ Phase gate: `pnpm check`.
 
 Per-task verify: `pnpm vitest run packages/app/test/heartbeat` (add `--no-file-parallelism` for 2.4).
 
-- [ ] 2.1 RED+GREEN seam plumbing: RED asserts top-level `events` on deps (fails); GREEN `src/worker/types.ts` adds `events: BusinessEventRepository` to `WorkerDeps`, `test/worker-helpers.ts` adds `RecordingEvents.listCalls`, `src/composition/worker-deps.ts` wires `events: new PgBusinessEventRepository(connection)`; `test/composition/worker-deps.test.ts` asserts instance. [R6]
-- [ ] 2.2 RED `packages/app/test/heartbeat/evaluate.test.ts`: table — empty stream → no-llm; unseen `work.completed` → activate; seen cursor → no-llm; `listCalls.length === 1`, `appends.length === 0`; empty `companyId` rejected before list. [R6, R7]
-- [ ] 2.3 GREEN create `packages/app/src/heartbeat/evaluate.ts` `evaluateHeartbeatForCompany({events}, companyId, cursor?)`: reject empty tenant before read; exactly one `listByCompany`; return domain decision; zero writes. [R6]
-- [ ] 2.4 RED+GREEN `packages/app/test/heartbeat/heartbeat.integration.test.ts` (sequential; `skipIf(!reachable && !e2eRequirePg)`; e2e harness): post-`runWorker` cycle ⇒ activate; fresh company ⇒ no-llm. [R6, R7]
+- [x] 2.1 RED+GREEN seam plumbing: RED asserts top-level `events` on deps (fails); GREEN `src/worker/types.ts` adds `events: BusinessEventRepository` to `WorkerDeps`, `test/worker-helpers.ts` adds `RecordingEvents.listCalls`, `src/composition/worker-deps.ts` wires `events: new PgBusinessEventRepository(connection)`; `test/composition/worker-deps.test.ts` asserts instance. [R6]
+- [x] 2.2 RED `packages/app/test/heartbeat/evaluate.test.ts`: table — empty stream → no-llm; unseen `work.completed` → activate; seen cursor → no-llm; `listCalls.length === 1`, `appends.length === 0`; empty `companyId` rejected before list. [R6, R7]
+- [x] 2.3 GREEN create `packages/app/src/heartbeat/evaluate.ts` `evaluateHeartbeatForCompany({events}, companyId, cursor?)`: reject empty tenant before read; exactly one `listByCompany`; return domain decision; zero writes. [R6]
+- [x] 2.4 RED+GREEN `packages/app/test/heartbeat/heartbeat.integration.test.ts` (sequential; `skipIf(!reachable && !e2eRequirePg)`; e2e harness): post-`runWorker` cycle ⇒ activate; fresh company ⇒ no-llm. [R6, R7]
 
 Phase gate: `pnpm check`.
 

@@ -86,6 +86,13 @@ export interface WorkerDeps {
    * segment 7. The worker stays PG-agnostic — the adapter is bound at the
    * composition root. Read-only: the worker NEVER saves skills. */
   skills: SkillRepository;
+  /**
+   * Read-only heartbeat seam (heartbeat R6, skills precedent): the app
+   * evaluator reads the company's business-event stream through this port to
+   * decide Flash activation. Pool-bound at the composition root; the worker
+   * cycle itself never calls it this slice — it is a READ-ONLY surface.
+   */
+  events: BusinessEventRepository;
   receipts: BusinessReceiptRepository;
   journal: IdempotencyJournalPort;
   sandbox: SandboxPort;

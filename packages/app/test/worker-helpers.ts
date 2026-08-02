@@ -201,9 +201,13 @@ export class RecordingReceipts implements BusinessReceiptRepository {
 
 /** Event-repository double (R5, PR3): records every appended event so the
  * finalize tests can assert EXACTLY ONE `work.completed` append per close,
- * zero appends on CAS loss / replay, and R6 determinism. */
+ * zero appends on CAS loss / replay, and R6 determinism. Also records every
+ * tenant-scoped `listByCompany` call (heartbeat R6 read-only seam) so the
+ * evaluator tests can assert EXACTLY ONE list per evaluation and zero writes. */
 export class RecordingEvents implements BusinessEventRepository {
   readonly appends: BusinessEvent[] = [];
+  /** Every tenant passed to `listByCompany`, in call order (heartbeat R6). */
+  readonly listCalls: string[] = [];
   private readonly inner = new InMemoryBusinessEventRepository();
 
   async append(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
@@ -213,6 +217,7 @@ export class RecordingEvents implements BusinessEventRepository {
   }
 
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
+    this.listCalls.push(companyId);
     return this.inner.listByCompany(companyId);
   }
 }

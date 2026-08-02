@@ -83,6 +83,10 @@ describe('buildWorkerDeps — composition root wiring + injectivity (task 1.1)',
       // composition root binds the PG adapter so the worker can fetch the
       // company's skills WITHOUT knowing the adapter exists.
       expect(deps.skills).toBeInstanceOf(PgSkillRepository);
+      // The read-only heartbeat seam (R6): the composition root binds the
+      // pool-bound PG event adapter at the TOP LEVEL of WorkerDeps so the app
+      // evaluator can read the company's event stream without the worker cycle.
+      expect(deps.events).toBeInstanceOf(PgBusinessEventRepository);
       expect(deps.sandbox).toBeInstanceOf(FileDocumentSandbox);
       expect(deps.connection).toBe(conn);
       expect(deps.principals).toBe(E2E_PRINCIPALS);
