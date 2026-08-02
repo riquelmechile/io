@@ -50,4 +50,4 @@ Chain strategy: stacked-to-main
 ## Phase 5: Full Verification + Commit
 
 - [x] **5.1 Full gate green.** `PATH=/data/node24/bin:$PATH pnpm test` (sequential PG) + `PATH=/data/node24/bin:$PATH pnpm check` green vs ~968-test baseline (main@24153c7).
-- [ ] **5.2 Work-unit commit.** Single PR: `cycle.ts` + `cycle.test.ts` + integration delta + this `tasks.md` together. Conventional commit (no AI attribution).
+- [x] **5.2 Work-unit commit.** Single PR: `cycle.ts` + `cycle.test.ts` + integration delta + this `tasks.md` together. Conventional commit (no AI attribution). **Done: commit 71f67ec (pushed).**
