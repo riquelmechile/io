@@ -14,15 +14,45 @@
 
 | Rev | Fecha | `main` | Qué cambió en este doc | Por qué cambió |
 |-----|-------|--------|------------------------|----------------|
-| **3** (vigente) | 2026-08-01 | `2523614` | Paso 2 `first-enterprise-vertical` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 3 pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **604 → 757** (+E2E 9/9 vs PG vivo). Se registra la decisión del usuario (marker reintentable = paridad con la fundación) y las 3 correcciones del review adversarial. El snapshot de Rev 2 se conserva marcado como superado. | El ciclo SDD `first-enterprise-vertical` se completó: **18/18 requisitos, 47/47 escenarios, 0 blockers**, verify **PASS**, review adversarial CLEAN por slice (A/B/C). La primera vertical de empresa corre de punta a punta contra PostgreSQL vivo. |
+| **4** (vigente) | 2026-08-01 | `d5b42e9` | Paso 3 pasa de "🔄 SIGUIENTE" a **"✅ COMPLETO"** (6 slices verificados + archivados + pusheados). Se agrega trazabilidad por slice (archive, spec canónica, commits). Conteo de tests **757 → 968**. Specs synced **17 → 21** (4 NEW: `context-compiler`, `business-event`, `skill`, `heartbeat`). Hito acumulado: worker end-to-end vs DeepSeek V4 real + PG vivo, contexto compilado (KV-cache, skills en segmento 7), log append-only BusinessEvent y pre-gate determinístico §13.2 (heartbeats). El snapshot de Rev 3 se conserva marcado como superado. | Los 6 slices del roadmap de Paso 3 se completaron en limpio (context-compiler, deepseek-live-e2e, businessevent, first-skill, skill-segment7, heartbeats): ciclos SDD con verify **PASS** —o PASS WITH WARNINGS por el flake PG preexistente—, archivados y pusheados. |
+| **3** (superada) | 2026-08-01 | `2523614` | Paso 2 `first-enterprise-vertical` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 3 pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **604 → 757** (+E2E 9/9 vs PG vivo). Se registra la decisión del usuario (marker reintentable = paridad con la fundación) y las 3 correcciones del review adversarial. El snapshot de Rev 2 se conserva marcado como superado. | El ciclo SDD `first-enterprise-vertical` se completó: **18/18 requisitos, 47/47 escenarios, 0 blockers**, verify **PASS**, review adversarial CLEAN por slice (A/B/C). La primera vertical de empresa corre de punta a punta contra PostgreSQL vivo. |
 | **2** (superada) | 2026-07-31 | `4cc0b15` | Paso 1 `harden` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 2 `first-enterprise-vertical` pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **411 → 604**. Se agrega evidencia de verify por slice y el snapshot de Rev 1 se conserva marcado como superado. | El ciclo limpio `harden-first-enterprise-vertical-foundation` se completó: **18/18 requisitos, 61/61 escenarios, 0 blockers, 0 critical**, review adversarial CLEAN en cada slice (A/B/C). Se cumplió la *regla de oro* (no abrir la vertical sin harden limpio) → la vertical queda desbloqueada. |
 | **1** (superada) | 2026-07-31 | `4ea1653` | Versión inicial. Baseline `deepseek-client` cerrada; `harden` como Paso 1 pendiente; `first-enterprise-vertical` como Paso 2. | Reset a una baseline limpia tras el ciclo harden **contaminado** (hacks de gate: findings vacíos inyectados y gap-fixes post-verify). Se documentó el punto de partida estable para rehacer el harden en limpio. |
 
-**Estado actual (Rev 3):** `main @ 2523614` = `origin/main`. Working tree limpio. Siguiente: Paso 3.
+**Estado actual (Rev 4):** `main @ d5b42e9` = `origin/main`. Working tree limpio. Paso 3 **COMPLETO**. Siguiente: actuar sobre la decisión de heartbeat (worker-cycle branching) — ver "Próximos pasos" en Paso 3.
 
 ---
 
-## Estado actual (Rev 3 — vigente)
+## Estado actual (Rev 4 — vigente)
+
+| Check | Resultado |
+|-------|-----------|
+| Commit | `d5b42e9` — archive `heartbeats` (último de los 6 slices de Paso 3) |
+| GitHub `main` | = local = `d5b42e9` |
+| `pnpm check` | GREEN (format, tsc, build, lint, test) |
+| Tests | **968 passed / 6 skipped** (suite secuencial; ver flake PG diferido en Paso 3) |
+| E2E PG 18.4 | GREEN contra PostgreSQL vivo (worker E2E + round-trips de skill / business-event / heartbeat) |
+| Paso 3 | **✅ COMPLETO** — 6/6 slices archivados y pusheados (ver trazabilidad en Paso 3) |
+| Specs synced | 4 NEW (`context-compiler`, `business-event`, `skill`, `heartbeat`) + MODIFIED (`worker-cycle`, `context-compiler`, `skill`) en `openspec/specs/` (total 21) |
+| Archive (último) | `openspec/changes/archive/2026-08-01-heartbeats/` |
+
+### Evolución del conteo de tests (durante Rev 4)
+
+| Momento | Tests | Delta / motivo |
+|---------|-------|----------------|
+| Baseline (Rev 3, `2523614`) | 757 passed / 3 skipped | Fundación vertical verde |
+| context-compiler (`@io/context` + §7.2 + cohort) | 813 passed / 3 skipped | +56 (compiler puro, golden pins, wiring a `prepareIntent`) |
+| deepseek-live-e2e (composition root + E2E real) | 829 passed / 6 skipped | +16 (`buildWorkerDeps`, E2E doble-gate vs DeepSeek V4 real) |
+| businessevent (log append-only + emisión T1) | 868 passed / 6 skipped | +39 (tipo, port, adapter PG 006, emisión atómica) |
+| first-skill (Skill versionada + activación) | 922 passed / 6 skipped | +54 (tipo, registry, `activeSkillsFor`, PG 007) |
+| skill-segment7 (skills en segmento 7 + schema v2) | 936 passed / 6 skipped | +14 (render segmento 7, golden v2, seam worker) |
+| heartbeats (filtro de novedad §13.2) | **968 passed / 6 skipped** | +32 (`evaluateHeartbeat` puro + seam read-only) |
+
+---
+
+## Snapshot histórico (Rev 3 — superada, se conserva para trazabilidad)
+
+> ⚠️ **Este bloque refleja el estado a `2523614` (first-enterprise-vertical cerrado) y YA NO es el punto de partida vigente.**
 
 | Check | Resultado |
 |-------|-----------|
@@ -219,23 +249,61 @@ explore → propose → design → spec → tasks
 
 ---
 
-## Paso 3 — Después de vertical verde 🔄 SIGUIENTE (desbloqueado en Rev 3)
+## Paso 3 — Después de vertical verde ✅ COMPLETO EN REV 4
 
-Context compiler → DeepSeek live E2E → BusinessEvent → un skill → heartbeats → roadmap.
+> **Transición:** Rev 3 "🔄 SIGUIENTE" → Rev 4 "✅ COMPLETO" (6 slices verificados + archivados + pusheados; HEAD `d5b42e9`).
+> **Por qué:** se completó la secuencia del roadmap — Context compiler → DeepSeek live E2E → BusinessEvent → un skill → heartbeats → roadmap — con ciclos SDD limpios, verify **PASS** (o PASS WITH WARNINGS por el flake PG preexistente) y review adversarial por slice.
+
+**Secuencia (cumplida):** Context compiler → DeepSeek live E2E → BusinessEvent → un skill → heartbeats → roadmap.
+
+**Hito acumulado:** el worker corre end-to-end contra **DeepSeek V4 real + PostgreSQL vivo**, con contexto compilado (prefijo byte-stable + KV-cache, skills en segmento 7), emite un log append-only de hechos de negocio (**BusinessEvent**) en el cierre terminal, y tiene el pre-gate determinístico de heartbeats (**§13.2**) que decide `no-llm-heartbeat | activate flash` desde los hechos, sin juicio del modelo.
+
+### Trazabilidad por slice
+
+| # | Slice | Entregó | Archive | Spec canónica | Commits |
+|---|-------|---------|---------|---------------|---------|
+| 1 | `context-compiler` | Compiler puro `@io/context`: orden §7.2 de 13 segmentos, prefijo byte-stable + cache-cohort, wiring a `prepareIntent` | `archive/2026-08-01-context-compiler/` | `context-compiler` (NEW · 7 req / 12 scen) | archive `0c124fd` · PRs `3458b81`/`54a1905`/`5dcd699` |
+| 2 | `deepseek-live-e2e` | Composition root `buildWorkerDeps` + E2E doble-gate vs DeepSeek V4 real; KV-cache economics reales | `archive/2026-08-01-deepseek-live-e2e/` | `worker-cycle` (MODIFIED · +6 req) | archive `7825a7f` · PRs `b935511`/`ff9a670` |
+| 3 | `businessevent` | Log append-only de hechos de negocio, emisión atómica en T1 junto a CAS / receipt / journal | `archive/2026-08-01-businessevent/` | `business-event` (NEW · 9 req / 12 scen) | archive `de154e5` · PRs `794f009`/`eef6efc`/`11050db` |
+| 4 | `first-skill` | `Skill` versionada + registry append-only + activación cohort-safe (`activeSkillsFor`) + PG INSERT-only (007) | `archive/2026-08-01-first-skill/` | `skill` (NEW · 8 req / 10 scen) | archive `f9bd5d9` · PRs `0790e29`/`c6340dc` |
+| 5 | `skill-segment7` | Render de skills activas en segmento 7 del prefijo + `CONTEXT_SCHEMA_VERSION` 1→2 + golden v2 + seam worker | `archive/2026-08-01-skill-segment7/` | `context-compiler` + `skill` (MODIFIED · R1/R2/R6 y R7) | archive `2f25358` · PRs `64ff904`/`68a14dc` |
+| 6 | `heartbeats` | Filtro de novedad determinístico §13.2 (`evaluateHeartbeat` puro, sin LLM / reloj) + seam read-only sobre el stream de BusinessEvent | `archive/2026-08-01-heartbeats/` | `heartbeat` (NEW · 8 req / 14 scen) | archive `d5b42e9` · PRs `b22e8c5`/`fb24258` |
+
+**Fuera de alcance (respetado):** Memory OS, minions, learning / promotion (Increment 8), CEO, receipts crypto, ejecución de skills por el worker, timer / scheduler, persistencia del cursor.
+
+**Diferido conocido (NO bloqueante):** flake de concurrencia PG preexistente (`business-pg-roundtrip` "two concurrent terminal closes" → `idempotency_journal_attempt_id_key`). No determinístico y fuera del diff de Paso 3; los verify corrieron la suite secuencial y se reclasificó a WARNING con addendum del orquestador.
+
+### Próximos pasos (después de Paso 3)
+
+- [ ] **ACTUAR sobre la decisión de heartbeat** (slice natural siguiente): branching en worker-cycle — saltear `prepareIntent` / `llm.complete` en `no-llm-heartbeat`, correr Flash en `activate` (§2 "costo como parte del razonamiento": el ahorro real del pre-gate construido).
+- [ ] Timer / scheduler / cadencia (intervalo / cron + implicancias de recovery durable).
+- [ ] Persistencia del cursor (dónde vive el marcador last-seen: ¿journal? ¿tabla nueva? ¿in-memory?).
+- [ ] Skill outcome / activation BusinessEvents (más allá de `work.completed`).
+- [ ] Learning / promotion (Increment 8): ciclo candidate → active.
+- [ ] Memory OS.
+- [ ] Extracción de `Skill` al paquete canónico `competency/`.
+- [ ] Aislar el test concurrente del flake PG (o gate secuencial-tolerante).
 
 ---
 
-## Resumen (actualizado en Rev 3)
+## Resumen (actualizado en Rev 4)
 
 ```text
-main @ 2523614  ← AQUÍ ESTAMOS (Rev 3, verificado, pusheado)
+main @ d5b42e9  ← AQUÍ ESTAMOS (Rev 4, verificado, pusheado)
   ├─ domain-foundation (código + specs)
   ├─ deepseek-client (código + archive PASS)
   ├─ harden-first-enterprise-vertical-foundation (CERRADO + archivado + specs synced)
-  └─ first-enterprise-vertical (CERRADO + archivado + 3 specs NEW synced)
+  ├─ first-enterprise-vertical (CERRADO + archivado + 3 specs NEW synced)
+  └─ Paso 3 (COMPLETO + 6 slices archivados + 4 specs NEW synced)
+       ├─ context-compiler (@0c124fd)
+       ├─ deepseek-live-e2e (@7825a7f)
+       ├─ businessevent (@de154e5)
+       ├─ first-skill (@f9bd5d9)
+       ├─ skill-segment7 (@2f25358)
+       └─ heartbeats (@d5b42e9)
 
 siguiente
-  └─ Paso 3 (context compiler, DeepSeek live, BusinessEvent, skill, heartbeats)
+  └─ actuar sobre la decisión de heartbeat (worker-cycle branching + Flash gate)
 ```
 
 ## Regla de oro
@@ -243,3 +311,4 @@ siguiente
 No abrir la vertical sin harden limpio. *(Cumplida en Rev 2; vertical cerrada en Rev 3.)*
 DeepSeek se conserva. Harden se rehace. *(Hecho: harden reconstruido limpio y archivado.)*
 **Apply termina escenarios; verify solo confirma; review no se fabrica.** *(Rev 3: el review adversarial cazó 3 defectos reales — claim brick, doble recibo, atomicidad — y se corrigieron con tests, no se taparon.)*
+**El costo es parte del razonamiento.** *(Rev 4: Paso 3 completó el pre-gate determinístico §13.2 — heartbeats decide no-LLM vs activate-Flash desde los hechos, sin juicio del modelo; el ahorro real llega al ACTUAR sobre esa decisión.)*
