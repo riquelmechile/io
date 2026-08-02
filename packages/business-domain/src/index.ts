@@ -39,6 +39,13 @@ export {
   activeSkillsFor,
   isSkillState,
 } from './skill-activation.js';
+export type { HeartbeatCursor, HeartbeatDecision } from './heartbeat.js';
+export {
+  evaluateHeartbeat,
+  hasMaterialNovelty,
+  isMaterialEvent,
+  MATERIAL_EVENT_TYPES,
+} from './heartbeat.js';
 export { canTransitionDelegation, canTransitionWork, isDelegationActive } from './transitions.js';
 export type {
   AuthorityScope,
