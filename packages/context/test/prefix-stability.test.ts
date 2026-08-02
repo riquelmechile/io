@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { Delegation, Work } from '@io/business-domain/src/index.js';
+import type { Delegation, Skill, Work } from '@io/business-domain/src/index.js';
 import { describe, expect, it } from 'vitest';
 
 import type { CompileContextInput } from '../src/index.js';
@@ -16,7 +16,8 @@ const here = dirname(fileURLToPath(import.meta.url));
  * CONTEXT_SCHEMA_VERSION). Per-delegation detail (expectedOutcome/actions/scope)
  * is NOT a cohort discriminator and MUST NOT change the prefix bytes (R2).
  * Segments 10–13 MUST never leak into those
- * bytes. The golden file pins the exact prefix bytes for CONTEXT_SCHEMA_VERSION=1:
+ * bytes. The golden file pins the exact prefix bytes for
+ * CONTEXT_SCHEMA_VERSION=2 (skills-bearing seed — segment 7 PRESENT):
  * any change to the prefix bytes fails the pin until the golden is deliberately
  * regenerated AND the schema version is bumped (R6).
  */
@@ -44,8 +45,32 @@ const delegation: Delegation = {
   state: 'active',
 };
 
-/** Fully-sourced seed: present stable segments are 1 (protocol) and 8 (process). */
-const seed: CompileContextInput = { companyId: 'acme', process: 'planning', delegation, work };
+/**
+ * One ACTIVE Skill matching the fixture cohort (acme/planning/v2) — the
+ * skills-bearing golden seed. Segment 7 must render PRESENT in every prefix
+ * this file compares, so the inverse-poison cases and the golden pin both
+ * exercise the full skill render.
+ */
+const activeSkill: Skill = {
+  skillId: 'skill-planning-v2',
+  companyId: 'acme',
+  name: 'Planning Procedure',
+  version: 1,
+  body: 'Follow the quarterly planning procedure: collect inputs, then produce a plan.',
+  scope: { process: 'planning', schemaVersion: 2 },
+  state: 'active',
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+/** Fully-sourced seed: present stable segments are 1 (protocol), 7 (active skills), 8 (process). */
+const seed: CompileContextInput = {
+  companyId: 'acme',
+  process: 'planning',
+  delegation,
+  work,
+  skills: [activeSkill],
+};
 
 describe('stable-prefix byte stability (R2 + R6)', () => {
   it('golden pin: prefix bytes for CONTEXT_SCHEMA_VERSION are frozen', () => {
@@ -135,7 +160,9 @@ describe('stable-prefix byte stability (R2 + R6)', () => {
         authorityScope: { scope: 'high-risk-ledger', actions: ['create-document'] },
       },
     };
-    const noDelegation: CompileContextInput = { companyId: 'acme', process: 'planning', work };
+    // No delegation at all — but the SAME tenant store: skills stay, so seg 7
+    // renders identically on both sides (cohort-pure, R2/S3).
+    const noDelegation: CompileContextInput = { ...seed, delegation: undefined };
 
     for (const variant of [differentOutcome, differentActions, differentScope, noDelegation]) {
       const compiled = compileContext(variant);
@@ -147,5 +174,86 @@ describe('stable-prefix byte stability (R2 + R6)', () => {
 
   it('deterministic (no clock/nonce): same input twice ⇒ byte-identical prefix', () => {
     expect(buildStablePrefix(seed)).toBe(buildStablePrefix(seed));
+  });
+});
+
+/**
+ * Inverse cache-poisoning proof for segment 7 (Req R2 S3, skill R7 S2). The
+ * cohort rule is the HEART of this slice: segment 7 bytes MUST be a pure
+ * function of the cohort {companyId, process, schemaVersion} and the tenant
+ * skill-store. Work, delegation, dynamic-tail values, non-matching store
+ * entries (other company/process/schemaVersion, draft/retired, older versions)
+ * and insertion order MUST NOT change a single prefix byte — otherwise a cache
+ * hit could serve skills the current request never matches (DeepSeek KV-cache
+ * poisoning).
+ */
+describe('inverse cache-poisoning proof — seg 7 is cohort-pure (R2 S3, skill R7 S2)', () => {
+  /** Every category of store entry that MUST NOT change the rendered selection. */
+  const nonMatching: readonly Skill[] = [
+    { ...activeSkill, skillId: 'other-company', companyId: 'globex' }, // wrong tenant
+    { ...activeSkill, skillId: 'other-process', scope: { process: 'close', schemaVersion: 2 } },
+    { ...activeSkill, skillId: 'other-schema', scope: { process: 'planning', schemaVersion: 3 } },
+    { ...activeSkill, skillId: 'draft-skill', state: 'draft' },
+    { ...activeSkill, skillId: 'retired-skill', state: 'retired' },
+    { ...activeSkill, skillId: 'skill-planning-v2', version: 0 }, // older version of the matching identity
+  ];
+
+  const withSkills = (skills: readonly Skill[]): CompileContextInput => ({ ...seed, skills });
+
+  it('R2/S3 + R7/S2: segment 7 renders, then non-matching entries + shuffled insertion order cannot change its bytes', () => {
+    const baseline = buildStablePrefix(withSkills([activeSkill]));
+    // The proof only bites when seg 7 is actually PRESENT in the baseline.
+    expect(baseline).toContain('Active skills:');
+    expect(baseline).toContain('skill-planning-v2');
+    // Same cohort + store, but insertion order shuffled and every non-matching
+    // category injected: other company/process/schemaVersion, draft, retired,
+    // and an older version of the matching identity.
+    const poisoned = buildStablePrefix(
+      withSkills([
+        nonMatching[3] as Skill,
+        nonMatching[0] as Skill,
+        activeSkill,
+        nonMatching[5] as Skill,
+        nonMatching[1] as Skill,
+        nonMatching[4] as Skill,
+        nonMatching[2] as Skill,
+      ]),
+    );
+    expect(poisoned).toBe(baseline);
+  });
+
+  it('R2/S3: same cohort + store, different work/delegation/dynamic-tail ⇒ byte-identical prefix incl. seg 7', () => {
+    const baseline = buildStablePrefix(withSkills([activeSkill]));
+    expect(baseline).toContain('Active skills:');
+    const differentWork: CompileContextInput = {
+      ...seed,
+      work: {
+        ...work,
+        workId: 'work-99',
+        description: 'UNIQUE-WORK-MARKER',
+        evidenceRefs: ['ev-poison-1'],
+      },
+      skills: [activeSkill],
+    };
+    const differentDelegation: CompileContextInput = {
+      ...seed,
+      delegation: {
+        ...delegation,
+        delegationId: 'DELEG-POISON',
+        expectedOutcome: 'UNIQUE-OUTCOME-MARKER',
+      },
+      skills: [activeSkill],
+    };
+    expect(buildStablePrefix(differentWork)).toBe(baseline);
+    expect(buildStablePrefix(differentDelegation)).toBe(baseline);
+  });
+
+  it('R2/S3: double compile ⇒ byte-identical prefix incl. seg 7 (deterministic, no clock/nonce)', () => {
+    const compiledInput = withSkills([activeSkill]);
+    expect(buildStablePrefix(compiledInput)).toBe(buildStablePrefix(compiledInput));
+    const compiled = compileContext(compiledInput);
+    const compiledAgain = compileContext(compiledInput);
+    expect(compiled.messages[0]?.content).toBe(compiledAgain.messages[0]?.content);
+    expect(compiled.user).toBe(compiledAgain.user);
   });
 });

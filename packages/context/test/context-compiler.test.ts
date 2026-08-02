@@ -1,7 +1,7 @@
-import type { Work } from '@io/business-domain/src/index.js';
+import type { Skill, Work } from '@io/business-domain/src/index.js';
 import { describe, expect, it } from 'vitest';
 
-import type { CompileContextInput, Segment } from '../src/index.js';
+import type { CompileContextInput, Segment, SegmentRender } from '../src/index.js';
 import { buildStablePrefix, SEGMENTS } from '../src/index.js';
 
 /** A fully-sourced Work fixture: drives segment 11 (current-work) rendering. */
@@ -18,6 +18,36 @@ const work: Work = {
 
 /** Compile input for the fixture: protocol (seg 1) always present, work (seg 11) present. */
 const input = { companyId: 'acme', process: 'planning', work };
+
+/**
+ * Two ACTIVE Skills matching the fixture cohort (acme/planning/v2), with
+ * deliberately DISTINCT marker values for every field so the render can be
+ * asserted field-by-field: only skillId/name/version/body MAY appear; metadata
+ * (createdAt/updatedAt/state/scope/companyId) must never leak into the bytes.
+ */
+const skillA: Skill = {
+  skillId: 'a-skill',
+  companyId: 'acme',
+  name: 'Skill A',
+  version: 1,
+  body: 'BODY-A',
+  scope: { process: 'planning', schemaVersion: 2 },
+  state: 'active',
+  createdAt: 111,
+  updatedAt: 222,
+};
+
+const skillB: Skill = {
+  skillId: 'b-skill',
+  companyId: 'acme',
+  name: 'Skill B',
+  version: 2,
+  body: 'BODY-B',
+  scope: { process: 'planning', schemaVersion: 2 },
+  state: 'active',
+  createdAt: 333,
+  updatedAt: 444,
+};
 
 /**
  * Canonical segment ordering (Req R1): compileContext MUST render the §7.2
@@ -228,5 +258,55 @@ describe('buildStablePrefix — forbidden-leading guard (R3)', () => {
       ...forbiddenSuffix,
     ];
     expect(buildStablePrefix(richInput, synthetic)).toBe('');
+  });
+});
+
+/**
+ * Segment 7 — active skills (Req R1 S1/S2/S3, skill R7 S1/S3). The segment
+ * MUST render cohort-selected active skills ordered by `skillId` ascending with
+ * ONLY the fixed fields {skillId, name, version, body}; an empty selection MUST
+ * render ABSENT with zero bytes (backward compatible — no-skills callers keep
+ * the exact old prefix bytes).
+ */
+describe('segment 7 — active skills render (R1, skill R7)', () => {
+  function renderSeg7(compiled: CompileContextInput): SegmentRender {
+    const segment = SEGMENTS.find((candidate) => candidate.position === 7);
+    if (segment === undefined) throw new Error('no segment at position 7');
+    return segment.render(compiled);
+  }
+
+  it('R1/S1: matching active skills render with fixed fields only, skillId ASC', () => {
+    // Inserted as [skillB, skillA] but must render as [skillA, skillB] (ASC).
+    const rendered = renderSeg7({ ...input, skills: [skillB, skillA] });
+    expect(rendered.present).toBe(true);
+    expect(rendered.text).toBe(
+      'Active skills:\n- id=a-skill name=Skill A v=1\nBODY-A\n- id=b-skill name=Skill B v=2\nBODY-B',
+    );
+  });
+
+  it('R1/S1: metadata never leaks — only the fixed fields appear in the bytes', () => {
+    const text = renderSeg7({ ...input, skills: [skillA] }).text ?? '';
+    expect(text).toBe('Active skills:\n- id=a-skill name=Skill A v=1\nBODY-A');
+    expect(text).not.toContain('111'); // createdAt
+    expect(text).not.toContain('222'); // updatedAt
+    expect(text).not.toContain('schemaVersion'); // scope is a cohort input, not a rendered field
+    expect(text).not.toContain('acme'); // companyId is a cohort input, not a rendered field
+  });
+
+  it('R1/S2: insertion order cannot change the bytes — reversed skills render identically', () => {
+    const forward = buildStablePrefix({ ...input, skills: [skillA, skillB] });
+    const reversed = buildStablePrefix({ ...input, skills: [skillB, skillA] });
+    expect(reversed).toBe(forward);
+  });
+
+  it('R1/S3 + R7/S3: empty or undefined skills render ABSENT — zero bytes contributed', () => {
+    const empty = renderSeg7({ ...input, skills: [] });
+    const missing = renderSeg7({ ...input, skills: undefined });
+    expect(empty.present).toBe(false);
+    expect(empty.text).toBeUndefined();
+    expect(missing.present).toBe(false);
+    // Zero bytes: the prefix with empty skills is byte-identical to the
+    // no-skills prefix (backward compatible).
+    expect(buildStablePrefix({ ...input, skills: [] })).toBe(buildStablePrefix(input));
   });
 });

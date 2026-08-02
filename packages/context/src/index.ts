@@ -6,17 +6,7 @@
  * app code.
  */
 import type { CompileContextInput } from './segments.js';
-import { buildDynamicSuffix, buildStablePrefix } from './segments.js';
-
-/**
- * Schema version of the compiled context (design D6). Adding or changing a
- * STABLE segment MUST bump this constant — changed prefix bytes MUST NOT be
- * emitted under an existing cohort (Req R6). The golden pin (test fixture
- * `prefix.v{CONTEXT_SCHEMA_VERSION}.golden.txt`) locks the prefix bytes for the
- * current version: a silent prefix change fails the pin until the golden is
- * deliberately regenerated AND this constant is bumped.
- */
-export const CONTEXT_SCHEMA_VERSION = 1;
+import { buildDynamicSuffix, buildStablePrefix, CONTEXT_SCHEMA_VERSION } from './segments.js';
 
 /**
  * Cache-cohort derivation (Req R5 / design §7.3). `user` is derived as
@@ -80,4 +70,9 @@ export type {
   SegmentKind,
   SegmentRender,
 } from './segments.js';
-export { SEGMENTS, buildStablePrefix, buildDynamicSuffix } from './segments.js';
+export {
+  CONTEXT_SCHEMA_VERSION,
+  SEGMENTS,
+  buildStablePrefix,
+  buildDynamicSuffix,
+} from './segments.js';

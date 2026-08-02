@@ -10,8 +10,9 @@ const srcDir = join(pkgRoot, 'src');
 
 /**
  * Forbidden specifiers for @io/context src (Req R7 / design D1/D4). The package
- * is a PURE compiler: the ONLY allowed external import is @io/business-domain
- * TYPES (erased by tsc). No llm-client, no openai/SDK, no app code, and no
+ * is a PURE compiler: its ONLY allowed external dependency is
+ * @io/business-domain (the single RUNTIME dep, declared in the package
+ * manifest). No llm-client, no openai/SDK, no app code, and no
  * I/O/network/subprocess builtins may enter — the compiler must stay pure and
  * byte-stable (Req R2/R6).
  */
@@ -58,7 +59,7 @@ function extractImportSpecifiers(source: string): string[] {
 /**
  * Package boundary for @io/context (Req: Canonical Segment Ordering;
  * design D1/D4). The package is a PURE compiler: its ONLY runtime dependency
- * is `@io/business-domain` (types only — erased by tsc). No llm-client, no
+ * is `@io/business-domain` (declared in the manifest). No llm-client, no
  * openai, no app code, no SDK or transport may enter. This block pins the
  * package manifest AND scans every src file's imports.
  */
@@ -93,7 +94,7 @@ describe('@io/context package boundary (design D1/D4)', () => {
     });
   });
 
-  describe('src — business-domain types only; zero llm-client/openai/app/forbidden builtins (D1/D4)', () => {
+  describe('src — business-domain only; zero llm-client/openai/app/forbidden builtins (D1/D4)', () => {
     const srcFiles = listTsFiles(srcDir);
 
     it('discovers real @io/context src files (scan is non-trivial)', () => {
@@ -119,7 +120,7 @@ describe('@io/context package boundary (design D1/D4)', () => {
       }
     });
 
-    it('every non-relative import is @io/business-domain, and it is TYPE-ONLY', () => {
+    it('every non-relative import is @io/business-domain (the single allowed runtime dep)', () => {
       expect(srcFiles.length).toBeGreaterThan(0);
       for (const file of srcFiles) {
         const source = readFileSync(file, 'utf8');
@@ -127,13 +128,11 @@ describe('@io/context package boundary (design D1/D4)', () => {
           if (spec.startsWith('.')) continue; // relative internal imports are fine
           expect(spec, relative(pkgRoot, file)).toMatch(/^@io\/business-domain\//);
         }
-        // business-domain MUST be imported as types only (erased by tsc — no runtime dep).
-        const bdImports = source.match(/import\s+([\s\S]*?)\s+from\s+['"]@io\/business-domain/g);
-        if (bdImports !== null) {
-          for (const bdImport of bdImports) {
-            expect(bdImport, relative(pkgRoot, file)).toMatch(/^import\s+type\s/);
-          }
-        }
+        // @io/business-domain is the single allowed RUNTIME dep (manifest):
+        // both `import type { … }` (erased by tsc) and value imports such as
+        // `import { activeSkillsFor }` are permitted — the segment-7 render
+        // value-imports the pure activation selector. Every OTHER dependency
+        // class is banned above.
       }
     });
   });

@@ -20,26 +20,26 @@ describe('cache-cohort derivation — deriveCohort (R5)', () => {
   it('is a pure function of exactly companyId/process/schemaVersion — no work input exists', () => {
     // Different caller data cannot fragment the cohort: deriveCohort accepts NO
     // work/name/email parameter, so the result depends on cohort inputs only.
-    const a = deriveCohort({ companyId: 'acme', process: 'planning', schemaVersion: 1 });
-    const b = deriveCohort({ companyId: 'acme', process: 'planning', schemaVersion: 1 });
+    const a = deriveCohort({ companyId: 'acme', process: 'planning', schemaVersion: 2 });
+    const b = deriveCohort({ companyId: 'acme', process: 'planning', schemaVersion: 2 });
     expect(b).toBe(a);
-    expect(a).toBe('io:acme:planning:v1');
+    expect(a).toBe('io:acme:planning:v2');
   });
 
   it('excludes personal data — the derived string carries no name/email/work tokens', () => {
     const user = deriveCohort({
       companyId: 'acme',
       process: 'planning',
-      schemaVersion: 1,
+      schemaVersion: 2,
     });
     expect(user).not.toContain('founder');
     expect(user).not.toContain('@');
     expect(user).not.toContain('work');
-    expect(user).toBe('io:acme:planning:v1');
+    expect(user).toBe('io:acme:planning:v2');
   });
 
-  it('CONTEXT_SCHEMA_VERSION is exported and currently 1 (golden pins v1)', () => {
-    expect(CONTEXT_SCHEMA_VERSION).toBe(1);
+  it('CONTEXT_SCHEMA_VERSION is exported and currently 2 (golden pins v2)', () => {
+    expect(CONTEXT_SCHEMA_VERSION).toBe(2);
   });
 
   it('schema version is part of the derivation — same cohort, different version differs', () => {

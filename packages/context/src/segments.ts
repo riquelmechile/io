@@ -1,4 +1,17 @@
-import type { Delegation, Work } from '@io/business-domain/src/index.js';
+import type { Delegation, Skill, Work } from '@io/business-domain/src/index.js';
+import { activeSkillsFor } from '@io/business-domain/src/index.js';
+
+/**
+ * Schema version of the compiled context (design D6 / Req R6). Adding or
+ * changing a STABLE segment MUST bump this constant — changed prefix bytes MUST
+ * NOT be emitted under an existing cohort. Defined here (not in index.ts) so the
+ * segment-7 render can read it without a segments↔index import cycle; index.ts
+ * re-exports it as part of the public surface. The golden pin (test fixture
+ * `prefix.v{CONTEXT_SCHEMA_VERSION}.golden.txt`) locks the prefix bytes for the
+ * current version: a silent prefix change fails the pin until the golden is
+ * deliberately regenerated AND this constant is bumped.
+ */
+export const CONTEXT_SCHEMA_VERSION = 2;
 
 /**
  * Canonical §7.2 segment table (design D1/D4; Req R1). The 13 segments are
@@ -45,6 +58,14 @@ export interface CompileContextInput {
    * prefix never touches it this slice.
    */
   readonly delegation?: Delegation;
+  /**
+   * Optional tenant skill store (skill R7). The compiler selects the
+   * cohort-active Skills itself via `activeSkillsFor` — the input carries the
+   * RAW store, never a pre-filtered selection. Optional keeps every no-skills
+   * caller backward-compatible: empty/`undefined` renders segment 7 ABSENT
+   * with zero bytes.
+   */
+  readonly skills?: readonly Skill[];
   /** Current work — the ONLY dynamic input this slice consumes (seg 11). */
   readonly work: Work;
 }
@@ -94,6 +115,34 @@ function renderBusinessProcess({ process }: CompileContextInput): SegmentRender 
 }
 
 /**
+ * Segment 7 — active skills (Req R1 / skill R7). Cohort rule (CRITICAL): the
+ * selection passes ONLY `{companyId, process, schemaVersion:
+ * CONTEXT_SCHEMA_VERSION}` into `activeSkillsFor` — the exact deriveCohort
+ * tuple. Work, delegation, clocks, generated IDs, and dynamic-tail content can
+ * structurally never enter, so segment 7 bytes are a pure function of the
+ * cohort and the raw tenant skill store (Req R2 / inverse-poison proof).
+ *
+ * Serialization (design): fixed multi-line template, fields ONLY
+ * {skillId, name, version, body}, order = `activeSkillsFor` output (skillId
+ * ASC, one Skill per identity, max version). No timestamps/ids/Map order —
+ * the exact bytes are locked by the v2 golden pin. An empty selection renders
+ * ABSENT with zero bytes (backward compatible).
+ */
+function renderActiveSkills({ companyId, process, skills }: CompileContextInput): SegmentRender {
+  const selected = activeSkillsFor(
+    { companyId, process, schemaVersion: CONTEXT_SCHEMA_VERSION },
+    skills ?? [],
+  );
+  if (selected.length === 0) return { present: false };
+  const text =
+    'Active skills:\n' +
+    selected
+      .map((skill) => `- id=${skill.skillId} name=${skill.name} v=${skill.version}\n${skill.body}`)
+      .join('\n');
+  return { present: true, text };
+}
+
+/**
  * Stable-prefix builder (Req R3 / design: buildStablePrefix). Concatenates the
  * text of PRESENT segments 1–9 in canonical order; dynamic segments 10–13 are
  * structurally excluded, so forbidden leading content (date/id/nonce/heartbeat/
@@ -138,6 +187,7 @@ export function buildDynamicSuffix(
  * the same cohort MUST always see the same prefix bytes, so the table is a
  * frozen constant — a stable-segment change is a CONTEXT_SCHEMA_VERSION bump
  * (R6), never an edit in place. This slice sources seg 1 (protocol, always),
+ * seg 7 (active skills, from the raw tenant skill store via the cohort rule),
  * seg 8 (business-process, from the cohort discriminator `process`), and seg 11
  * (current work, dynamic); every other segment elides to ABSENT (R4).
  *
@@ -190,7 +240,7 @@ export const SEGMENTS: readonly Segment[] = Object.freeze([
     id: 'active-skills',
     position: 7,
     kind: 'stable',
-    render: () => ({ present: false }),
+    render: renderActiveSkills,
   }),
   Object.freeze({
     id: 'business-process',
