@@ -253,18 +253,22 @@ describe('B11 parity 2 — CAS-loss → markRetryable → retry-wins ≡ foundat
       state: 'in_progress',
     }));
 
-    const lost = await runWorker(workerInput(), {
-      ...h,
-      work: appRacing,
-      connection: conn,
-      // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({
+    const lost = await runWorker(
+      workerInput(),
+      {
+        ...h,
         work: appRacing,
-        receipts: h.receipts,
-        journal: h.journal,
-        events: h.events,
-      }),
-    });
+        connection: conn,
+        // The racing double must reach the finalize twin's T1 too.
+        repositories: () => ({
+          work: appRacing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
+      },
+      'flash',
+    );
     expect(lost.ok).toBe(false);
     if (lost.ok) return;
     expect(lost.reason).toBe('cas-lost-retryable');
@@ -276,7 +280,7 @@ describe('B11 parity 2 — CAS-loss → markRetryable → retry-wins ≡ foundat
 
     // Controlled retry through the PUBLIC cycle: same key + same hash reopens,
     // the effect is re-applied, and the finalize closes with a single receipt.
-    const retry = await runWorker(workerInput(), { ...h, connection: conn });
+    const retry = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
     expect(retry.ok).toBe(true);
     if (!retry.ok || 'replayed' in retry) return;
     expect(retry.work.state).toBe('completed');

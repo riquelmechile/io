@@ -74,7 +74,7 @@ describe('buildSupervisorDispatch — { deps, onActivate } shape (R3 scenario 1)
       // Against a connection whose every read throws, the composed onActivate
       // MUST attempt the dispatch read and fail loudly — proving it drives the
       // real dispatch → worker path rather than resolving as a no-op.
-      await expect(composed.onActivate('acme')).rejects.toThrow(
+      await expect(composed.onActivate('acme', 'flash')).rejects.toThrow(
         'unexpected query on the connection double',
       );
     } finally {
@@ -104,7 +104,7 @@ describe('buildSupervisorDispatch — no-llm-heartbeat performs NO dispatch (R3 
       let onActivateCalls = 0;
       const onActivate = async (companyId: string): Promise<void> => {
         onActivateCalls += 1;
-        await composed.onActivate(companyId);
+        await composed.onActivate(companyId, 'flash');
       };
 
       // The real supervisor tick (unchanged tick.ts) over the composed seam.
@@ -151,7 +151,7 @@ describe('buildSupervisorDispatch — no-llm-heartbeat performs NO dispatch (R3 
         onActivateCalls += 1;
         // The composed onActivate runs against the throwing connection — the
         // dispatch read fails, PROVING it fired (a no-op would resolve).
-        await expect(composed.onActivate(companyId)).rejects.toThrow();
+        await expect(composed.onActivate(companyId, 'flash')).rejects.toThrow();
       };
 
       await tickCompany({ events, cursors }, 'acme', onActivate);

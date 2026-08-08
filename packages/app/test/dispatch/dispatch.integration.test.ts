@@ -78,7 +78,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       if (seeded === undefined) throw new Error('test setup: seeded work missing');
       const expectedHash = dispatchRequestHashFor(seeded);
 
-      const result = await dispatchCompanyActivation(companyId, dispatchDeps(h));
+      const result = await dispatchCompanyActivation(companyId, dispatchDeps(h), 'flash');
 
       expect(result.ok).toBe(true);
       if (!result.ok) return;
@@ -125,12 +125,12 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         delegationId: 'del-dispatch-2',
       });
 
-      const first = await dispatchCompanyActivation(companyId, dispatchDeps(h));
+      const first = await dispatchCompanyActivation(companyId, dispatchDeps(h), 'flash');
       expect(first.ok).toBe(true);
       if (first.ok) expect(first.dispatched).toBe(true);
 
       // Second activation: the completed Work is NOT actionable anymore.
-      const second = await dispatchCompanyActivation(companyId, dispatchDeps(h));
+      const second = await dispatchCompanyActivation(companyId, dispatchDeps(h), 'flash');
       expect(second).toEqual({ ok: true, dispatched: false });
 
       // Receipt count for this company stayed EXACTLY ONE — no second receipt.
@@ -145,7 +145,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       const h = await bootHarness();
       const companyId = 'dispatch-co-3';
 
-      const result = await dispatchCompanyActivation(companyId, dispatchDeps(h));
+      const result = await dispatchCompanyActivation(companyId, dispatchDeps(h), 'flash');
 
       expect(result).toEqual({ ok: true, dispatched: false });
 
@@ -181,7 +181,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
 
       // The onActivate seam (actor = principals.executor) drives dispatch →
       // runWorker → atomic close over the live connection.
-      await composed.onActivate(companyId);
+      await composed.onActivate(companyId, 'flash');
 
       const stored = await h.work.get(companyId, workId);
       expect(stored?.state).toBe('completed');

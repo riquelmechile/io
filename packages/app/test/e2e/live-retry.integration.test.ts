@@ -101,7 +101,11 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       const outcome = await runLiveCycleWithBoundedRetry({
         keyForAttempt: (attemptNumber) => `live-${attemptNumber}-${randomUUID()}`,
         runAttempt: async (idempotencyKey) =>
-          runWorker(workerInputFor(harness, { workId: retryWorkId, idempotencyKey }), harness.deps),
+          runWorker(
+            workerInputFor(harness, { workId: retryWorkId, idempotencyKey }),
+            harness.deps,
+            'flash',
+          ),
         resetWork: async () => {
           await harness.conn.execute(
             'UPDATE work SET state = $1, version = $2 WHERE company_id = $3 AND work_id = $4',

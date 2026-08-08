@@ -86,7 +86,7 @@ describe('effect outside the terminal transaction (WC effect-outside-tx)', () =>
     const conn = new TrackingDbConnection();
     const sandbox = new InTxAwareSandbox(() => conn.isInTransaction(), h.trace);
 
-    const result = await runWorker(workerInput(), { ...h, connection: conn, sandbox });
+    const result = await runWorker(workerInput(), { ...h, connection: conn, sandbox }, 'flash');
 
     expect(result.ok).toBe(true);
     // §9.8: the external effect and the durable bookkeeping never share a
@@ -107,7 +107,7 @@ describe('effect outside the terminal transaction (WC effect-outside-tx)', () =>
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     const entry = await h.journal.lookup('acme', 'close-2026-q3');

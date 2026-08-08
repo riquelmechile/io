@@ -129,7 +129,7 @@ describe('deny-at-action-time through the cycle (WC authority)', () => {
     await h.work.save(acceptedWork());
     await h.delegation.save(activeDelegation());
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
   });
@@ -139,7 +139,7 @@ describe('deny-at-action-time through the cycle (WC authority)', () => {
     await h.work.save(acceptedWork());
     await h.delegation.save(activeDelegation({ state: 'revoked' }));
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('denied');
@@ -155,10 +155,14 @@ describe('deny-at-action-time through the cycle (WC authority)', () => {
     await h.work.save(acceptedWork());
     await h.delegation.save(activeDelegation());
 
-    const result = await runWorker(workerInput(), {
-      ...h,
-      principals: { ...principals, verifier: principals.executor },
-    });
+    const result = await runWorker(
+      workerInput(),
+      {
+        ...h,
+        principals: { ...principals, verifier: principals.executor },
+      },
+      'flash',
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('denied');
@@ -170,7 +174,7 @@ describe('deny-at-action-time through the cycle (WC authority)', () => {
     await h.work.save(acceptedWork());
     await h.delegation.save(activeDelegation());
 
-    const result = await runWorker(workerInput(), { ...h, now: () => 5_000_000_000_000 });
+    const result = await runWorker(workerInput(), { ...h, now: () => 5_000_000_000_000 }, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('denied');

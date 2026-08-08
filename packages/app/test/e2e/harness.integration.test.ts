@@ -161,6 +161,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
             requestHash: 'hash-widen',
           }),
           h.deps,
+          'flash',
         );
         expect(result.ok).toBe(true);
         expect(injected.requests).toHaveLength(1);

@@ -33,7 +33,8 @@ describe('prepareIntent (B4)', () => {
       work: acceptedWork(),
       delegation: activeDelegation(),
       llm,
-    };
+      model: 'flash',
+    } as const;
 
     const first = await prepareIntent(input);
     const second = await prepareIntent(input);
@@ -45,12 +46,69 @@ describe('prepareIntent (B4)', () => {
     }
   });
 
+  it('maps the requested tier to the LlmModel via llmModelFor — pro requests deepseek-v4-pro (WC Work-Bearing S2)', async () => {
+    const llm = cannedLlm();
+    const delegation = activeDelegation();
+    const work = acceptedWork();
+
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm,
+      model: 'pro',
+    });
+
+    const request = llm.requests[0];
+    expect(request?.model).toBe('deepseek-v4-pro');
+  });
+
+  it('both tiers share the SAME stable context prefix — only the model field differs (WC Work-Bearing S2)', async () => {
+    const flash = cannedLlm();
+    const pro = cannedLlm();
+    const delegation = activeDelegation();
+    const work = acceptedWork();
+
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm: flash,
+      model: 'flash',
+    });
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm: pro,
+      model: 'pro',
+    });
+
+    // The stable compiled prefix (system message + cohort user) is byte-identical
+    // across tiers — KV-cache prefix intact. Only the request model differs.
+    expect(flash.requests[0]?.model).toBe('deepseek-v4-flash');
+    expect(pro.requests[0]?.model).toBe('deepseek-v4-pro');
+    expect(flash.requests[0]?.messages[0]?.content).toBe(pro.requests[0]?.messages[0]?.content);
+    expect(flash.requests[0]?.messages[1]?.content).toBe(pro.requests[0]?.messages[1]?.content);
+    expect(flash.requests[0]?.user).toBe(pro.requests[0]?.user);
+  });
+
   it('the LLM request carries the compiled system prefix, the work user tail, and the derived cache cohort', async () => {
     const llm = cannedLlm();
     const delegation = activeDelegation();
     const work = acceptedWork();
 
-    await prepareIntent({ companyId: 'acme', idempotencyKey: 'k', work, delegation, llm });
+    await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm,
+      model: 'flash',
+    });
 
     // Expected bytes come from the compiler itself — the worker MUST emit
     // exactly what compileContext produces (no hard-coded strings here).
@@ -85,6 +143,7 @@ describe('prepareIntent (B4)', () => {
       work: acceptedWork(),
       delegation,
       llm,
+      model: 'flash',
     });
 
     const request = llm.requests[0];
@@ -114,6 +173,7 @@ describe('prepareIntent (B4)', () => {
       delegation,
       llm,
       skills: [skill],
+      model: 'flash',
     });
 
     // The segment-7 block (fixed template, skillId/name/version/body only)
@@ -135,6 +195,7 @@ describe('prepareIntent (B4)', () => {
       work: acceptedWork(),
       delegation: activeDelegation(),
       llm: cannedLlm('not-json'),
+      model: 'flash',
     });
     expect(notJson.ok).toBe(false);
     if (!notJson.ok) expect(notJson.reason).toBe('invalid-plan');
@@ -145,6 +206,7 @@ describe('prepareIntent (B4)', () => {
       work: acceptedWork(),
       delegation: activeDelegation(),
       llm: cannedLlm(JSON.stringify({ steps: 'nope' })),
+      model: 'flash',
     });
     expect(badShape.ok).toBe(false);
     if (!badShape.ok) expect(badShape.reason).toBe('invalid-plan');
@@ -155,6 +217,7 @@ describe('prepareIntent (B4)', () => {
       work: acceptedWork(),
       delegation: activeDelegation(),
       llm: cannedLlm(JSON.stringify({ steps: [{ action: 'append-line', args: { line: 'x' } }] })),
+      model: 'flash',
     });
     expect(noDocumentStep.ok).toBe(false);
     if (!noDocumentStep.ok) expect(noDocumentStep.reason).toBe('invalid-plan');
@@ -167,11 +230,23 @@ describe('prepareIntent (B4)', () => {
 });
 
 describe('cycle intent (WC intent-before-effect)', () => {
+  it('work-bearing cycle bypasses the gate: the selected pro tier reaches the LLM request (WC Work-Bearing S1/S2)', async () => {
+    const h = harness();
+    await seed(h);
+
+    // runWorker never evaluates the heartbeat gate — the tier is passed in and
+    // threaded to prepareIntent → llmModelFor → LlmRequest.model.
+    const result = await runWorker(workerInput(), h, 'pro');
+
+    expect(result.ok).toBe(true);
+    expect(h.llm.requests[0]?.model).toBe('deepseek-v4-pro');
+  });
+
   it('insertInFlight is committed BEFORE sandbox.execute', async () => {
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     const insertIdx = h.trace.findIndex((entry) => entry.startsWith('journal:insertInFlight'));
@@ -185,7 +260,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     if (result.ok && 'effect' in result) {
@@ -215,7 +290,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
       updatedAt: 1750000000000,
     });
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     // Fetch-once: the cycle reads the tenant store for the company exactly once.
@@ -231,7 +306,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
     await h.work.save(acceptedWork());
     await h.delegation.save(activeDelegation({ state: 'revoked' }));
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('denied');
@@ -255,7 +330,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
       updatedAt: 1750000000000,
     });
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     // The worker STILL fetched the store once (raw pass-through, no pre-filter).
@@ -270,7 +345,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
     const h = harness({ llm: cannedLlm('not-json') });
     await seed(h);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('invalid-plan');
@@ -282,7 +357,7 @@ describe('cycle intent (WC intent-before-effect)', () => {
     const h = harness();
     await seed(h);
 
-    const bad = await runWorker({ companyId: 42, actor: 'x', workId: 'work-1' }, h);
+    const bad = await runWorker({ companyId: 42, actor: 'x', workId: 'work-1' }, h, 'flash');
 
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.reason).toBe('invalid-command');

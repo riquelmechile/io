@@ -657,6 +657,46 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
     }
   });
 
+  it('the recorded no-op receives the heartbeat-selected tier — a novel high-risk event activates with pro (ST Seam S1)', async () => {
+    const events = new TracingEvents();
+    await events.append({
+      eventId: 'evt:risk-1',
+      companyId: 'acme',
+      aggregateKind: 'work',
+      aggregateId: 'work-1',
+      eventType: 'work.completed',
+      occurredAt: 1750000000000,
+      payload: { workId: 'work-1', riskClass: 'high' },
+      source: 'worker',
+    });
+    const cursors = new TracingCursorStore();
+    const activations: Array<{ companyId: string; model: string }> = [];
+    const pump = manualPump();
+
+    const sup = startSupervisor(
+      { events, cursors },
+      {
+        intervalMs: 1000,
+        schedule: pump.schedule,
+        onActivate: (companyId, model) => {
+          activations.push({ companyId, model }); // recorded no-op — no Work is started
+        },
+      },
+    );
+
+    try {
+      await pump.pump();
+
+      // The gate selected pro (novel material high-risk event) and the seam
+      // received the company AND the exact tier.
+      expect(activations).toEqual([{ companyId: 'acme', model: 'pro' }]);
+      // No Work was started: the stream is the seeded event + the decision.
+      expect(await events.listByCompany('acme')).toHaveLength(2);
+    } finally {
+      sup.stop();
+    }
+  });
+
   it('now? is reserved and NOT wired into decision logic (non-clock novelty)', async () => {
     const events = new TracingEvents();
     await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));

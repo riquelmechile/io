@@ -16,7 +16,10 @@ describe('worker claim (WC single-winner)', () => {
     const h = harness();
     await seed(h);
 
-    const results = await Promise.all([runWorker(workerInput(), h), runWorker(workerInput(), h)]);
+    const results = await Promise.all([
+      runWorker(workerInput(), h, 'flash'),
+      runWorker(workerInput(), h, 'flash'),
+    ]);
 
     const winners = results.filter((r): r is Extract<WorkerResult, { ok: true }> => r.ok);
     const losers = results.filter((r) => !r.ok);
@@ -35,7 +38,10 @@ describe('worker claim (WC single-winner)', () => {
     const h = harness();
     await seed(h);
 
-    const results = await Promise.all([runWorker(workerInput(), h), runWorker(workerInput(), h)]);
+    const results = await Promise.all([
+      runWorker(workerInput(), h, 'flash'),
+      runWorker(workerInput(), h, 'flash'),
+    ]);
 
     const ok = results.filter((r) => r.ok);
     expect(ok).toHaveLength(1);
@@ -52,7 +58,7 @@ describe('worker claim (WC single-winner)', () => {
 
   it('a claim for a missing work is an explicit not-found result (never silent)', async () => {
     const h = harness();
-    const result = await runWorker(workerInput({ workId: 'work-ghost' }), h);
+    const result = await runWorker(workerInput({ workId: 'work-ghost' }), h, 'flash');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('not-found');
   });

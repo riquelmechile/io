@@ -49,7 +49,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
     it('post-cycle: the company stream ⇒ activate flash; fresh company ⇒ no-llm-heartbeat', async () => {
       // Full worker cycle over the REAL stack — the terminal close appends
       // exactly one `work.completed` business event to the live store.
-      const result = await runWorker(workerInputFor(harness), harness.deps);
+      const result = await runWorker(workerInputFor(harness), harness.deps, 'flash');
       expect(result.ok).toBe(true);
       if (!result.ok || 'replayed' in result) {
         throw new Error(

@@ -84,7 +84,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || process.env.IO_LIVE_LLM !== '1'
         });
 
         it('runs the full live cycle to a terminal, reversible outcome (Req 2 — structure, not output)', async () => {
-          const result = await runWorker(workerInputFor(harness), harness.deps);
+          const result = await runWorker(workerInputFor(harness), harness.deps, 'flash');
 
           expect(result.ok).toBe(true);
           if (!result.ok || 'replayed' in result) {
@@ -208,6 +208,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || process.env.IO_LIVE_LLM !== '1'
               runWorker(
                 workerInputFor(harness, { workId: retryWorkId, idempotencyKey }),
                 harness.deps,
+                'flash',
               ),
             resetWork: async () => {
               await harness.conn.execute(

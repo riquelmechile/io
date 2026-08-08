@@ -1,4 +1,5 @@
 import type { DbConnection } from '@io/database/src/connection.js';
+import type { ModelTier } from '@io/business-domain/src/index.js';
 import type { LlmClient } from '@io/llm-client/src/index.js';
 
 import { dispatchCompanyActivation } from '../dispatch/dispatch.js';
@@ -44,9 +45,10 @@ export function buildSupervisorDispatch(input: {
     // checkpoint LAST") — a thrown dispatch error propagates and leaves the
     // cursor un-advanced for at-least-once re-activation. The DispatchResult
     // itself is discarded: typed failures never throw (settlement policy), so
-    // only real errors reach the tick.
-    onActivate: async (companyId: string): Promise<void> => {
-      await dispatchCompanyActivation(companyId, dispatchDeps);
+    // only real errors reach the tick. The heartbeat-selected model tier is
+    // threaded unchanged into the dispatch → runWorker cycle.
+    onActivate: async (companyId: string, model: ModelTier): Promise<void> => {
+      await dispatchCompanyActivation(companyId, dispatchDeps, model);
     },
   };
 }

@@ -284,7 +284,7 @@ describe('cycle wiring (B8) — verify runs BETWEEN the effect and the finalize 
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
     const sandbox = new TraceSandbox(h.trace);
 
-    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn });
+    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn }, 'flash');
 
     expect(result.ok).toBe(true);
     if (!result.ok || 'replayed' in result) return;
@@ -309,7 +309,7 @@ describe('cycle wiring (B8) — verify runs BETWEEN the effect and the finalize 
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
     const sandbox = new MissingDocumentSandbox(h.trace);
 
-    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn });
+    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn }, 'flash');
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -336,7 +336,7 @@ describe('cycle wiring (B8) — verify runs BETWEEN the effect and the finalize 
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
     const sandbox = new NotAppliedSandbox(h.trace);
 
-    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn });
+    const result = await runWorker(workerInput(), { ...h, sandbox, connection: conn }, 'flash');
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

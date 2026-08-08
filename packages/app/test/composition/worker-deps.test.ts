@@ -252,6 +252,7 @@ describe('buildWorkerDeps — repositories factory + atomic finalize (task 1.2)'
         const result = await runWorker(
           workerInputFor(harness, { companyId, workId, idempotencyKey, requestHash: 'hash-deps' }),
           deps,
+          'flash',
         );
 
         expect(result.ok).toBe(true);

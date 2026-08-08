@@ -1,4 +1,5 @@
 import { runWorker } from '../worker/worker.js';
+import type { ModelTier } from '@io/business-domain/src/index.js';
 import { dispatchIdempotencyKeyFor, dispatchRequestHashFor } from './keys.js';
 import type { DispatchDeps, DispatchResult } from './types.js';
 
@@ -24,6 +25,7 @@ import type { DispatchDeps, DispatchResult } from './types.js';
 export async function dispatchCompanyActivation(
   companyId: string,
   deps: DispatchDeps,
+  model: ModelTier,
 ): Promise<DispatchResult> {
   if (!companyId) {
     throw new Error('a non-empty companyId is required');
@@ -43,6 +45,7 @@ export async function dispatchCompanyActivation(
       requestHash: dispatchRequestHashFor(first),
     },
     deps.worker,
+    model,
   );
   // Settle: the typed worker result (ok or not) advances the cursor. A thrown
   // error propagates — never caught here (design R5).

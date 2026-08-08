@@ -246,14 +246,22 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     });
     await seed(second);
 
-    const a = await runWorker(workerInput(), {
-      ...first,
-      connection: new TxTrackingConnection(new InMemoryDbConnection()),
-    });
-    const b = await runWorker(workerInput(), {
-      ...second,
-      connection: new TxTrackingConnection(new InMemoryDbConnection()),
-    });
+    const a = await runWorker(
+      workerInput(),
+      {
+        ...first,
+        connection: new TxTrackingConnection(new InMemoryDbConnection()),
+      },
+      'flash',
+    );
+    const b = await runWorker(
+      workerInput(),
+      {
+        ...second,
+        connection: new TxTrackingConnection(new InMemoryDbConnection()),
+      },
+      'flash',
+    );
 
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
@@ -418,7 +426,7 @@ describe('cycle wiring (B7) — finalize runs after the effect, INSIDE the termi
     await seed(h);
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-    const result = await runWorker(workerInput(), { ...h, connection: conn });
+    const result = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
 
     expect(result.ok).toBe(true);
     if (!result.ok || 'replayed' in result) return;
@@ -448,18 +456,22 @@ describe('cycle wiring (B7) — finalize runs after the effect, INSIDE the termi
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-    const result = await runWorker(workerInput(), {
-      ...h,
-      work: racing,
-      connection: conn,
-      // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({
+    const result = await runWorker(
+      workerInput(),
+      {
+        ...h,
         work: racing,
-        receipts: h.receipts,
-        journal: h.journal,
-        events: h.events,
-      }),
-    });
+        connection: conn,
+        // The racing double must reach the finalize twin's T1 too.
+        repositories: () => ({
+          work: racing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
+      },
+      'flash',
+    );
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

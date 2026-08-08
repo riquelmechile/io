@@ -37,7 +37,7 @@ export const tickCompany: TickCompany = async (deps: SupervisorDeps, companyId, 
   const tail = tailCursor(stream);
   await deps.events.appendIfAbsent(buildHeartbeatDecisionEvent(companyId, decision, cursor));
   if (decision.kind === 'activate') {
-    await onActivate?.(companyId);
+    await onActivate?.(companyId, decision.model);
   }
   if (tail !== undefined) {
     await deps.cursors.upsert(companyId, tail);

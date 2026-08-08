@@ -56,7 +56,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
     it('runs claim → authority → intent → effect → reconcile → verify → terminal; exactly one receipt in live PG', async () => {
       const input = workerInputFor(harness);
 
-      const result = await runWorker(input, harness.deps);
+      const result = await runWorker(input, harness.deps, 'flash');
 
       expect(result.ok).toBe(true);
       if (!result.ok || 'replayed' in result) {

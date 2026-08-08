@@ -67,6 +67,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
           requestHash: 'hash-c4',
         }),
         harness.deps,
+        'flash',
       );
       expect(result.ok).toBe(true);
       if (!result.ok || 'replayed' in result) {
@@ -170,6 +171,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         runWorker(
           workerInputFor(harness, { companyId, workId, idempotencyKey, requestHash: 'hash-c4' }),
           harness.deps,
+          'flash',
         ),
       ).rejects.toThrow(/duplicate key value violates unique constraint/);
 

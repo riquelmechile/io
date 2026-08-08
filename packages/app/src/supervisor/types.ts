@@ -1,6 +1,7 @@
 import type {
   BusinessEventRepository,
   HeartbeatCursorStore,
+  ModelTier,
 } from '@io/business-domain/src/index.js';
 
 /**
@@ -17,11 +18,12 @@ export type SupervisorDeps = {
 
 /**
  * Activation side effect seam (spec: Non-Invasive Activation Seam): invoked
- * with the activating company's id AFTER the gate decides `activate` and
- * BEFORE the cursor checkpoint is persisted — a failure leaves the activation
- * retryable (at-least-once). MAY be a recorded no-op.
+ * with the activating company's id and the heartbeat-selected model tier AFTER
+ * the gate decides `activate` and BEFORE the cursor checkpoint is persisted — a
+ * failure leaves the activation retryable (at-least-once). MAY be a recorded
+ * no-op.
  */
-export type OnActivate = (companyId: string) => void | Promise<void>;
+export type OnActivate = (companyId: string, model: ModelTier) => void | Promise<void>;
 
 /**
  * One sequential company tick: read cursor → gate → derive stream tail →

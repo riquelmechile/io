@@ -406,7 +406,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     expect(h.sandbox.executes).toHaveLength(1);
@@ -424,7 +424,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     });
     await h.journal.complete(ATTEMPT, { ok: true, note: 'done' });
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     if (result.ok && 'replayed' in result) {
@@ -446,7 +446,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     });
     await h.journal.complete(ATTEMPT, { ok: true });
 
-    const result = await runWorker(workerInput({ requestHash: 'hash-1' }), h);
+    const result = await runWorker(workerInput({ requestHash: 'hash-1' }), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('idempotency-conflict');
@@ -468,7 +468,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     });
     await h.journal.markRetryable(ATTEMPT);
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(true);
     expect(h.sandbox.executes).toHaveLength(1);
@@ -488,7 +488,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     });
     await h.journal.markRetryable(ATTEMPT);
 
-    const result = await runWorker(workerInput({ requestHash: 'hash-1' }), h);
+    const result = await runWorker(workerInput({ requestHash: 'hash-1' }), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('idempotency-conflict');
@@ -508,7 +508,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       attemptId: ATTEMPT,
     });
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('recovery-required');
@@ -527,18 +527,22 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-    const lost = await runWorker(workerInput(), {
-      ...h,
-      work: racing,
-      connection: conn,
-      // The racing double must reach the finalize twin's T1 too.
-      repositories: () => ({
+    const lost = await runWorker(
+      workerInput(),
+      {
+        ...h,
         work: racing,
-        receipts: h.receipts,
-        journal: h.journal,
-        events: h.events,
-      }),
-    });
+        connection: conn,
+        // The racing double must reach the finalize twin's T1 too.
+        repositories: () => ({
+          work: racing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
+      },
+      'flash',
+    );
 
     expect(lost.ok).toBe(false);
     if (lost.ok) return;
@@ -552,7 +556,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     // NOT re-claim (startWork rejects in_progress → in_progress with
     // invalid-transition). It resumes the cycle's OWN work: reopen → effect →
     // verify → finalize → completed, exactly one receipt.
-    const retry = await runWorker(workerInput(), { ...h, connection: conn });
+    const retry = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
 
     expect(retry.ok).toBe(true);
     if (!retry.ok || 'replayed' in retry) return;
@@ -618,7 +622,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     });
     await h.journal.markRetryable(ATTEMPT);
 
-    const result = await runWorker(workerInput(), { ...h, connection: conn });
+    const result = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
 
     // The honest terminal result: the attempt is unresolvable, never re-run.
     expect(result.ok).toBe(false);
@@ -663,7 +667,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       attemptId: ATTEMPT,
     });
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {

@@ -21,7 +21,7 @@ describe('worker tenant scope (WC tenant-scope)', () => {
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput({ companyId: '' }), h);
+    const result = await runWorker(workerInput({ companyId: '' }), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('invalid-command');
@@ -31,7 +31,7 @@ describe('worker tenant scope (WC tenant-scope)', () => {
     const h = harness();
     await seed(h);
 
-    const result = await runWorker(workerInput({ idempotencyKey: '' }), h);
+    const result = await runWorker(workerInput({ idempotencyKey: '' }), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('invalid-command');
@@ -41,7 +41,7 @@ describe('worker tenant scope (WC tenant-scope)', () => {
     const h = harness();
     await seed(h); // work-1 belongs to acme
 
-    const result = await runWorker(workerInput({ companyId: 'other-tenant' }), h);
+    const result = await runWorker(workerInput({ companyId: 'other-tenant' }), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('not-found');
@@ -57,7 +57,7 @@ describe('worker tenant scope (WC tenant-scope)', () => {
     // del-1 now belongs to a DIFFERENT tenant than the work: the scoped get must miss.
     await h.delegation.save(activeDelegation({ companyId: 'other-tenant' }));
 
-    const result = await runWorker(workerInput(), h);
+    const result = await runWorker(workerInput(), h, 'flash');
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -76,14 +76,22 @@ describe('worker tenant scope (WC tenant-scope)', () => {
 
     // Each tenant runs its own sandbox root; the JOURNAL is the shared harness
     // journal — proving company-scoped keys never collide.
-    const first = await runWorker(workerInput({ companyId: 'acme', workId: 'work-1' }), {
-      ...h,
-      sandbox: new RecordingSandbox(h.trace),
-    });
-    const second = await runWorker(workerInput({ companyId: 'globex', workId: 'work-2' }), {
-      ...h,
-      sandbox: new RecordingSandbox(h.trace),
-    });
+    const first = await runWorker(
+      workerInput({ companyId: 'acme', workId: 'work-1' }),
+      {
+        ...h,
+        sandbox: new RecordingSandbox(h.trace),
+      },
+      'flash',
+    );
+    const second = await runWorker(
+      workerInput({ companyId: 'globex', workId: 'work-2' }),
+      {
+        ...h,
+        sandbox: new RecordingSandbox(h.trace),
+      },
+      'flash',
+    );
 
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);

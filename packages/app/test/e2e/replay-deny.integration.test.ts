@@ -101,6 +101,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       const result = await runWorker(
         workerInputFor(harness, { companyId, workId, idempotencyKey, requestHash }),
         harness.deps,
+        'flash',
       );
 
       expect(result.ok).toBe(true);
@@ -155,6 +156,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
           requestHash: 'hash-c3-different',
         }),
         harness.deps,
+        'flash',
       );
 
       expect(result.ok).toBe(false);

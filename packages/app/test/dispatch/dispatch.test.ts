@@ -44,7 +44,7 @@ function dispatchDeps(h: ReturnType<typeof harness>): DispatchDeps {
 describe('dispatchCompanyActivation — empty actionable queue is cost-free (R2, empty scope)', () => {
   it('settles {ok:true, dispatched:false} with zero worker and LLM invocations', async () => {
     const h = harness();
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     expect(result).toEqual({ ok: true, dispatched: false });
     // Zero worker/LLM: no LLM request, no journal attempt, no sandbox effect.
@@ -58,7 +58,7 @@ describe('dispatchCompanyActivation — empty actionable queue is cost-free (R2,
     const h = harness();
     const deps: DispatchDeps = { work, worker: h, actor: h.principals.executor };
 
-    await expect(dispatchCompanyActivation('', deps)).rejects.toThrow(
+    await expect(dispatchCompanyActivation('', deps, 'flash')).rejects.toThrow(
       'a non-empty companyId is required',
     );
     expect(work.listCalls).toHaveLength(0);
@@ -73,7 +73,7 @@ describe('dispatchCompanyActivation — one oldest-first runWorker per activatio
     await h.work.save(acceptedWork({ workId: 'work-2', delegationId: 'del-2' }));
     await h.delegation.save(activeDelegation({ delegationId: 'del-2' }));
 
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -102,6 +102,20 @@ describe('dispatchCompanyActivation — one oldest-first runWorker per activatio
       attemptIdFor('acme', dispatchIdempotencyKeyFor('acme', 'work-1')),
     );
   });
+
+  it('passes the activation tier UNCHANGED to the dispatched cycle — pro reaches the LLM request (WD One-Oldest S1)', async () => {
+    const h = harness();
+    await seed(h);
+
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'pro');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.dispatched).toBe(true);
+    // Exactly one worker cycle ran and the FakeLlm saw the mapped pro model.
+    expect(h.llm.requests).toHaveLength(1);
+    expect(h.llm.requests[0]?.model).toBe('deepseek-v4-pro');
+  });
 });
 
 describe('dispatchCompanyActivation — failure settlement controls cursor progress (R5)', () => {
@@ -110,7 +124,7 @@ describe('dispatchCompanyActivation — failure settlement controls cursor progr
     const h = harness({ llm: cannedLlm('this is not json') });
     await seed(h);
 
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     // Settled, not thrown: dispatch resolves with dispatched:true + the typed
     // worker result (cursor advances; no hot LLM retry loop).
@@ -132,7 +146,7 @@ describe('dispatchCompanyActivation — failure settlement controls cursor progr
     // Revoke the delegation → checkAuthority denies at action time (ADR-0002).
     await h.delegation.save(activeDelegation({ delegationId: 'del-1', state: 'revoked' }));
 
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -152,7 +166,9 @@ describe('dispatchCompanyActivation — failure settlement controls cursor progr
     const h = harness({ llm: throwingLlm });
     await seed(h);
 
-    await expect(dispatchCompanyActivation('acme', dispatchDeps(h))).rejects.toThrow(LlmError);
+    await expect(dispatchCompanyActivation('acme', dispatchDeps(h), 'flash')).rejects.toThrow(
+      LlmError,
+    );
   });
 });
 
@@ -177,7 +193,7 @@ describe('dispatchCompanyActivation — replay safety (R4) and orphan non-guaran
     const recorded = { ...work, state: 'completed', version: 3 };
     await h.journal.complete(attemptId, recorded);
 
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -201,7 +217,7 @@ describe('dispatchCompanyActivation — replay safety (R4) and orphan non-guaran
     await h.work.save(acceptedWork({ state: 'in_progress', version: 2 }));
     await h.delegation.save(activeDelegation());
 
-    const result = await dispatchCompanyActivation('acme', dispatchDeps(h));
+    const result = await dispatchCompanyActivation('acme', dispatchDeps(h), 'flash');
 
     // Excluded from the actionable queue: settle cost-free, no auto-resume.
     expect(result).toEqual({ ok: true, dispatched: false });

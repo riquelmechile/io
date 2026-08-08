@@ -139,15 +139,19 @@ describe('@io/app assembled wiring (SP composition-root, app level)', () => {
       const sandbox = new TraceSandbox(h.trace);
       const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
-      const result = await runWorker(workerInput(), {
-        ...h,
-        journal,
-        sandbox,
-        connection: conn,
-        // The durable journal must reach the finalize twin's T1 too (the
-        // repository factory binds the journal the close writes to).
-        repositories: () => ({ work: h.work, receipts: h.receipts, journal, events: h.events }),
-      });
+      const result = await runWorker(
+        workerInput(),
+        {
+          ...h,
+          journal,
+          sandbox,
+          connection: conn,
+          // The durable journal must reach the finalize twin's T1 too (the
+          // repository factory binds the journal the close writes to).
+          repositories: () => ({ work: h.work, receipts: h.receipts, journal, events: h.events }),
+        },
+        'flash',
+      );
 
       expect(result.ok).toBe(true);
       if (!result.ok || 'replayed' in result) return;

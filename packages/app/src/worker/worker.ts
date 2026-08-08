@@ -1,4 +1,5 @@
 import { startWork } from '@io/business-domain/src/use-cases/start-work.js';
+import type { ModelTier } from '@io/business-domain/src/index.js';
 import type { Work } from '@io/business-domain/src/types.js';
 import { parseCommand } from '@io/business-domain/src/validation/command.js';
 
@@ -41,7 +42,11 @@ import { verifyEffect } from './verify.js';
  * UNRESOLVED_REQUIRES_HUMAN), so a same-key retry can never re-apply the
  * effect or issue a second receipt.
  */
-export async function runWorker(input: unknown, deps: WorkerDeps): Promise<WorkerResult> {
+export async function runWorker(
+  input: unknown,
+  deps: WorkerDeps,
+  model: ModelTier,
+): Promise<WorkerResult> {
   const parsed = parseCommand(input);
   if (!parsed.ok) return { ok: false, reason: 'invalid-command', detail: parsed.reason };
   const cmd = parsed.value;
@@ -148,6 +153,7 @@ export async function runWorker(input: unknown, deps: WorkerDeps): Promise<Worke
     delegation: authority.delegation,
     skills,
     llm: deps.llm,
+    model,
   });
   if (!intent.ok) {
     return { ok: false, reason: 'invalid-plan', detail: intent.detail, current: work };

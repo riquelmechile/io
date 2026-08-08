@@ -104,6 +104,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       const retry = await runWorker(
         workerInputFor(harness, { companyId, workId, idempotencyKey, requestHash }),
         fresh.deps,
+        'flash',
       );
 
       expect(retry.ok).toBe(true);

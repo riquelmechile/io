@@ -1,3 +1,4 @@
+import type { ModelTier } from '@io/business-domain/src/index.js';
 import { evidenceId } from '@io/business-domain/src/evidence-id.js';
 import type { Delegation, Skill, Work } from '@io/business-domain/src/types.js';
 import { parseLlmPlan } from '@io/business-domain/src/validation/llm-plan.js';
@@ -6,6 +7,7 @@ import { compileContext } from '@io/context/src/index.js';
 import type { LlmClient, LlmRequest } from '@io/llm-client/src/index.js';
 
 import type { SandboxAction } from '../sandbox/sandbox-port.js';
+import { llmModelFor } from './model-tier.js';
 
 /**
  * Worker intent (WC intent-before-effect / runtime-validation /
@@ -47,6 +49,11 @@ export interface IntentInput {
    * only condition the plan via context — the worker never executes them. */
   readonly skills?: readonly Skill[];
   readonly llm: LlmClient;
+  /** The heartbeat-selected domain tier (ModelTier), threaded unchanged from
+   * `runWorker`. Mapped to the `LlmModel` ONLY via `llmModelFor` at the LLM
+   * boundary — the SAME stable context prefix serves both tiers (KV cache
+   * intact; only the request model differs). */
+  readonly model: ModelTier;
 }
 
 export type IntentResult =
@@ -62,7 +69,7 @@ export async function prepareIntent(input: IntentInput): Promise<IntentResult> {
     skills: input.skills,
   });
   const request: LlmRequest = {
-    model: 'deepseek-v4-flash',
+    model: llmModelFor(input.model),
     messages: compiled.messages,
     thinking: { type: 'disabled' },
     user: compiled.user,
