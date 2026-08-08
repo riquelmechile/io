@@ -1,22 +1,6 @@
-# supervisor-timer
+# Delta for supervisor-timer
 
-Polling supervisor that discovers companies via the event log, evaluates each company sequentially through the heartbeat gate, advances a durable per-company cursor on both decision paths, and invokes an injectable `onActivate` callback only on `activate`. Pure `tailCursor` + `HeartbeatCursorStore` live in business-domain; PG migration 008 + adapters mirror existing patterns. Single-instance this slice — no fencing tokens or multi-instance lease.
-
-## Requirements
-
-### Requirement: Periodic Discoverable Lifecycle
-
-`startSupervisor(deps, { intervalMs, now?, onActivate? })` MUST return `{ stop }`, evaluate ticks at the configured interval, and discover each tick's companies through `listCompanyIds()`. Clock and timer behavior MUST be injectable for deterministic tests.
-
-#### Scenario: Injected timer drives a tick
-- GIVEN two discoverable companies and a controlled timer
-- WHEN one interval elapses
-- THEN both companies MUST be selected for evaluation using the injected clock
-
-#### Scenario: Stop prevents later ticks
-- GIVEN a running supervisor
-- WHEN `stop()` is called before another interval
-- THEN no later company discovery or evaluation MUST occur
+## MODIFIED Requirements
 
 ### Requirement: Sequential Checkpointed Tick
 
@@ -62,20 +46,6 @@ For each company, a tick MUST sequentially read its cursor, call the companyId-o
 - WHEN a tick executes
 - THEN each company's append, callback, and checkpoint MUST finish before the next begins
 
-### Requirement: Durable Cursor Recovery
-
-The persisted cursor row MUST be the supervisor checkpoint. A restart MUST resume from stored per-company cursors; work completed before persistence MAY be re-evaluated, providing at-least-once evaluation.
-
-#### Scenario: Restart resumes from checkpoint
-- GIVEN a persisted cursor and a stopped supervisor
-- WHEN a fresh supervisor evaluates the company
-- THEN it MUST supply that persisted cursor to the gate
-
-#### Scenario: Interrupted checkpoint is retried
-- GIVEN evaluation finished but cursor persistence did not
-- WHEN the supervisor restarts
-- THEN it MUST re-evaluate from the previous persisted cursor
-
 ### Requirement: Non-Invasive Activation Seam
 
 `onActivate` MUST remain injectable and MAY be a recorded no-op. Decision-event appends and cursor writes MUST belong only to the supervisor. `runWorker`, `cycle.ts`, `evaluate.ts`, the read-only gate, and the worker path MUST remain unchanged; decision appends MUST occur only in the supervisor tick.
@@ -91,12 +61,3 @@ The persisted cursor row MUST be the supervisor checkpoint. A restart MUST resum
 - GIVEN decision-event emission is added
 - WHEN sources are compared with their baseline
 - THEN `runWorker`, `cycle.ts`, and `evaluate.ts` MUST be byte-identical
-
-### Requirement: Single-Instance Operation
-
-The supervisor MUST assume one active instance; cross-instance fencing and duplicate-activation prevention are outside this capability.
-
-#### Scenario: No fencing contract is introduced
-- GIVEN the supervisor dependency surface
-- WHEN cursor coordination is inspected
-- THEN no fencing token or multi-instance lease MUST be required
