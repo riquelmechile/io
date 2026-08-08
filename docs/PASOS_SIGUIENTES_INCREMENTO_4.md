@@ -14,17 +14,46 @@
 
 | Rev | Fecha | `main` | Qué cambió en este doc | Por qué cambió |
 |-----|-------|--------|------------------------|----------------|
-| **5** (vigente) | 2026-08-02 | `4eb2451` | Paso 3 sigue **COMPLETO** y se completan **3 slices post-Paso 3** (heartbeat-activation, supervisor-timer, work-dispatch) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-Paso 3. Conteo de tests **968 → 1071**. Specs synced **21 → 23** (2 NEW: `supervisor-timer`, `work-dispatch`; MODIFIED: `worker-cycle`, `heartbeat`, `business-event`, `work-lifecycle`). Hito acumulado: el ahorro de costo §2 se vuelve **REAL** — `activate` dispara un ciclo de worker que despacha trabajo accionable; `no-llm-heartbeat` no gasta LLM. Supervisor durable (wake-ups sin trabajo + cursor per-company) + dispatch desde `onActivate`. El snapshot de Rev 4 se conserva marcado como superado. | Los 3 slices que siguen al roadmap de Paso 3 se completaron en limpio (heartbeat-activation, supervisor-timer, work-dispatch): ciclos SDD con verify **PASS**, archivados y pusheados. `work-dispatch` hace real el ahorro de costo del pre-gate §13.2 construido en Paso 3. |
+| **6** (vigente) | 2026-08-08 | `929daef` | Paso 3 y Post-Paso 3 siguen **COMPLETOS** y se completan **3 slices post-work-dispatch** (daemon-lifecycle, heartbeat-decision-events, pro-escalation) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-work-dispatch. Conteo de tests **1071 → 1169**. Specs synced **23 → 24** (1 NEW: `daemon-lifecycle`; MODIFIED: `heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`). Hito acumulado: el runtime ya corre en producción (daemon zero-dep, schedule sin solapamiento, shutdown gracioso), la decisión del pre-gate se vuelve hecho de negocio auditable (eventos `heartbeat.decision`), y §13.2 completa su escalada Flash→Pro determinística por `riskClass`. El flake PG concurrente de Paso 3 queda resuelto de facto (`152768d`, paralelismo de archivos off). El snapshot de Rev 5 se conserva marcado como superado. | Los 3 primeros ítems del roadmap posterior a work-dispatch se completaron en limpio: ciclos SDD con verify **PASS** (7/7+12/12, 6/6+21/21, 7/7+19/19), live E2E DeepSeek/PG 3/3 en pro-escalation, archivados y pusheados. |
+| **5** (superada) | 2026-08-02 | `4eb2451` | Paso 3 sigue **COMPLETO** y se completan **3 slices post-Paso 3** (heartbeat-activation, supervisor-timer, work-dispatch) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-Paso 3. Conteo de tests **968 → 1071**. Specs synced **21 → 23** (2 NEW: `supervisor-timer`, `work-dispatch`; MODIFIED: `worker-cycle`, `heartbeat`, `business-event`, `work-lifecycle`). Hito acumulado: el ahorro de costo §2 se vuelve **REAL** — `activate` dispara un ciclo de worker que despacha trabajo accionable; `no-llm-heartbeat` no gasta LLM. Supervisor durable (wake-ups sin trabajo + cursor per-company) + dispatch desde `onActivate`. El snapshot de Rev 4 se conserva marcado como superado. | Los 3 slices que siguen al roadmap de Paso 3 se completaron en limpio (heartbeat-activation, supervisor-timer, work-dispatch): ciclos SDD con verify **PASS**, archivados y pusheados. `work-dispatch` hace real el ahorro de costo del pre-gate §13.2 construido en Paso 3. |
 | **4** (superada) | 2026-08-01 | `d5b42e9` | Paso 3 pasa de "🔄 SIGUIENTE" a **"✅ COMPLETO"** (6 slices verificados + archivados + pusheados). Se agrega trazabilidad por slice (archive, spec canónica, commits). Conteo de tests **757 → 968**. Specs synced **17 → 21** (4 NEW: `context-compiler`, `business-event`, `skill`, `heartbeat`). Hito acumulado: worker end-to-end vs DeepSeek V4 real + PG vivo, contexto compilado (KV-cache, skills en segmento 7), log append-only BusinessEvent y pre-gate determinístico §13.2 (heartbeats). El snapshot de Rev 3 se conserva marcado como superado. | Los 6 slices del roadmap de Paso 3 se completaron en limpio (context-compiler, deepseek-live-e2e, businessevent, first-skill, skill-segment7, heartbeats): ciclos SDD con verify **PASS** —o PASS WITH WARNINGS por el flake PG preexistente—, archivados y pusheados. |
 | **3** (superada) | 2026-08-01 | `2523614` | Paso 2 `first-enterprise-vertical` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 3 pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **604 → 757** (+E2E 9/9 vs PG vivo). Se registra la decisión del usuario (marker reintentable = paridad con la fundación) y las 3 correcciones del review adversarial. El snapshot de Rev 2 se conserva marcado como superado. | El ciclo SDD `first-enterprise-vertical` se completó: **18/18 requisitos, 47/47 escenarios, 0 blockers**, verify **PASS**, review adversarial CLEAN por slice (A/B/C). La primera vertical de empresa corre de punta a punta contra PostgreSQL vivo. |
 | **2** (superada) | 2026-07-31 | `4cc0b15` | Paso 1 `harden` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 2 `first-enterprise-vertical` pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **411 → 604**. Se agrega evidencia de verify por slice y el snapshot de Rev 1 se conserva marcado como superado. | El ciclo limpio `harden-first-enterprise-vertical-foundation` se completó: **18/18 requisitos, 61/61 escenarios, 0 blockers, 0 critical**, review adversarial CLEAN en cada slice (A/B/C). Se cumplió la *regla de oro* (no abrir la vertical sin harden limpio) → la vertical queda desbloqueada. |
 | **1** (superada) | 2026-07-31 | `4ea1653` | Versión inicial. Baseline `deepseek-client` cerrada; `harden` como Paso 1 pendiente; `first-enterprise-vertical` como Paso 2. | Reset a una baseline limpia tras el ciclo harden **contaminado** (hacks de gate: findings vacíos inyectados y gap-fixes post-verify). Se documentó el punto de partida estable para rehacer el harden en limpio. |
 
-**Estado actual (Rev 5):** `main @ 4eb2451` = `origin/main`. Paso 3 **COMPLETO** + 3 slices post-Paso 3 (heartbeat-activation, supervisor-timer, work-dispatch). Siguiente: daemon / process lifecycle wiring — ver "Próximos pasos" en Post-Paso 3.
+**Estado actual (Rev 6):** `main @ 929daef` = `origin/main`. Paso 3 **COMPLETO** + Post-Paso 3 **COMPLETO** + 3 slices post-work-dispatch (daemon-lifecycle, heartbeat-decision-events, pro-escalation). Siguiente: fencing tokens — ver "Próximos pasos" en Post-work-dispatch.
 
 ---
 
-## Estado actual (Rev 5 — vigente)
+## Estado actual (Rev 6 — vigente)
+
+| Check | Resultado |
+|-------|-----------|
+| Commit | `929daef` — archive `pro-escalation` (último de los 3 slices post-work-dispatch) |
+| GitHub `main` | = local = `929daef` |
+| `pnpm check` | GREEN (format, tsc, build, lint, test) |
+| Tests | **1169 passed / 6 skipped** (suite secuencial; flake PG resuelto de facto en `152768d`) |
+| E2E DeepSeek/PG | GREEN con credenciales (pro-escalation: 3/3 en primera corrida, sin flake) |
+| Paso 3 | **✅ COMPLETO** — 6/6 slices archivados y pusheados (ver trazabilidad en Paso 3) |
+| Post-Paso 3 | **✅ COMPLETO** — 3/3 slices archivados y pusheados (heartbeat-activation, supervisor-timer, work-dispatch) |
+| Post-work-dispatch | **✅ COMPLETO** — 3/3 slices archivados y pusheados (daemon-lifecycle, heartbeat-decision-events, pro-escalation) |
+| Specs synced | 1 NEW (`daemon-lifecycle`) + MODIFIED (`heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`) en `openspec/specs/` (total 24) |
+| Archive (último) | `openspec/changes/archive/2026-08-08-pro-escalation/` |
+
+### Evolución del conteo de tests (durante Rev 6)
+
+| Momento | Tests | Delta / motivo |
+|---------|-------|----------------|
+| Baseline (Rev 5, `4eb2451`) | 1071 passed / 6 skipped | Post-Paso 3 completo (work-dispatch) |
+| daemon-lifecycle (daemon de producción) | 1117 passed / 6 skipped | +46 (boot config fail-fast, schedule sin solapamiento, `runDaemon` shutdown gracioso, launcher TS zero-dep) |
+| heartbeat-decision-events (auditoría del pre-gate) | 1140 passed / 6 skipped | +23 (factory `buildHeartbeatDecisionEvent`, port `appendIfAbsent` + race test, emisión en tick) |
+| pro-escalation (escalada Flash→Pro §13.2) | **1169 passed / 6 skipped** | +29 (regla `escalationModelFor`, threading tick→dispatch→runWorker→prepareIntent, mapper `llmModelFor`) |
+
+---
+
+## Snapshot histórico (Rev 5 — superada, se conserva para trazabilidad)
+
+> ⚠️ **Este bloque refleja el estado a `4eb2451` (Post-Paso 3 completo) y YA NO es el punto de partida vigente.**
 
 | Check | Resultado |
 |-------|-----------|
@@ -308,11 +337,11 @@ explore → propose → design → spec → tasks
 - [x] **ACTUAR sobre la decisión de heartbeat** → hecho en `heartbeat-activation` (Rev 5): branching en worker-cycle — saltea `prepareIntent` / `llm.complete` en `no-llm-heartbeat`, corre Flash en `activate`.
 - [x] Timer / scheduler / cadencia → hecho en `supervisor-timer` (Rev 5): wake-ups sin trabajo + `startSupervisor`/`tickAll`/`tickCompany`.
 - [x] Persistencia del cursor (durable per-company) → hecho en `supervisor-timer` (Rev 5): cursor store durable por company.
-- [ ] Skill outcome / activation BusinessEvents (más allá de `work.completed`).
+- [ ] Skill outcome / activation BusinessEvents (más allá de `work.completed`). *(Los eventos `heartbeat.decision` llegaron en Rev 6, pero son del pre-gate, no de skills.)*
 - [ ] Learning / promotion (Increment 8): ciclo candidate → active.
 - [ ] Memory OS.
 - [ ] Extracción de `Skill` al paquete canónico `competency/`.
-- [ ] Aislar el test concurrente del flake PG (o gate secuencial-tolerante).
+- [x] Aislar el test concurrente del flake PG (o gate secuencial-tolerante). → resuelto de facto en `152768d` (Rev 6): paralelismo de archivos desactivado en `vitest.config.ts`; las suites live-PG ya no corren TRUNCATEs entrelazados.
 
 ---
 
@@ -343,9 +372,11 @@ explore → propose → design → spec → tasks
 
 ### Próximos pasos (después de work-dispatch)
 
-- [ ] **Daemon / process lifecycle wiring** (cómo se levanta y supervisa el proceso del supervisor en producción).
-- [ ] **heartbeat-decision BusinessEvents** (registrar la decisión del pre-gate como hecho de negocio).
-- [ ] **Escalamiento a Pro** (tier / escalation).
+> **Actualizado en Rev 6:** los 3 primeros ítems (daemon lifecycle, heartbeat-decision events, escalamiento a Pro) **YA se completaron** en los slices post-work-dispatch — ver sección "Post-work-dispatch". Los próximos pasos vigentes están ahí.
+
+- [x] **Daemon / process lifecycle wiring** → hecho en `daemon-lifecycle` (Rev 6): daemon de producción zero-dep, schedule sin solapamiento, shutdown gracioso.
+- [x] **heartbeat-decision BusinessEvents** → hecho en `heartbeat-decision-events` (Rev 6): la decisión del pre-gate se registra como hecho de negocio.
+- [x] **Escalamiento a Pro** → hecho en `pro-escalation` (Rev 6): tier / escalation determinístico por `riskClass`.
 - [ ] **Fencing tokens** (protección contra escritores zombies).
 - [ ] **Recovery dirigido por supervisor (Scope B)** (`recoverInFlightWork` para Work `in_progress` huérfano post-claim).
 - [ ] **Skill outcome BusinessEvents** (más allá de `work.completed`).
@@ -355,10 +386,49 @@ explore → propose → design → spec → tasks
 
 ---
 
-## Resumen (actualizado en Rev 5)
+## Post-work-dispatch — daemon + decision events + Pro ✅ COMPLETO EN REV 6
+
+> **Transición:** Rev 5 "siguiente: daemon / process lifecycle wiring" → Rev 6 "✅ COMPLETO" (3 slices verificados + archivados + pusheados; HEAD `929daef`).
+> **Por qué:** el runtime pasó de "corre en el test" a "corre en producción": el supervisor tiene proceso durable, la decisión del pre-gate queda auditada como hecho de negocio, y la economía §13.2 completa su escalada Flash→Pro.
+
+**Secuencia (cumplida):** daemon-lifecycle (proceso de producción) → heartbeat-decision-events (auditoría del pre-gate) → pro-escalation (escalada Flash→Pro).
+
+**Hito acumulado:** el daemon levanta el supervisor en producción con boot config fail-fast, schedule sin solapamiento y shutdown gracioso ordenado (señales + launcher TS zero-dep). Cada evaluación del pre-gate —incluido el heartbeat ocioso sin LLM— emite un `heartbeat.decision` append-only (prueba de ahorro de costo §2). Y cuando hay novedad material con `riskClass ≥ high`, la activación corre en **Pro** en vez de Flash, con el tier enhebrado desde `evaluateHeartbeat` hasta el request LLM (mismo prefijo estable, KV-cache intacto). Pro permanece dormido hasta que exista un productor de `riskClass` (cost-safe by design).
+
+### Trazabilidad por slice
+
+| # | Slice | Entregó | Archive | Spec canónica | Commits |
+|---|-------|---------|---------|---------------|---------|
+| 1 | `daemon-lifecycle` | Daemon de producción: boot config fail-fast, schedule sin solapamiento, `runDaemon` con shutdown gracioso ordenado, launcher TS zero-dep + start script | `archive/2026-08-08-daemon-lifecycle/` | `daemon-lifecycle` (NEW · 7 req / 12 scen) | PRs `5b6aec6`/`9fb11b0`/`090a14c` · archive `07eea12` |
+| 2 | `heartbeat-decision-events` | Factory pura `buildHeartbeatDecisionEvent`, port `appendIfAbsent` (conditional-append race-safe), emisión en el tick del supervisor para toda evaluación del gate | `archive/2026-08-08-heartbeat-decision-events/` | `supervisor-timer` + `business-event` + `heartbeat` (MODIFIED · 6 req / 21 scen) | PRs `a673db5`/`8f165d5` · remediation `f3f9197` · fix gate `152768d` · archive `a301d16` |
+| 3 | `pro-escalation` | Regla pura `escalationModelFor` (pro iff `riskClass ≥ high`), threading tick→dispatch→runWorker→prepareIntent, mapper `llmModelFor` en el borde app/LLM | `archive/2026-08-08-pro-escalation/` | `heartbeat` (MODIFIED · +1 req) + `worker-cycle` + `work-dispatch` + `supervisor-timer` (MODIFIED) | PRs `44cfbf4`/`fa37417` · archive `929daef` |
+
+**Verificaciones (todas PASS):**
+- daemon-lifecycle: 7/7 req, 12/12 escenarios.
+- heartbeat-decision-events: 6/6 req, 21/21 escenarios (tras remediation: race test concurrente de `appendIfAbsent` + paralelismo off para las suites live-PG).
+- pro-escalation: 7/7 req, 19/19 escenarios; live E2E DeepSeek/PG con credenciales 3/3 en primera corrida (sin flake).
+
+**Fuera de alcance (respetado):** fencing tokens, recovery dirigido por supervisor (Scope B), productor de señales `riskClass`, §13.3 authority-tier SoD, skill outcome BusinessEvents, learning / promotion (Increment 8), Memory OS, extracción de Skill.
+
+**Diferidos conocidos (NO bloqueantes):** comentarios stale post-threading (`supervisor-dispatch.ts:21-25`, `tick.ts:18`); pro dormido hasta que exista productor de `riskClass`; el defecto Gentle AI que bloqueaba reviews se contorneó con captura manual documentada en su momento.
+
+### Próximos pasos (después de pro-escalation)
+
+- [ ] **Fencing tokens** (protección contra escritores zombies) — deuda nombrada del Incremento 3 ("idempotencia, inbox/outbox y fencing").
+- [ ] **Recovery dirigido por supervisor (Scope B)** (`recoverInFlightWork` para Work `in_progress` huérfano post-claim).
+- [ ] **Productor de señales `riskClass`** (hace real la escalada a Pro; hoy dormida by design).
+- [ ] **§13.3 authority-tier SoD** (5.º principal reviewer para riesgo high/critical).
+- [ ] **Skill outcome BusinessEvents** (más allá de `work.completed`).
+- [ ] **Learning / promotion (Increment 8)**: ciclo candidate → active.
+- [ ] **Memory OS**.
+- [ ] **Extracción de `Skill`** al paquete canónico `competency/`.
+
+---
+
+## Resumen (actualizado en Rev 6)
 
 ```text
-main @ 4eb2451  ← AQUÍ ESTAMOS (Rev 5, verificado, pusheado)
+main @ 929daef  ← AQUÍ ESTAMOS (Rev 6, verificado, pusheado)
   ├─ domain-foundation (código + specs)
   ├─ deepseek-client (código + archive PASS)
   ├─ harden-first-enterprise-vertical-foundation (CERRADO + archivado + specs synced)
@@ -370,13 +440,17 @@ main @ 4eb2451  ← AQUÍ ESTAMOS (Rev 5, verificado, pusheado)
   │    ├─ first-skill (@f9bd5d9)
   │    ├─ skill-segment7 (@2f25358)
   │    └─ heartbeats (@d5b42e9)
-  └─ post-Paso 3 (COMPLETO + 3 slices archivados + 2 specs NEW synced)
-       ├─ heartbeat-activation (@1a0ca39)
-       ├─ supervisor-timer (@9501b7e)
-       └─ work-dispatch (@4eb2451)
+  ├─ post-Paso 3 (COMPLETO + 3 slices archivados + 2 specs NEW synced)
+  │    ├─ heartbeat-activation (@1a0ca39)
+  │    ├─ supervisor-timer (@9501b7e)
+  │    └─ work-dispatch (@4eb2451)
+  └─ post-work-dispatch (COMPLETO + 3 slices archivados + 1 spec NEW synced)
+       ├─ daemon-lifecycle (@07eea12)
+       ├─ heartbeat-decision-events (@a301d16)
+       └─ pro-escalation (@929daef)
 
 siguiente
-  └─ daemon / process lifecycle wiring (cómo se levanta el supervisor en producción)
+  └─ fencing tokens (protección contra escritores zombies; deuda del Incremento 3)
 ```
 
 ## Regla de oro
@@ -385,3 +459,4 @@ No abrir la vertical sin harden limpio. *(Cumplida en Rev 2; vertical cerrada en
 DeepSeek se conserva. Harden se rehace. *(Hecho: harden reconstruido limpio y archivado.)*
 **Apply termina escenarios; verify solo confirma; review no se fabrica.** *(Rev 3: el review adversarial cazó 3 defectos reales — claim brick, doble recibo, atomicidad — y se corrigieron con tests, no se taparon.)*
 **El costo es parte del razonamiento — ahora REAL: `activate` dispara un ciclo de worker; `no-llm-heartbeat` no gasta LLM.** *(Rev 5: el pre-gate §13.2 ya no solo decide — al ACTUAR, la rama `activate` ejecuta un ciclo de worker real que despacha trabajo accionable contra DeepSeek + PG; el ahorro es real, no potencial.)*
+**La decisión se audita y el tier escala solo por riesgo.** *(Rev 6: cada evaluación del pre-gate —incluso la ociosa sin LLM— queda como hecho de negocio `heartbeat.decision`, y la activación con `riskClass ≥ high` corre en Pro con el mismo prefijo estable. El runtime ya tiene proceso de producción durable (daemon) y la economía §13.2 completa su escalada Flash→Pro, dormida y cost-safe hasta que exista productor de `riskClass`.)*
