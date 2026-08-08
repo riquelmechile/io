@@ -46,4 +46,4 @@ Decision needed before apply: No
 
 ## Invariants (all slices)
 
-- [ ] 4.1 Cores byte-identical (2.3); zero new runtime deps; boundary tests green (`openai` only in `packages/llm-client/src/deepseek-client.ts`; `business-domain` zero `@io/*` imports; `packages/context` deps === `@io/business-domain`); conventional commits, no AI attribution, English messages.
+- [x] 4.1 Cores byte-identical (2.3); zero new runtime deps; boundary tests green (`openai` only in `packages/llm-client/src/deepseek-client.ts`; `business-domain` zero `@io/*` imports; `packages/context` deps === `@io/business-domain`); conventional commits, no AI attribution, English messages.
