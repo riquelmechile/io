@@ -29,10 +29,10 @@ Decision needed before apply: No
 
 ## Slice 1b — runDaemon (PR 2)
 
-- [ ] 2.1 RED `packages/app/test/daemon/daemon.test.ts` (injected hooks + fake schedule; no real timers/live PG): probe fail → exit(1) before schedule, probe ok → starts (R2 both); first signal graceful once, second → immediate exit(1) (R4 both); order stop→drain→conn.close→llm.close→exit(0), closes idle too, db before llm (R5 both; R7).
-- [ ] 2.2 GREEN `packages/app/src/daemon/daemon.ts`: `runDaemon(config, hooks?)`; defaults `process.on`/`process.exit`, `SELECT 1`, `PgDbConnection` deep import `@io/database/src/pg-connection.js`, `DeepSeekClient`, `buildSupervisorDispatch`→`startSupervisor`; no migrate; force-exit 1.
-- [ ] 2.3 `packages/app/test/daemon/byte-identity.test.ts` (R6): pin SHA-256 of `supervisor.ts`, `tick.ts`, `supervisor/types.ts`, `worker.ts`, `cycle.ts`, `evaluate.ts`, `dispatch/**`; assert zero new runtime deps; RED proof: mutate one protected byte → fails → restore.
-- [ ] 2.4 Gate green; commit `feat(daemon): add runDaemon lifecycle with ordered graceful shutdown`.
+- [x] 2.1 RED `packages/app/test/daemon/daemon.test.ts` (injected hooks + fake schedule; no real timers/live PG): probe fail → exit(1) before schedule, probe ok → starts (R2 both); first signal graceful once, second → immediate exit(1) (R4 both); order stop→drain→conn.close→llm.close→exit(0), closes idle too, db before llm (R5 both; R7).
+- [x] 2.2 GREEN `packages/app/src/daemon/daemon.ts`: `runDaemon(config, hooks?)`; defaults `process.on`/`process.exit`, `SELECT 1`, `PgDbConnection` deep import `@io/database/src/pg-connection.js`, `DeepSeekClient`, `buildSupervisorDispatch`→`startSupervisor`; no migrate; force-exit 1.
+- [x] 2.3 `packages/app/test/daemon/byte-identity.test.ts` (R6): pin SHA-256 of `supervisor.ts`, `tick.ts`, `supervisor/types.ts`, `worker.ts`, `cycle.ts`, `evaluate.ts`, `dispatch/**`; assert zero new runtime deps; RED proof: mutate one protected byte → fails → restore.
+- [x] 2.4 Gate green; commit `feat(daemon): add runDaemon lifecycle with ordered graceful shutdown` (commit step left to orchestrator — no commit made by apply).
 
 ## Slice 2 — entrypoint (PR 3)
 
