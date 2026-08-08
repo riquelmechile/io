@@ -1,6 +1,6 @@
 # heartbeat
 
-Deterministic novelty filter that decides `no-llm-heartbeat | activate flash` from a company's BusinessEvent fact stream via a caller-supplied cursor. Zero model involvement in the decision; materiality is a declared extensible constant; novelty is cursor-defined, never clock-defined.
+Deterministic novelty filter that decides `no-llm-heartbeat | activate flash | activate pro` from a company's BusinessEvent fact stream via a caller-supplied cursor. Zero model involvement in the decision; materiality is a declared extensible constant; novelty is cursor-defined, never clock-defined. Pro escalation (§13.2) selects `pro` only when novel material events carry `riskClass ≥ high`; otherwise defaults to `flash`. The timer triggers *when* to evaluate; the filter decides *whether* and at *which tier*. Cost is part of reasoning (§2): the model is the expensive resource; the filter decides whether an activation is justified and which tier.
 
 ## Purpose
 
@@ -8,9 +8,31 @@ Gates every model activation behind a deterministic filter (§13.2) that decides
 
 ## Requirements
 
+### Requirement: Deterministic Model-Tier Escalation
+
+For an activation, the domain MUST select `pro` iff at least one novel material event after the cursor has a valid `payload.riskClass` at or above `PRO_ESCALATION_THRESHOLD = 'high'` (`high` or `critical`); otherwise it MUST select `flash`. Selection MUST be a pure function of `(events, cursor)` and MUST NOT consult `occurredAt`, clocks, LLMs, or randomness. No risk-signal producer is introduced, so absent or invalid facts MUST remain cost-safe as `flash`.
+
+#### Scenario: Threshold and above select Pro
+
+- GIVEN novel material events carrying `high` or `critical` risk
+- WHEN the heartbeat is evaluated after the cursor
+- THEN the activation model MUST be `pro`
+
+#### Scenario: Below, absent, invalid, or seen risk defaults to Flash
+
+- GIVEN risk is `low`, `medium`, absent, invalid, non-material, or at/before the cursor
+- WHEN the heartbeat is evaluated with material novelty
+- THEN the activation model MUST be `flash`
+
+#### Scenario: Ambient nondeterminism cannot affect tier
+
+- GIVEN identical events and cursor while clock, LLM output, and randomness vary
+- WHEN model selection is repeated
+- THEN every selected model MUST be identical
+
 ### Requirement: Pure Heartbeat Decision
 
-`business-domain` MUST define `HeartbeatDecision` as `{ kind: 'activate', model: 'flash' } | { kind: 'no-llm-heartbeat' }`, deterministically and without `@io/*` imports or runtime dependencies.
+`business-domain` MUST define `HeartbeatDecision` as `{ kind: 'activate', model: 'flash' | 'pro' } | { kind: 'no-llm-heartbeat' }`, deterministically and with zero `@io/*` imports or runtime dependencies.
 
 #### Scenario: Decision type remains pure
 

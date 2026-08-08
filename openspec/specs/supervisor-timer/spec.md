@@ -78,19 +78,22 @@ The persisted cursor row MUST be the supervisor checkpoint. A restart MUST resum
 
 ### Requirement: Non-Invasive Activation Seam
 
-`onActivate` MUST remain injectable and MAY be a recorded no-op. Decision-event appends and cursor writes MUST belong only to the supervisor. `runWorker`, `cycle.ts`, `evaluate.ts`, the read-only gate, and the worker path MUST remain unchanged; decision appends MUST occur only in the supervisor tick.
+`onActivate(companyId, model)` MUST remain injectable and MAY be a recorded no-op. On `activate`, the supervisor MUST pass the exact heartbeat-selected tier through the seam to dispatch and `runWorker`; `runWorker` MAY gain only that model parameter. Decision-event appends and cursor writes MUST remain supervisor-owned and decision appends MUST occur only in the supervisor tick. `cycle.ts`, `evaluate.ts`, and the read-only gate MUST remain byte-identical.
 
-(Previously: Only cursor writes were explicitly supervisor-owned.)
+(Previously: The post-heartbeat seam appended decisions but did not thread a model tier, and `runWorker` was byte-identical.)
 
-#### Scenario: Recorded no-op is valid
-- GIVEN an activation callback that only records the company
-- WHEN the gate activates
-- THEN the callback MUST receive the company without starting Work
+#### Scenario: Recorded no-op receives the selected model
 
-#### Scenario: Existing paths remain unchanged
-- GIVEN decision-event emission is added
-- WHEN sources are compared with their baseline
-- THEN `runWorker`, `cycle.ts`, and `evaluate.ts` MUST be byte-identical
+- GIVEN an activation callback that only records its arguments
+- WHEN the gate activates with model `pro`
+- THEN the callback MUST receive the company and `pro` without starting Work
+
+#### Scenario: Existing paths preserve composed boundaries
+
+- GIVEN decision-event emission and model threading are present
+- WHEN sources are compared with their baselines
+- THEN `cycle.ts`, `evaluate.ts`, and the gate MUST be byte-identical
+- AND `runWorker` MUST differ only by model-parameter threading
 
 ### Requirement: Single-Instance Operation
 
