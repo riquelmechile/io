@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildHeartbeatDecisionEvent } from '@io/business-domain/src/index.js';
 import type { BusinessEvent } from '@io/business-domain/src/types.js';
 import { PgBusinessEventRepository, PgHeartbeatCursorRepository } from '@io/database/src/index.js';
 import { PgDbConnection, pgConnectionString } from '@io/database/src/pg-connection.js';
@@ -136,7 +137,21 @@ describe.skipIf(!reachable)(
         activated.push(companyId);
       });
       expect(activated).toEqual(['acme']);
-      expect(await deps.cursors.get('acme')).toEqual({ lastEventId: 'evt:sup-2' });
+
+      // The second (no-llm) tick checkpoints the PRE-append tail — now the
+      // decision event from the first activate tick. The decision events land
+      // in real PG through the supervisor's own appendIfAbsent path.
+      expect(await deps.cursors.get('acme')).toEqual({
+        lastEventId: buildHeartbeatDecisionEvent('acme', {
+          kind: 'activate',
+          model: 'flash',
+        }).eventId,
+      });
+      const decisionRows = await conn.query<{ count: number }>(
+        "SELECT count(*)::int AS count FROM business_event WHERE event_type = 'heartbeat.decision' AND company_id = $1",
+        ['acme'],
+      );
+      expect(decisionRows[0]?.count).toBe(2); // one per tick, both persisted
     });
 
     it('startSupervisor with an injected schedule drives ticks through the composition root', async () => {

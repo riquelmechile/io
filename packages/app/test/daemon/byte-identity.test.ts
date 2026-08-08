@@ -12,6 +12,12 @@ import { describe, expect, it } from 'vitest';
  * below pin the COMMITTED baseline (slice 1a `5b6aec6` and prior verified
  * work); any byte drift fails here (RED proof: mutate → FAIL → restore is
  * part of task 2.3). Runtime deps are pinned at the package level.
+ *
+ * `supervisor/tick.ts` is the ONE deliberate exception: heartbeat-decision
+ * PR 2 wires the `heartbeat.decision` append inside `tickCompany` (the
+ * supervisor-owned emission seam), so its pin is updated to the new wired
+ * bytes while `supervisor.ts`, `types.ts`, `cycle.ts`, `evaluate.ts`,
+ * `worker.ts`, and the dispatch cores stay byte-identical.
  */
 
 /** `packages/app/src` — the root every protected source is relative to. */
@@ -20,7 +26,7 @@ const SRC_ROOT = resolve(fileURLToPath(new URL('../../src', import.meta.url)));
 /** Protected core sources: path relative to SRC_ROOT → pinned SHA-256 (baseline). */
 const PROTECTED_SOURCES: Record<string, string> = {
   'supervisor/supervisor.ts': '5e7fa7cd205ce02daed6e5efe1d4ec176e02e7075a7f856621ccdff52be123da',
-  'supervisor/tick.ts': 'b8e81aab75232af7fe2cea2329582a113bc710d68fbbed782bc14139294c880d',
+  'supervisor/tick.ts': '674c9eb4415e690b6a0cc0b6e553bc6d59322ab93f201beb1ccc7951ea8ce43c',
   'supervisor/types.ts': '7d795f73e0db4ee26dd302b092b55a366b45cbad6b22101a089bee7c4092c935',
   'worker/worker.ts': 'f20a9403439d9f8b3aa926518febb34e7afc78a4a1a2a61f8786ee044ff49a28',
   'heartbeat/cycle.ts': '9808756b51a37907bfc0b070fbf364c15f028e0ff3e0777abf94af1c90a50e75',

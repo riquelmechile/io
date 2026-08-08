@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  buildHeartbeatDecisionEvent,
   InMemoryBusinessEventRepository,
   InMemoryHeartbeatCursorStore,
   type BusinessEventRepository,
@@ -33,6 +34,16 @@ function sampleEvent(eventId: string, eventType: string, companyId: string): Bus
     payload: { workId: 'work-1' },
     source: 'worker',
   };
+}
+
+/** The supervisor-owned `heartbeat.decision` events for a company, in stream order. */
+async function decisionEvents(
+  events: BusinessEventRepository,
+  companyId: string,
+): Promise<readonly BusinessEvent[]> {
+  return (await events.listByCompany(companyId)).filter(
+    (event) => event.eventType === 'heartbeat.decision',
+  );
 }
 
 /**
@@ -119,7 +130,7 @@ describe('tickCompany — sequential checkpointed tick (task 3.1)', () => {
     expect(cursors.upsertTrace).toEqual([]);
   });
 
-  it('no-llm-heartbeat advances the cursor and MUST NOT run onActivate', async () => {
+  it('no-llm-heartbeat appends ONE decision event before the checkpoint and MUST NOT run onActivate', async () => {
     const events = new TracingEvents();
     await events.append(sampleEvent('evt:1', 'work.started', 'acme'));
     const cursors = new TracingCursorStore();
@@ -130,7 +141,55 @@ describe('tickCompany — sequential checkpointed tick (task 3.1)', () => {
     });
 
     expect(activations).toEqual([]);
+    // The evaluation's decision event is appended BEFORE the tail is
+    // checkpointed: exactly one supervisor-owned `heartbeat.decision`.
+    const decisions = await decisionEvents(events, 'acme');
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      companyId: 'acme',
+      aggregateKind: 'heartbeat',
+      eventType: 'heartbeat.decision',
+      source: 'supervisor',
+    });
+    // A declined decision carries no `model`; an absent cursor is null.
+    expect(decisions[0]?.payload).toEqual({ decision: 'no-llm-heartbeat', cursor: null });
+    expect(decisions[0]?.source).toBe('supervisor');
+    // The checkpoint is the PRE-append tail — never the decision event itself.
     expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+  });
+
+  it('BOTH decision branches emit EXACTLY one heartbeat.decision with the branch payload', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:act-1', 'work.completed', 'company-act'));
+    await events.append(sampleEvent('evt:decl-1', 'work.started', 'company-decl'));
+    const cursors = new TracingCursorStore();
+    const activations: string[] = [];
+
+    await tickCompany({ events, cursors }, 'company-act', (companyId) => {
+      activations.push(companyId);
+    });
+    await tickCompany({ events, cursors }, 'company-decl', (companyId) => {
+      activations.push(companyId);
+    });
+
+    // Each evaluation appended exactly one decision event (spec: "Both
+    // branches emit").
+    const activated = await decisionEvents(events, 'company-act');
+    expect(activated).toHaveLength(1);
+    expect(activated[0]?.payload).toEqual({
+      decision: 'activate',
+      model: 'flash',
+      cursor: null,
+    });
+    expect(activated[0]?.source).toBe('supervisor');
+
+    const declined = await decisionEvents(events, 'company-decl');
+    expect(declined).toHaveLength(1);
+    expect(declined[0]?.payload).toEqual({ decision: 'no-llm-heartbeat', cursor: null });
+    expect(declined[0]?.source).toBe('supervisor');
+
+    // Only the activate branch invoked the callback.
+    expect(activations).toEqual(['company-act']);
   });
 
   it('empty stream → no-llm with NO cursor persisted (defensive empty tail)', async () => {
@@ -176,12 +235,85 @@ describe('tickCompany — sequential checkpointed tick (task 3.1)', () => {
     expect(await cursors.get('acme')).toBeUndefined();
     expect(cursors.upsertTrace).toEqual([]);
 
-    // Tick 2: re-evaluates the SAME stream tail and re-invokes onActivate.
+    // Tick 2: re-evaluates the SAME stream tail and re-invokes onActivate. The
+    // retry checkpoints the PRE-append tail — now tick 1's decision event
+    // (appended before the crash), which consumes the novelty.
     await tickCompany({ events, cursors }, 'acme', (companyId) => {
       activations.push(companyId);
     });
 
     expect(activations).toEqual(['acme', 'acme']);
+    expect(await cursors.get('acme')).toEqual({
+      lastEventId: buildHeartbeatDecisionEvent('acme', {
+        kind: 'activate',
+        model: 'flash',
+      }).eventId,
+    });
+  });
+
+  it('a retried tick with the SAME unadvanced cursor keeps EXACTLY one decision event', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const cursors = new TracingCursorStore();
+
+    // Tick 1: the decision event is appended, then the callback throws BEFORE
+    // the checkpoint — the tick fails with the cursor unadvanced.
+    await expect(
+      tickCompany({ events, cursors }, 'acme', () => {
+        throw new Error('simulated crash during onActivate');
+      }),
+    ).rejects.toThrow('simulated crash during onActivate');
+    expect(await cursors.get('acme')).toBeUndefined();
+
+    // Tick 2 (retry): the same cursor + decision rebuild the SAME event id →
+    // appendIfAbsent no-ops (spec: "Retry does not duplicate the decision").
+    await tickCompany({ events, cursors }, 'acme');
+    const decisions = await decisionEvents(events, 'acme');
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]?.eventId).toBe(
+      buildHeartbeatDecisionEvent('acme', { kind: 'activate', model: 'flash' }).eventId,
+    );
+    // The retry checkpoints the PRE-append tail — tick 1's decision event.
+    expect(await cursors.get('acme')).toEqual({
+      lastEventId: buildHeartbeatDecisionEvent('acme', {
+        kind: 'activate',
+        model: 'flash',
+      }).eventId,
+    });
+  });
+
+  it('an APPEND failure fails the tick BEFORE callback and checkpoint, then retries', async () => {
+    class FailingAppendEvents extends TracingEvents {
+      failAppend = true;
+
+      override async appendIfAbsent(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+        if (this.failAppend) {
+          throw new Error('simulated append failure');
+        }
+        return super.appendIfAbsent(event);
+      }
+    }
+    const events = new FailingAppendEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const cursors = new TracingCursorStore();
+    const activations: string[] = [];
+
+    // The append failure propagates (never caught): no callback, no checkpoint.
+    await expect(
+      tickCompany({ events, cursors }, 'acme', (companyId) => {
+        activations.push(companyId);
+      }),
+    ).rejects.toThrow('simulated append failure');
+    expect(activations).toEqual([]);
+    expect(await cursors.get('acme')).toBeUndefined();
+    expect(cursors.upsertTrace).toEqual([]);
+
+    // The next interval retries from the prior cursor and completes.
+    events.failAppend = false;
+    await tickCompany({ events, cursors }, 'acme', (companyId) => {
+      activations.push(companyId);
+    });
+    expect(activations).toEqual(['acme']);
     expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
   });
 });
@@ -333,12 +465,18 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
 
       expect(trace).toEqual(['activate:company-a']);
       expect(await cursors.get('company-b')).toBeUndefined();
+      // company-a's decision event was appended BEFORE its callback; company-b's
+      // tick has NOT begun — its stream holds no decision event yet.
+      expect(await decisionEvents(events, 'company-a')).toHaveLength(1);
+      expect(await decisionEvents(events, 'company-b')).toHaveLength(0);
 
       releaseA(); // company-a finishes its tick
       await tickPromise;
 
       expect(trace).toEqual(['activate:company-a', 'activate:company-b']);
       expect(await cursors.get('company-b')).toEqual({ lastEventId: 'evt:b-1' });
+      expect(await decisionEvents(events, 'company-a')).toHaveLength(1);
+      expect(await decisionEvents(events, 'company-b')).toHaveLength(1);
     } finally {
       sup.stop();
     }
@@ -374,6 +512,12 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
       await pump.pump(); // tick 3: novelty renewed → activate again
       expect(activations).toEqual(['acme', 'acme']);
       expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:2' });
+
+      // Each tick appended its decision BEFORE callback and checkpoint (spec):
+      // activate → no-llm-heartbeat → activate, in stream order.
+      expect((await decisionEvents(events, 'acme')).map((event) => event.payload.decision)).toEqual(
+        ['activate', 'no-llm-heartbeat', 'activate'],
+      );
     } finally {
       sup.stop();
     }
@@ -416,7 +560,14 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
       await pump2.pump();
 
       expect(activations).toEqual(['acme']); // no re-activation after restart
-      expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+      // sup2's no-llm tick checkpoints the PRE-append tail — now the decision
+      // event from sup1's activate tick (decision events never renew novelty).
+      expect(await cursors.get('acme')).toEqual({
+        lastEventId: buildHeartbeatDecisionEvent('acme', {
+          kind: 'activate',
+          model: 'flash',
+        }).eventId,
+      });
     } finally {
       sup2.stop();
     }
@@ -454,7 +605,13 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
       shouldThrow = false;
       await pump.pump(); // tick 2: re-evaluates the same tail → re-invokes
       expect(activations).toEqual(['acme', 'acme']);
-      expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+      // The retry checkpoints the PRE-append tail — tick 1's decision event.
+      expect(await cursors.get('acme')).toEqual({
+        lastEventId: buildHeartbeatDecisionEvent('acme', {
+          kind: 'activate',
+          model: 'flash',
+        }).eventId,
+      });
     } finally {
       sup.stop();
       errorSpy.mockRestore();
@@ -483,11 +640,18 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
       await pump.pump();
 
       expect(activations).toEqual(['acme']);
-      // The activation seam started NO Work: the stream still holds exactly
-      // the one seeded event (no supervisor/gate appends, no self-activation).
-      expect(await events.listByCompany('acme')).toEqual([
-        sampleEvent('evt:1', 'work.completed', 'acme'),
-      ]);
+      // The activation seam started NO Work: the stream holds the one seeded
+      // event PLUS exactly one supervisor-owned `heartbeat.decision` — no
+      // self-activation, no worker events (spec: "Recorded no-op is valid").
+      const stream = await events.listByCompany('acme');
+      expect(stream).toHaveLength(2);
+      expect(stream[0]).toEqual(sampleEvent('evt:1', 'work.completed', 'acme'));
+      expect(stream[1]).toMatchObject({
+        companyId: 'acme',
+        aggregateKind: 'heartbeat',
+        eventType: 'heartbeat.decision',
+        source: 'supervisor',
+      });
     } finally {
       sup.stop();
     }
