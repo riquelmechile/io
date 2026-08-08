@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Composition root / worker-process shell for the first enterprise vertical: sandbox port, reversible fakes + adapter, journal marker wiring. Not a canonical package.",
+  "scripts": {
+    "start": "node --experimental-transform-types --import ./src/daemon/ts-launcher/register.mjs ./src/daemon/main.ts"
+  },
   "dependencies": {
     "@io/business-domain": "workspace:*",
     "@io/context": "workspace:*",

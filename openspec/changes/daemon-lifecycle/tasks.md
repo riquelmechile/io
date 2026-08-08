@@ -36,13 +36,13 @@ Decision needed before apply: No
 
 ## Slice 2 — entrypoint (PR 3)
 
-- [ ] 3.1 RED `packages/app/test/daemon/launcher.test.ts`: resolve seam maps `.js`→sibling `.ts`, `@io/<pkg>/…`→`packages/<pkg>` source (R7).
-- [ ] 3.2 GREEN `packages/app/src/daemon/ts-launcher/ts-hook.mjs` + `register.mjs` (`node:module` builtins only).
-- [ ] 3.3 Create `packages/app/src/daemon/main.ts`: `await runDaemon(loadConfig())`; catch → `console.error` → exit 1.
-- [ ] 3.4 Modify `packages/app/package.json`: add `scripts.start` = `node --experimental-transform-types --import ./src/daemon/ts-launcher/register.mjs ./src/daemon/main.ts`; cwd pinned: pnpm package scripts run in `packages/app`; root invocation `pnpm --filter @io/app start`.
-- [ ] 3.5 `packages/app/test/daemon/boot-smoke.integration.test.ts`: live PG only, sequential (`pnpm vitest run --no-file-parallelism`), skip if unreachable; boot → SIGTERM drains in-flight tick → exit 0 (R2/R5).
-- [ ] 3.6 `docs/` note: external supervision (systemd/docker); migrations 001–009 operator prerequisite; never auto-migrates.
-- [ ] 3.7 Gate green; commit `feat(daemon): add zero-dep TypeScript entrypoint and start script`.
+- [x] 3.1 RED `packages/app/test/daemon/launcher.test.ts`: resolve seam maps `.js`→sibling `.ts`, `@io/<pkg>/…`→`packages/<pkg>` source (R7).
+- [x] 3.2 GREEN `packages/app/src/daemon/ts-launcher/ts-hook.mjs` + `register.mjs` (`node:module` builtins only).
+- [x] 3.3 Create `packages/app/src/daemon/main.ts`: `await runDaemon(loadConfig())`; catch → `console.error` → exit 1.
+- [x] 3.4 Modify `packages/app/package.json`: add `scripts.start` = `node --experimental-transform-types --import ./src/daemon/ts-launcher/register.mjs ./src/daemon/main.ts`; cwd pinned: pnpm package scripts run in `packages/app`; root invocation `pnpm --filter @io/app start`.
+- [x] 3.5 `packages/app/test/daemon/boot-smoke.integration.test.ts`: live PG only, sequential (`pnpm vitest run --no-file-parallelism`), skip if unreachable; boot → SIGTERM drains in-flight tick → exit 0 (R2/R5).
+- [x] 3.6 `docs/` note: external supervision (systemd/docker); migrations 001–009 operator prerequisite; never auto-migrates.
+- [x] 3.7 Gate green; commit `feat(daemon): add zero-dep TypeScript entrypoint and start script` (commit step left to orchestrator — no commit made by apply).
 
 ## Invariants (all slices)
 
