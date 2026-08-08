@@ -217,6 +217,35 @@ describe.skipIf(!reachable)('integration: real PG business_event round-trip (R4,
       expect(stored[0]?.source).toBe('supervisor');
       expect(stored[0]?.payload).toEqual({ decision: 'no-llm-heartbeat', cursor: 'evt:5' });
     });
+
+    it('two CONCURRENT appendIfAbsent calls with the SAME event_id leave EXACTLY ONE original row (ON CONFLICT resolves the race)', async () => {
+      const original = sampleEvent('race-1');
+      // Same eventId, DIFFERENT payload + occurredAt (spec scenario GIVEN:
+      // concurrent conditional appends with one event ID). The 006 UNIQUE
+      // index uq_business_event_event_id makes exactly ONE INSERT the winner;
+      // the loser's ON CONFLICT (event_id) DO NOTHING silently no-ops. The
+      // winner resolves its input view, the loser SELECTs the stored original
+      // — both MUST converge on the SAME single row, no migration.
+      const racingDuplicate: BusinessEvent = {
+        ...sampleEvent('race-1'),
+        occurredAt: 999,
+        payload: { attemptId: 'race-1', tampered: true },
+      };
+
+      const [first, second] = await Promise.all([
+        eventsRepo.appendIfAbsent(original),
+        eventsRepo.appendIfAbsent(racingDuplicate),
+      ]);
+
+      // The race winner is nondeterministic — assert convergence, never which
+      // input won: whichever INSERT won, both calls resolve the same fact.
+      expect(first).toEqual(second);
+
+      const stored = await eventsRepo.listByCompany('acme');
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toEqual(first);
+      expect(stored[0]?.payload).toEqual(first.payload);
+    });
   });
 
   describe('listCompanyIds — read-only distinct company discovery (supervisor-timer)', () => {
