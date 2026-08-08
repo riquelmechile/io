@@ -81,15 +81,18 @@ describe('BusinessEvent (R1, R6)', () => {
 });
 
 describe('BusinessEventRepository port (R2)', () => {
-  it('surface is EXACTLY append + listByCompany + read-only listCompanyIds — no update/delete/overwrite/getById', async () => {
+  it('surface is EXACTLY append + appendIfAbsent + listByCompany + read-only listCompanyIds — no update/delete/overwrite/getById', async () => {
     // Type-level exact-surface check: the port must not expose any other key.
     expectTypeOf<keyof BusinessEventRepository>().toEqualTypeOf<
-      'append' | 'listByCompany' | 'listCompanyIds'
+      'append' | 'appendIfAbsent' | 'listByCompany' | 'listCompanyIds'
     >();
 
-    // Runtime: a conforming implementation only needs those three operations.
+    // Runtime: a conforming implementation only needs those four operations.
     const repo: BusinessEventRepository = {
       async append(event) {
+        return event;
+      },
+      async appendIfAbsent(event) {
         return event;
       },
       async listByCompany(companyId) {
@@ -101,6 +104,7 @@ describe('BusinessEventRepository port (R2)', () => {
     };
     const appended = await repo.append(sampleEvent('attempt-1'));
     expect(appended.eventId).toBe('evt:attempt-1');
+    expect((await repo.appendIfAbsent(sampleEvent('attempt-1'))).eventId).toBe('evt:attempt-1');
     expect(await repo.listByCompany('acme')).toHaveLength(1);
     expect(await repo.listByCompany('other')).toHaveLength(0);
     expect(await repo.listCompanyIds()).toEqual(['acme']);
@@ -108,13 +112,13 @@ describe('BusinessEventRepository port (R2)', () => {
 });
 
 describe('InMemoryBusinessEventRepository (R3, R8)', () => {
-  it('real fake surface is EXACTLY append + listByCompany + listCompanyIds — no mutation operations', () => {
+  it('real fake surface is EXACTLY append + appendIfAbsent + listByCompany + listCompanyIds — no mutation operations', () => {
     const repo = new InMemoryBusinessEventRepository();
     const proto = Object.getPrototypeOf(repo) as Record<string, unknown>;
     const methods = Object.getOwnPropertyNames(proto)
       .filter((name) => name !== 'constructor' && typeof proto[name] === 'function')
       .sort();
-    expect(methods).toEqual(['append', 'listByCompany', 'listCompanyIds']);
+    expect(methods).toEqual(['append', 'appendIfAbsent', 'listByCompany', 'listCompanyIds']);
   });
 
   it('append → listByCompany round-trips all 8 fields including payload and source', async () => {

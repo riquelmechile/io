@@ -216,6 +216,10 @@ export class RecordingEvents implements BusinessEventRepository {
     return saved;
   }
 
+  async appendIfAbsent(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+    return this.inner.appendIfAbsent(event);
+  }
+
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
     this.listCalls.push(companyId);
     return this.inner.listByCompany(companyId);

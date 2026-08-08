@@ -175,6 +175,50 @@ describe.skipIf(!reachable)('integration: real PG business_event round-trip (R4,
     });
   });
 
+  describe('appendIfAbsent — at-most-once conditional append (live PG, sequential)', () => {
+    it('a double appendIfAbsent of the same event_id leaves EXACTLY ONE ORIGINAL row (ON CONFLICT DO NOTHING, no migration)', async () => {
+      const original = sampleEvent('attempt-1');
+      expect(await eventsRepo.appendIfAbsent(original)).toEqual(original);
+
+      // Same eventId, DIFFERENT payload + occurredAt: ON CONFLICT (event_id)
+      // DO NOTHING must no-op and the original row must stay byte-for-byte
+      // unchanged — "PostgreSQL conditional append is single-issuance" (no
+      // migration; the 006 DDL is unchanged).
+      const duplicate: BusinessEvent = {
+        ...sampleEvent('attempt-1'),
+        occurredAt: 999,
+        payload: { attemptId: 'attempt-1', tampered: true },
+      };
+      expect(await eventsRepo.appendIfAbsent(duplicate)).toEqual(original);
+
+      const stored = await eventsRepo.listByCompany('acme');
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toEqual(original);
+      expect(stored[0]?.payload).toEqual(original.payload);
+      expect(stored[0]?.occurredAt).toBe(1750000000000);
+    });
+
+    it('round-trips a supervisor heartbeat.decision-shaped event through appendIfAbsent (source + JSONB payload)', async () => {
+      const decision: BusinessEvent = {
+        eventId: 'evt:hb:2b9e2adf9e63deee',
+        companyId: 'acme',
+        aggregateKind: 'heartbeat',
+        aggregateId: 'acme',
+        eventType: 'heartbeat.decision',
+        occurredAt: 1750000000000,
+        payload: { decision: 'no-llm-heartbeat', cursor: 'evt:5' },
+        source: 'supervisor',
+      };
+      expect(await eventsRepo.appendIfAbsent(decision)).toEqual(decision);
+
+      const stored = await eventsRepo.listByCompany('acme');
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toEqual(decision);
+      expect(stored[0]?.source).toBe('supervisor');
+      expect(stored[0]?.payload).toEqual({ decision: 'no-llm-heartbeat', cursor: 'evt:5' });
+    });
+  });
+
   describe('listCompanyIds — read-only distinct company discovery (supervisor-timer)', () => {
     it('returns each company exactly once across interleaved events (DISTINCT)', async () => {
       await eventsRepo.append(sampleEvent('attempt-a1', 'company-a'));

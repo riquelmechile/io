@@ -79,11 +79,31 @@ describe('declared material event types (R2)', () => {
       'work.failed',
       'delegation.assigned',
       'payment.issued',
+      'heartbeat.decision',
       'WORK.COMPLETED',
       '',
     ]) {
       expect(heartbeat.isMaterialEvent(sampleEvent(`evt:${eventType}`, eventType))).toBe(false);
     }
+  });
+
+  it('heartbeat.decision is undeclared: it is NOT material and never renews novelty (Declared Material Event Types)', () => {
+    // A cursor followed ONLY by heartbeat.decision events: the decision event
+    // must not feed the heartbeat gate — novelty stays false and the next
+    // decision is no-llm-heartbeat (spec scenario: Decision events neither
+    // renew novelty nor context).
+    const decisionEvents = [
+      sampleEvent('evt:hb:1', 'heartbeat.decision'),
+      sampleEvent('evt:hb:2', 'heartbeat.decision'),
+    ];
+    const cursor: heartbeat.HeartbeatCursor = { lastEventId: 'evt:hb:1' };
+
+    expect(decisionEvents.map((event) => heartbeat.isMaterialEvent(event))).toEqual([false, false]);
+    expect(heartbeat.MATERIAL_EVENT_TYPES).not.toContain('heartbeat.decision');
+    expect(heartbeat.hasMaterialNovelty(decisionEvents, cursor)).toBe(false);
+    expect(heartbeat.evaluateHeartbeat(decisionEvents, cursor)).toEqual({
+      kind: 'no-llm-heartbeat',
+    });
   });
 });
 

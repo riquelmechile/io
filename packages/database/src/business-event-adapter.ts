@@ -54,6 +54,56 @@ export class PgBusinessEventRepository {
     return event;
   }
 
+  /**
+   * At-most-once conditional append (supervisor `heartbeat.decision`): INSERTs
+   * with `ON CONFLICT (event_id) DO NOTHING` — the 006 UNIQUE index
+   * `uq_business_event_event_id` turns a duplicate (or a concurrent race) into
+   * a silent no-op. Insert won (rowCount > 0) → resolve the input; duplicate
+   * ignored (rowCount 0) → SELECT the STORED ORIGINAL by event_id through
+   * {@link parseBusinessEventRow}, so a retry with the same unadvanced cursor
+   * keeps exactly one original row. Empty `companyId` rejected BEFORE SQL
+   * (ADR-0002). No `implements` clause — the port is pinned by tests.
+   */
+  async appendIfAbsent(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+    if (!event.companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
+    const result = (await this.conn.execute(
+      'INSERT INTO business_event (event_id, company_id, aggregate_kind, aggregate_id, ' +
+        'event_type, occurred_at, payload, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ' +
+        'ON CONFLICT (event_id) DO NOTHING',
+      [
+        event.eventId,
+        event.companyId,
+        event.aggregateKind,
+        event.aggregateId,
+        event.eventType,
+        event.occurredAt,
+        JSON.stringify(event.payload),
+        event.source,
+        Date.now(),
+      ],
+    )) as { rowCount?: number };
+    if ((result.rowCount ?? 0) > 0) {
+      // The at-most-once insert won — resolve the input view.
+      return event;
+    }
+    // ON CONFLICT ignored the duplicate: the ORIGINAL row is the persisted
+    // fact. Resolve it through the D7 guard, never the (possibly divergent)
+    // input. Rows read from PG are UNTRUSTED bytes — a corrupt row fails loudly.
+    const rows = await this.conn.query<BusinessEvent>(
+      'SELECT event_id AS "eventId", company_id AS "companyId", aggregate_kind AS "aggregateKind", ' +
+        'aggregate_id AS "aggregateId", event_type AS "eventType", occurred_at AS "occurredAt", ' +
+        'payload, source FROM business_event WHERE event_id = $1',
+      [event.eventId],
+    );
+    const parsed = parseBusinessEventRow(rows[0]);
+    if (!parsed.ok) {
+      throw new Error(`corrupt business event row: ${parsed.reason}`);
+    }
+    return parsed.value;
+  }
+
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
     if (!companyId) {
       throw new Error('a non-empty companyId is required');

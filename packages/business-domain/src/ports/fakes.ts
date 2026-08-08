@@ -177,6 +177,19 @@ export class InMemoryBusinessEventRepository implements BusinessEventRepository 
     return event;
   }
 
+  async appendIfAbsent(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+    requireCompanyId(event.companyId);
+    const existing = this.entries.find((entry) => entry.eventId === event.eventId);
+    if (existing !== undefined) {
+      // At-most-once (supervisor-timer): a duplicate conditional append no-ops
+      // and returns the STORED ORIGINAL — never the input, never an overwrite.
+      // Mirrors the PostgreSQL adapter's ON CONFLICT (event_id) DO NOTHING.
+      return existing;
+    }
+    this.entries.push(event);
+    return event;
+  }
+
   async listByCompany(companyId: string): Promise<readonly BusinessEvent[]> {
     requireCompanyId(companyId);
     return this.entries.filter((entry) => entry.companyId === companyId);

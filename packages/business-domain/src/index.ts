@@ -6,6 +6,7 @@
  */
 
 export { evidenceId } from './evidence-id.js';
+export { buildHeartbeatDecisionEvent } from './heartbeat-decision-event.js';
 export type { JournalFakePersistence } from './ports/fakes.js';
 export {
   DurableJournalFake,

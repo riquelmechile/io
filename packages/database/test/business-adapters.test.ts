@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import type { BusinessReceipt, Company, Delegation, Work } from '@io/business-domain/src/index.js';
+import type {
+  BusinessEvent,
+  BusinessReceipt,
+  Company,
+  Delegation,
+  Work,
+} from '@io/business-domain/src/index.js';
 import type { CasResult } from '@io/business-domain/src/index.js';
 
+import { PgBusinessEventRepository } from '../src/business-event-adapter.js';
 import { PgBusinessReceiptRepository } from '../src/business-receipt-adapter.js';
 import { PgCompanyRepository } from '../src/company-adapter.js';
 import { PgDelegationRepository } from '../src/delegation-adapter.js';
 import { PgWorkRepository } from '../src/work-adapter.js';
 
+import type { DbConnection } from '../src/connection.js';
 import { InMemoryDbConnection } from './connection-fake.js';
 
 /**
@@ -576,5 +584,114 @@ describe('PG adapters reject an empty companyId (fake parity, task 2.11)', () =>
       const repo = new PgBusinessReceiptRepository(new InMemoryDbConnection());
       await expect(repo.get('', 'r-1')).rejects.toThrow(/companyId/i);
     });
+  });
+});
+
+// ── BusinessEvent adapter: appendIfAbsent (at-most-once conditional append) ──
+// The InMemoryDbConnection cannot model `ON CONFLICT … DO NOTHING` (it always
+// INSERTs), so a scripted double resolves a chosen `execute` rowCount + SELECT rows.
+
+/** Scripted connection for appendIfAbsent: records SQL+params, resolves
+ * scripted `execute` results (rowCount) and `query` rows in call order. */
+class ScriptedEventConnection implements DbConnection {
+  readonly operations: Array<{ sql: string; params: readonly unknown[] }> = [];
+  private executeIndex = 0;
+  private queryIndex = 0;
+
+  constructor(
+    private readonly executeResults: readonly unknown[],
+    private readonly queryResults: readonly (readonly Record<string, unknown>[])[],
+  ) {}
+
+  async execute(sql: string, params: readonly unknown[]): Promise<unknown> {
+    this.operations.push({ sql, params });
+    return this.executeResults[this.executeIndex++] ?? { rowCount: 1 };
+  }
+
+  async query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> {
+    this.operations.push({ sql, params });
+    return (this.queryResults[this.queryIndex++] ?? []) as readonly T[];
+  }
+
+  async transaction<T>(fn: (conn: DbConnection) => Promise<T>): Promise<T> {
+    return fn(this);
+  }
+}
+
+function decisionEvent(eventId: string, companyId = 'acme'): BusinessEvent {
+  return {
+    eventId,
+    companyId,
+    aggregateKind: 'heartbeat',
+    aggregateId: companyId,
+    eventType: 'heartbeat.decision',
+    occurredAt: 1750000000000,
+    payload: { decision: 'no-llm-heartbeat', cursor: 'evt:5' },
+    source: 'supervisor',
+  };
+}
+
+describe('PgBusinessEventRepository.appendIfAbsent — at-most-once conditional append', () => {
+  it('emits INSERT … ON CONFLICT (event_id) DO NOTHING with the SAME column/$N shape as append, and returns the input on rowCount > 0', async () => {
+    const db = new ScriptedEventConnection([{ rowCount: 1 }], []);
+    const repo = new PgBusinessEventRepository(db);
+    const event = decisionEvent('evt:hb:2b9e2adf9e63deee');
+
+    const saved = await repo.appendIfAbsent(event);
+
+    expect(saved).toEqual(event);
+    expect(db.operations).toHaveLength(1);
+    expect(db.operations[0]?.sql).toBe(
+      'INSERT INTO business_event (event_id, company_id, aggregate_kind, aggregate_id, ' +
+        'event_type, occurred_at, payload, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ' +
+        'ON CONFLICT (event_id) DO NOTHING',
+    );
+    const params = db.operations[0]?.params ?? [];
+    expect(params[0]).toBe(event.eventId);
+    expect(params[1]).toBe('acme');
+    expect(params[2]).toBe('heartbeat');
+    expect(params[3]).toBe('acme');
+    expect(params[4]).toBe('heartbeat.decision');
+    expect(params[5]).toBe(1750000000000);
+    expect(params[6]).toBe(JSON.stringify(event.payload));
+    expect(params[7]).toBe('supervisor');
+    expect(typeof params[8]).toBe('number');
+  });
+
+  it('rowCount 0 (duplicate/conflict) triggers SELECT by event_id and resolves the STORED ORIGINAL via the row guard', async () => {
+    const original = decisionEvent('evt:hb:2b9e2adf9e63deee');
+    const db = new ScriptedEventConnection([{ rowCount: 0 }], [[{ ...original }]]);
+    const repo = new PgBusinessEventRepository(db);
+
+    // Same eventId, DIFFERENT payload: resolve the ORIGINAL — never the input.
+    const tampered = { ...original, payload: { tampered: true }, occurredAt: 999 };
+    const resolved = await repo.appendIfAbsent(tampered);
+
+    expect(resolved).toEqual(original);
+    expect(resolved).not.toEqual(tampered);
+    expect(db.operations).toHaveLength(2);
+    expect(db.operations[1]?.sql).toBe(
+      'SELECT event_id AS "eventId", company_id AS "companyId", aggregate_kind AS "aggregateKind", ' +
+        'aggregate_id AS "aggregateId", event_type AS "eventType", occurred_at AS "occurredAt", ' +
+        'payload, source FROM business_event WHERE event_id = $1',
+    );
+    expect(db.operations[1]?.params).toEqual([original.eventId]);
+  });
+
+  it('a corrupt SELECT row on the conflict path fails loudly (D7 row guard)', async () => {
+    const db = new ScriptedEventConnection([{ rowCount: 0 }], [[{ eventId: 'evt:hb:1' }]]);
+    const repo = new PgBusinessEventRepository(db);
+
+    await expect(repo.appendIfAbsent(decisionEvent('evt:hb:1'))).rejects.toThrow(/corrupt/i);
+  });
+
+  it('rejects an empty companyId BEFORE issuing any SQL (guard precedes execute)', async () => {
+    const db = new ScriptedEventConnection([], []);
+    const repo = new PgBusinessEventRepository(db);
+
+    await expect(repo.appendIfAbsent(decisionEvent('evt:hb:1', ''))).rejects.toThrow(
+      /non-empty companyId/i,
+    );
+    expect(db.operations).toHaveLength(0);
   });
 });

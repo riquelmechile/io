@@ -65,19 +65,29 @@ export interface BusinessReceiptRepository {
 
 /**
  * Append-only repository for business facts (R2): events are WRITE-ONCE records
- * of what happened. The surface is deliberately limited to `append` (persist one
- * event, return an immutable view), `listByCompany` (tenant-scoped read in
- * insertion order), and read-only `listCompanyIds` (each company represented in
- * the log exactly once, in insertion-first-seen order — the supervisor's company
- * discovery). There is NO update, delete, overwrite, or get-by-id — an event is
- * a fact, and facts are never mutated. Every scoped read MUST be guarded by a
- * mandatory, non-empty `companyId` (ADR-0002/R8) and MUST NOT return another
- * company's events. Methods return a `Promise` — a real adapter is I/O-bound.
- * The port carries ZERO persistence knowledge; a downstream adapter (PG, file,
- * etc.) supplies the implementation.
+ * of what happened. The surface is deliberately limited to the two append
+ * semantics and read-only listings — NO update, delete, overwrite, or get-by-id;
+ * a fact is never mutated. Every scoped read MUST be guarded by a mandatory,
+ * non-empty `companyId` (ADR-0002/R8) and MUST NOT return another company's
+ * events. Methods return a `Promise` — a real adapter is I/O-bound. The port
+ * carries ZERO persistence knowledge; a downstream adapter supplies the
+ * implementation.
  */
 export interface BusinessEventRepository {
+  /**
+   * Throwing insert (R7): persists ONE event and returns an immutable view. A
+   * duplicate `eventId` (single issuance) is REJECTED — the ORIGINAL event is
+   * preserved and the call throws (worker `evt:{attemptId}` emission).
+   */
   append(event: BusinessEvent): Promise<Readonly<BusinessEvent>>;
+  /**
+   * At-most-once conditional append (supervisor `heartbeat.decision`): inserts
+   * the event UNLESS an event with the same `eventId` already exists. A
+   * duplicate NO-OPs and resolves the STORED ORIGINAL (never the input, never
+   * an overwrite) — a retry with the same unadvanced cursor rebuilds the same
+   * id and exactly one original row remains.
+   */
+  appendIfAbsent(event: BusinessEvent): Promise<Readonly<BusinessEvent>>;
   listByCompany(companyId: string): Promise<readonly BusinessEvent[]>;
   /** Read-only distinct company discovery (supervisor-timer): each company
    * appears exactly once, in insertion-first-seen order; never mutates events. */

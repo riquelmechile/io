@@ -705,6 +705,49 @@ describe('InMemoryBusinessEventRepository — listCompanyIds (supervisor-timer)'
   });
 });
 
+describe('InMemoryBusinessEventRepository — appendIfAbsent (at-most-once append)', () => {
+  it('inserts an unseen event once and returns it; distinct ids both insert', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const first = sampleEvent('evt:hb-1', 'acme');
+    const second = sampleEvent('evt:hb-2', 'acme');
+
+    expect(await repo.appendIfAbsent(first)).toEqual(first);
+    expect(await repo.appendIfAbsent(second)).toEqual(second);
+    expect(await repo.listByCompany('acme')).toEqual([first, second]);
+  });
+
+  it('a duplicate NO-OPS: returns the STORED ORIGINAL byte-for-byte and never changes log length', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const original = sampleEvent('evt:hb-1', 'acme');
+    await repo.appendIfAbsent(original);
+
+    // Same eventId, DIFFERENT payload + occurredAt: no-op — resolve the
+    // ORIGINAL, never the tampered input, never an overwrite.
+    const duplicate: BusinessEvent = {
+      ...sampleEvent('evt:hb-1', 'acme'),
+      occurredAt: 999,
+      payload: { tampered: true },
+    };
+    expect(await repo.appendIfAbsent(duplicate)).toEqual(original);
+    await repo.appendIfAbsent(sampleEvent('evt:hb-1', 'acme'));
+    expect(await repo.listByCompany('acme')).toEqual([original]);
+  });
+
+  it('appendIfAbsent preserves the throwing append semantics: append on an existing id still throws', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const event = sampleEvent('evt:hb-1', 'acme');
+    await repo.appendIfAbsent(event);
+
+    await expect(repo.append(event)).rejects.toThrow(/already recorded/i);
+    expect(await repo.listByCompany('acme')).toEqual([event]);
+  });
+
+  it('rejects an empty companyId (requireCompanyId parity)', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    await expect(repo.appendIfAbsent(sampleEvent('evt:hb-1', ''))).rejects.toThrow(/companyId/i);
+  });
+});
+
 /** JSON-file-backed persistence for the durable fake (fs lives in the test —
  * business-domain src stays pure). */
 function jsonFilePersistence(path: string): JournalFakePersistence {
