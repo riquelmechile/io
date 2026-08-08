@@ -42,7 +42,7 @@ export function buildHeartbeatDecisionEvent(
     occurredAt: now?.() ?? Date.now(),
     payload: {
       decision: decision.kind,
-      ...(decision.kind === 'activate' ? { model: 'flash' as const } : {}),
+      ...(decision.kind === 'activate' ? { model: decision.model } : {}),
       cursor: cursor?.lastEventId ?? null,
     },
     source: 'supervisor',

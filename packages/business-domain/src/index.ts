@@ -42,13 +42,16 @@ export {
   activeSkillsFor,
   isSkillState,
 } from './skill-activation.js';
-export type { HeartbeatCursor, HeartbeatDecision } from './heartbeat.js';
+export type { HeartbeatCursor, HeartbeatDecision, ModelTier } from './heartbeat.js';
 export {
+  escalationModelFor,
   evaluateHeartbeat,
   hasMaterialNovelty,
   isMaterialEvent,
   MATERIAL_EVENT_TYPES,
+  PRO_ESCALATION_THRESHOLD,
   tailCursor,
+  VALID_RISK_CLASSES,
 } from './heartbeat.js';
 export {
   ACTIONABLE_WORK_STATES,

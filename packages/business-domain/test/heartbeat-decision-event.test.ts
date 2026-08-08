@@ -43,12 +43,23 @@ describe('buildHeartbeatDecisionEvent — shape contract', () => {
     expect(activate.eventId).toBe('evt:hb:9cf220a0090c3378'); // sha256('acme\0\0activate')
   });
 
+  it('payload.model reflects the decision tier: a pro activation emits "pro", not a hardcoded tier', () => {
+    const proActivate = build('acme', { kind: 'activate', model: 'pro' });
+    expect(proActivate.payload).toEqual({ decision: 'activate', model: 'pro', cursor: null });
+    // The tier is payload-only: it never enters the eventId identity (same company/cursor/kind).
+    const flashActivate = build('acme', { kind: 'activate', model: 'flash' });
+    expect(proActivate.eventId).toBe(flashActivate.eventId);
+  });
+
   it('both decision branches produce evt:hb:{16-hex} ids with full type fidelity', () => {
     const activate: HeartbeatDecision = { kind: 'activate', model: 'flash' };
     const decline: HeartbeatDecision = { kind: 'no-llm-heartbeat' };
     expect(build('acme', activate, cursor('evt:1')).eventId).toMatch(/^evt:hb:[0-9a-f]{16}$/);
     expect(build('acme', decline, cursor('evt:1')).eventId).toMatch(/^evt:hb:[0-9a-f]{16}$/);
-    expectTypeOf(activate).toEqualTypeOf<{ readonly kind: 'activate'; readonly model: 'flash' }>();
+    expectTypeOf(activate).toEqualTypeOf<{
+      readonly kind: 'activate';
+      readonly model: 'flash' | 'pro';
+    }>();
   });
 });
 

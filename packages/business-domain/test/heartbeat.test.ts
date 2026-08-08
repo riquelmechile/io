@@ -7,10 +7,14 @@ import * as heartbeat from '../src/heartbeat.js';
 import type {
   HeartbeatCursor as IndexedCursor,
   HeartbeatDecision as IndexedDecision,
+  ModelTier,
 } from '../src/index.js';
 import {
   evaluateHeartbeat as indexedEvaluate,
+  escalationModelFor as indexedEscalationModelFor,
+  PRO_ESCALATION_THRESHOLD,
   tailCursor as indexedTailCursor,
+  VALID_RISK_CLASSES,
 } from '../src/index.js';
 import { InMemoryBusinessEventRepository } from '../src/ports/fakes.js';
 import type { BusinessEvent } from '../src/types.js';
@@ -19,6 +23,7 @@ function sampleEvent(
   eventId: string,
   eventType = 'work.completed',
   companyId = 'acme',
+  payload: Readonly<Record<string, unknown>> = { workId: 'work-1' },
 ): BusinessEvent {
   return {
     eventId,
@@ -27,10 +32,14 @@ function sampleEvent(
     aggregateId: 'work-1',
     eventType,
     occurredAt: 1750000000000,
-    payload: { workId: 'work-1' },
+    payload,
     source: 'worker',
   };
 }
+
+/** A novel material event carrying the given riskClass fact (HB Escalation). */
+const withRisk = (eventId: string, riskClass: unknown) =>
+  sampleEvent(eventId, 'work.completed', 'acme', { workId: 'work-1', riskClass });
 
 describe('HeartbeatDecision (R1)', () => {
   it('activates Flash via a stable, exactly-shaped branch', () => {
@@ -49,7 +58,8 @@ describe('HeartbeatDecision (R1)', () => {
 
   it('declares the decision union and cursor shape exactly', () => {
     expectTypeOf<heartbeat.HeartbeatDecision>().toEqualTypeOf<
-      { readonly kind: 'activate'; readonly model: 'flash' } | { readonly kind: 'no-llm-heartbeat' }
+      | { readonly kind: 'activate'; readonly model: 'flash' | 'pro' }
+      | { readonly kind: 'no-llm-heartbeat' }
     >();
     expectTypeOf<heartbeat.HeartbeatCursor>().toEqualTypeOf<{ readonly lastEventId: string }>();
   });
@@ -211,6 +221,115 @@ describe('deterministic novelty filter (R3)', () => {
   it('module source contains no clock, randomness, or generated-id sources', () => {
     const source = readFileSync(new URL('../src/heartbeat.ts', import.meta.url), 'utf8');
     expect(source).not.toMatch(/Date\.now\(|new Date\(|Math\.random\(|performance\.now\(|crypto\./);
+  });
+});
+
+describe('deterministic model-tier escalation (HB Escalation S1, S2)', () => {
+  it('selects pro for a novel material event with high risk (at threshold)', () => {
+    expect(heartbeat.escalationModelFor([withRisk('evt:1', 'high')])).toBe('pro');
+  });
+
+  it('selects pro for a novel material event with critical risk (above threshold)', () => {
+    expect(heartbeat.escalationModelFor([withRisk('evt:1', 'critical')])).toBe('pro');
+  });
+
+  it('selects flash for low risk', () => {
+    expect(heartbeat.escalationModelFor([withRisk('evt:1', 'low')])).toBe('flash');
+  });
+
+  it('selects flash for medium risk (below threshold)', () => {
+    expect(heartbeat.escalationModelFor([withRisk('evt:1', 'medium')])).toBe('flash');
+  });
+
+  it('selects flash when riskClass is absent', () => {
+    expect(heartbeat.escalationModelFor([sampleEvent('evt:1')])).toBe('flash');
+  });
+
+  it('selects flash for invalid risk values (unknown label or non-string)', () => {
+    expect(heartbeat.escalationModelFor([withRisk('evt:1', 'extreme')])).toBe('flash');
+    expect(heartbeat.escalationModelFor([withRisk('evt:2', 42)])).toBe('flash');
+    expect(heartbeat.escalationModelFor([withRisk('evt:3', { risk: 'high' })])).toBe('flash');
+  });
+
+  it('selects flash for non-material events even when they carry high risk', () => {
+    const nonMaterial = sampleEvent('evt:1', 'work.started', 'acme', {
+      workId: 'work-1',
+      riskClass: 'high',
+    });
+    expect(heartbeat.escalationModelFor([nonMaterial])).toBe('flash');
+  });
+
+  it('selects flash when the only high-risk event sits at or before the cursor', () => {
+    const events = [withRisk('evt:1', 'high'), withRisk('evt:2', 'low')];
+    expect(heartbeat.escalationModelFor(events, { lastEventId: 'evt:1' })).toBe('flash');
+    expect(heartbeat.escalationModelFor(events, { lastEventId: 'evt:2' })).toBe('flash');
+  });
+
+  it('selects pro for a novel high-risk event following a seen low-risk one', () => {
+    const events = [withRisk('evt:1', 'low'), withRisk('evt:2', 'high')];
+    expect(heartbeat.escalationModelFor(events, { lastEventId: 'evt:1' })).toBe('pro');
+  });
+});
+
+describe('model-tier determinism + exact threshold (HB Escalation S3)', () => {
+  it('declares the escalation threshold exactly at high, with medium below it', () => {
+    expect(heartbeat.PRO_ESCALATION_THRESHOLD).toBe('high');
+    expect(heartbeat.escalationModelFor([withRisk('evt:medium', 'medium')])).toBe('flash');
+    expect(heartbeat.escalationModelFor([withRisk('evt:high', 'high')])).toBe('pro');
+  });
+
+  it('same (events, cursor) selects the same tier under varied clock and randomness', () => {
+    const events = [withRisk('evt:1', 'low'), withRisk('evt:2', 'high')];
+    const cursor: heartbeat.HeartbeatCursor = { lastEventId: 'evt:1' };
+    const baseline = heartbeat.escalationModelFor(events, cursor);
+    expect(baseline).toBe('pro');
+
+    let tick = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => 1750000000000 + tick++ * 1000);
+    vi.spyOn(Math, 'random').mockImplementation(() => tick / 100);
+    try {
+      const repeated = [
+        heartbeat.escalationModelFor(events, cursor),
+        heartbeat.escalationModelFor(events, cursor),
+        heartbeat.escalationModelFor(events, cursor),
+      ];
+      expect(repeated).toEqual([baseline, baseline, baseline]);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('evaluateHeartbeat activates with the resolved tier, not a hardcoded flash', () => {
+    expect(heartbeat.evaluateHeartbeat([withRisk('evt:1', 'critical')])).toEqual({
+      kind: 'activate',
+      model: 'pro',
+    });
+    expect(heartbeat.evaluateHeartbeat([withRisk('evt:2', 'low')])).toEqual({
+      kind: 'activate',
+      model: 'flash',
+    });
+  });
+});
+
+describe('model-tier exports and purity boundary (HB Pure Decision S1)', () => {
+  it('index re-exports the escalation surface with runtime parity', () => {
+    const highRisk = withRisk('evt:1', 'high');
+    const lowRisk = withRisk('evt:2', 'low');
+    expect(indexedEscalationModelFor([highRisk])).toBe(heartbeat.escalationModelFor([highRisk]));
+    expect(indexedEscalationModelFor([highRisk])).toBe('pro');
+    expect(indexedEscalationModelFor([lowRisk])).toBe('flash');
+  });
+
+  it('ModelTier is exactly the pure union flash | pro', () => {
+    expectTypeOf<ModelTier>().toEqualTypeOf<'flash' | 'pro'>();
+  });
+
+  it('declares the escalation constants from the index', () => {
+    expect(PRO_ESCALATION_THRESHOLD).toBe('high');
+    expect(VALID_RISK_CLASSES).toEqual(['low', 'medium', 'high', 'critical']);
+    expectTypeOf<typeof VALID_RISK_CLASSES>().toEqualTypeOf<
+      readonly ['low', 'medium', 'high', 'critical']
+    >();
   });
 });
 
