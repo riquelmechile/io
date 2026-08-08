@@ -34,6 +34,7 @@ export type {
   CasResult,
   CompanyRepository,
   DelegationRepository,
+  FencingDirective,
   SkillRepository,
   WorkRepository,
 } from './ports/repositories.js';

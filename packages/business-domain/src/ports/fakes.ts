@@ -15,6 +15,7 @@ import type {
   CasResult,
   CompanyRepository,
   DelegationRepository,
+  FencingDirective,
   SkillRepository,
   WorkRepository,
 } from './repositories.js';
@@ -94,7 +95,11 @@ export class InMemoryWorkRepository implements WorkRepository {
     return entry !== undefined && entry.companyId === companyId ? entry : undefined;
   }
 
-  async updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
+  async updateIfVersion(
+    work: Work,
+    expectedVersion: number,
+    fencing?: FencingDirective,
+  ): Promise<CasResult> {
     requireCompanyId(work.companyId);
     const current = this.entries.get(work.workId);
     if (current === undefined || current.companyId !== work.companyId) {
@@ -105,10 +110,20 @@ export class InMemoryWorkRepository implements WorkRepository {
       // Stale writer: never overwrite; report the current work when available.
       return { ok: false, reason: 'version-conflict', current };
     }
+    // Fencing (fencing-tokens change): a claim-owned TERMINAL close must also
+    // match the stored claim token — a zombie writer (stale token) is a typed
+    // fencing-conflict and the stored work is NEVER mutated.
+    if (fencing?.kind === 'terminal' && current.fencingToken !== fencing.expectedFencingToken) {
+      return { ok: false, reason: 'fencing-conflict', current };
+    }
     // The stored version matched `expectedVersion`, so the new stored version
     // is exactly `expectedVersion + 1` — NOT `work.version + 1`, which could be
-    // stale (the caller may hold an old snapshot).
-    const updated: Work = { ...work, version: expectedVersion + 1 };
+    // stale (the caller may hold an old snapshot). A claim directive mints the
+    // NEXT server-side token atomically within the same CAS (epoch 0 → 1).
+    const updated: Work =
+      fencing?.kind === 'claim'
+        ? { ...work, version: expectedVersion + 1, fencingToken: (current.fencingToken ?? 0) + 1 }
+        : { ...work, version: expectedVersion + 1 };
     this.entries.set(work.workId, updated);
     return { ok: true, value: updated };
   }

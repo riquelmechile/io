@@ -414,6 +414,7 @@ describe('skill R7 — segment 7 renders cohort-selected active skills (S1/S2/S3
     description: 'execute the quarterly close',
     state: 'accepted',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: [],
   };
   // The compiler renders segment 7 against CONTEXT_SCHEMA_VERSION (2) — a

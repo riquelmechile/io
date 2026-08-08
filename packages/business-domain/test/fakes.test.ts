@@ -48,6 +48,7 @@ function sampleWork(id: string, companyId = 'acme'): Work {
     description: 'execute the quarterly close',
     state: 'proposed',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: ['evid-a', 'evid-b'],
   };
 }
@@ -335,6 +336,133 @@ describe('InMemoryWorkRepository CAS (updateIfVersion, ADR-0002/D4)', () => {
     const { repo, work } = await seededRepo(1);
     const orphan: Work = { ...work, companyId: '' };
     await expect(repo.updateIfVersion(orphan, 1)).rejects.toThrow(/companyId/i);
+  });
+
+  it('claim directive mints fencing token 1 from the pre-fencing epoch 0 (work-lifecycle "Claim mints from the pre-fencing epoch")', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-claim'), state: 'accepted' };
+    await repo.save(epoch);
+    expect(epoch.fencingToken).toBe(0);
+
+    const claim = (await repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, {
+      kind: 'claim',
+    })) as Extract<CasResult, { ok: true }>;
+
+    expect(claim.ok).toBe(true);
+    // Minted server-side INSIDE the same CAS: token 0 → 1.
+    expect(claim.value.fencingToken).toBe(1);
+    expect(claim.value.version).toBe(2);
+    const stored = await repo.get('acme', 'work-claim');
+    expect(stored?.fencingToken).toBe(1);
+    expect(stored?.state).toBe('in_progress');
+  });
+
+  it('a second claim on the SAME work mints the NEXT token (2) — monotonic per claim (triangulation)', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-claim2'), state: 'accepted' };
+    await repo.save(epoch);
+    const first = (await repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, {
+      kind: 'claim',
+    })) as Extract<CasResult, { ok: true }>;
+    expect(first.value.fencingToken).toBe(1);
+
+    // A second claim on the same work (e.g. a fresh take-over) bumps again.
+    const second = (await repo.updateIfVersion(
+      { ...first.value, state: 'in_progress' },
+      first.value.version,
+      { kind: 'claim' },
+    )) as Extract<CasResult, { ok: true }>;
+    expect(second.value.fencingToken).toBe(2);
+    expect((await repo.get('acme', 'work-claim2'))?.fencingToken).toBe(2);
+  });
+
+  it('terminal directive with a STALE token returns fencing-conflict and leaves the work unchanged (work-lifecycle "Stale token cannot close Work")', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-stale'), state: 'accepted' };
+    await repo.save(epoch);
+    // The work is claimed: stored token = 1.
+    const claimed = await repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, {
+      kind: 'claim',
+    });
+    if (!claimed.ok) throw new Error('test setup: claim failed');
+
+    // A stale holder (token 0) tries to close with a terminal directive.
+    const terminal = (await repo.updateIfVersion(
+      { ...claimed.value, state: 'completed' },
+      claimed.value.version,
+      { kind: 'terminal', expectedFencingToken: 0 },
+    )) as Extract<CasResult, { ok: false }>;
+
+    expect(terminal.ok).toBe(false);
+    expect(terminal.reason).toBe('fencing-conflict');
+    expect(terminal.current?.fencingToken).toBe(1);
+    // No mutation: the stored work keeps token 1 and its in_progress state.
+    const stored = await repo.get('acme', 'work-stale');
+    expect(stored?.fencingToken).toBe(1);
+    expect(stored?.state).toBe('in_progress');
+    expect(stored?.version).toBe(2);
+  });
+
+  it('terminal directive with the MATCHING token succeeds (claim-owned close) and keeps the token (triangulation)', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-match'), state: 'accepted' };
+    await repo.save(epoch);
+    const claimed = await repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, {
+      kind: 'claim',
+    });
+    if (!claimed.ok) throw new Error('test setup: claim failed');
+
+    const terminal = await repo.updateIfVersion(
+      { ...claimed.value, state: 'completed' },
+      claimed.value.version,
+      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken ?? 0 },
+    );
+
+    expect(terminal.ok).toBe(true);
+    if (terminal.ok) {
+      expect(terminal.value.state).toBe('completed');
+      // The terminal close does NOT re-mint: the claim token is retained.
+      expect(terminal.value.fencingToken).toBe(1);
+    }
+    expect((await repo.get('acme', 'work-match'))?.state).toBe('completed');
+  });
+
+  it('single winner among CONCURRENT claim directives: exactly one mints N+1, the loser gets version-conflict (work-lifecycle "Concurrent writers, single winner")', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-race'), state: 'accepted' };
+    await repo.save(epoch);
+
+    const [a, b] = await Promise.all([
+      repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, { kind: 'claim' }),
+      repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, { kind: 'claim' }),
+    ]);
+
+    const oks = [a, b].filter((r) => r.ok === true);
+    const conflicts = [a, b].filter((r) => r.ok === false && r.reason === 'version-conflict');
+    expect(oks).toHaveLength(1);
+    expect(conflicts).toHaveLength(1);
+    if (oks[0]?.ok) expect(oks[0].value.fencingToken).toBe(1);
+    expect((await repo.get('acme', 'work-race'))?.fencingToken).toBe(1);
+  });
+
+  it('a terminal directive with a stale VERSION still reports version-conflict (version is checked first)', async () => {
+    const repo = new InMemoryWorkRepository();
+    const epoch: Work = { ...sampleWork('work-ver'), state: 'accepted' };
+    await repo.save(epoch);
+    const claimed = await repo.updateIfVersion({ ...epoch, state: 'in_progress' }, epoch.version, {
+      kind: 'claim',
+    });
+    if (!claimed.ok) throw new Error('test setup: claim failed');
+
+    const result = (await repo.updateIfVersion(
+      { ...claimed.value, state: 'completed' },
+      1, // stale version
+      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken ?? 0 },
+    )) as Extract<CasResult, { ok: false }>;
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('version-conflict');
+    expect((await repo.get('acme', 'work-ver'))?.state).toBe('in_progress');
   });
 });
 

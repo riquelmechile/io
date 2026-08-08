@@ -24,6 +24,7 @@ export async function proposeWork(
     description: cmd.description,
     state: 'proposed',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: cmd.evidenceRefs ?? [],
     deliverable: cmd.deliverable,
   };

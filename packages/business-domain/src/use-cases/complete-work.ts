@@ -33,15 +33,28 @@ export async function completeWork(
   if (cmd.idempotencyKey !== undefined) {
     return completeWorkIdempotent(cmd, deps);
   }
-  return applyWorkTransition('completed', cmd, deps.work, (current) => ({
-    ...current,
-    state: 'completed',
-    ...(cmd.outcome ? { outcome: cmd.outcome } : {}),
-    ...(cmd.deliverable ? { deliverable: cmd.deliverable } : {}),
-    ...(cmd.evidenceRefs
-      ? { evidenceRefs: dedupe([...current.evidenceRefs, ...cmd.evidenceRefs]) }
-      : {}),
-  }));
+  // Plain (non-idempotent) terminal close: claim-owned when the command carries
+  // a fencing token (terminal directive), version-only otherwise (unclaimed
+  // admin closes — the pre-fencing epoch token 0 is inert).
+  const fencing =
+    cmd.fencingToken !== undefined
+      ? ({ kind: 'terminal', expectedFencingToken: cmd.fencingToken } as const)
+      : undefined;
+  return applyWorkTransition(
+    'completed',
+    cmd,
+    deps.work,
+    (current) => ({
+      ...current,
+      state: 'completed',
+      ...(cmd.outcome ? { outcome: cmd.outcome } : {}),
+      ...(cmd.deliverable ? { deliverable: cmd.deliverable } : {}),
+      ...(cmd.evidenceRefs
+        ? { evidenceRefs: dedupe([...current.evidenceRefs, ...cmd.evidenceRefs]) }
+        : {}),
+    }),
+    fencing,
+  );
 }
 
 /**
@@ -104,7 +117,11 @@ async function completeWorkIdempotent(
     return { ok: false, reason: 'attempt-in-flight' };
   }
 
-  // 4. Effect: the CAS transition.
+  // 4. Effect: the CAS transition. A claim-owned idempotent close carries the
+  //    terminal FencingDirective when the command supplies the claim token —
+  //    a stale token loses the CAS as a typed fencing-conflict (zombie
+  //    writer), rolled back with the whole transaction. Token-free closes
+  //    (replay/DENY paths and plain admin closes) stay version-only.
   const next: Work = {
     ...current,
     state: 'completed',
@@ -114,12 +131,17 @@ async function completeWorkIdempotent(
       ? { evidenceRefs: dedupe([...current.evidenceRefs, ...cmd.evidenceRefs]) }
       : {}),
   };
-  const cas = await deps.work.updateIfVersion(next, current.version);
+  const fencing =
+    cmd.fencingToken !== undefined
+      ? ({ kind: 'terminal', expectedFencingToken: cmd.fencingToken } as const)
+      : undefined;
+  const cas = await deps.work.updateIfVersion(next, current.version, fencing);
   if (!cas.ok) {
-    // A concurrent writer won after the in_flight insert. Returning here would
-    // COMMIT a zombie in_flight row that poisons every future retry of this
-    // key — the surrounding transaction MUST abort (throw → full rollback).
-    throw new IdempotentFlowAbortError('version-conflict after in_flight insert');
+    // A concurrent writer won (or, on a claim-owned close, the fencing token
+    // is stale) after the in_flight insert. Returning here would COMMIT a
+    // zombie in_flight row that poisons every future retry of this key — the
+    // surrounding transaction MUST abort (throw → full rollback).
+    throw new IdempotentFlowAbortError(`${cas.reason} after in_flight insert`);
   }
   const completed = cas.value;
 

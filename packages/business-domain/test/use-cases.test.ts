@@ -39,6 +39,7 @@ function sampleWork(overrides: Partial<Work> = {}): Work {
     description: 'execute the quarterly close',
     state: 'proposed',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: ['evid-a'],
     ...overrides,
   };
@@ -222,6 +223,29 @@ describe('startWork', () => {
     expect((await d.work.get('acme', 'work-1'))?.state).toBe('in_progress');
   });
 
+  it('a claim mints and returns the NEXT server-side fencing token (epoch 0 → 1) (work-lifecycle "Claim mints from the pre-fencing epoch")', async () => {
+    const d = deps();
+    await seed(d.work, { state: 'accepted' });
+
+    const value = expectOk(await startWork(transitionCmd(), { work: d.work }));
+
+    expect(value.fencingToken).toBe(1);
+    expect((await d.work.get('acme', 'work-1'))?.fencingToken).toBe(1);
+  });
+
+  it('every fresh claim mints from its OWN epoch 0 → 1 (triangulation: token is per-work, not global)', async () => {
+    const d = deps();
+    await seed(d.work, { state: 'accepted' });
+    await d.work.save({ ...sampleWork({ workId: 'work-2' }), state: 'accepted' });
+
+    const first = expectOk(await startWork(transitionCmd(), { work: d.work }));
+    const second = expectOk(await startWork(transitionCmd({ workId: 'work-2' }), { work: d.work }));
+
+    expect(first.fencingToken).toBe(1);
+    expect(second.fencingToken).toBe(1);
+    expect((await d.work.get('acme', 'work-2'))?.fencingToken).toBe(1);
+  });
+
   it('start on a proposed work is forbidden (invalid-transition)', async () => {
     const d = deps();
     await seed(d.work, { state: 'proposed' });
@@ -265,6 +289,59 @@ describe('completeWork (plain, no idempotency key)', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('invalid-transition');
+  });
+
+  it('a claim-owned close with the MATCHING fencingToken succeeds and retains the token (work-lifecycle "Stale token cannot close Work" happy path)', async () => {
+    const d = deps();
+    await seed(d.work, { state: 'accepted' });
+    const claimed = expectOk(await startWork(transitionCmd(), { work: d.work }));
+    expect(claimed.fencingToken).toBe(1);
+
+    const cmd: CompleteWorkCommand = {
+      ...transitionCmd(),
+      fencingToken: claimed.fencingToken,
+      outcome: { result: 'closed', success: true },
+    };
+    const value = expectOk(await completeWork(cmd, d));
+
+    expect(value.state).toBe('completed');
+    expect(value.fencingToken).toBe(1);
+    expect((await d.work.get('acme', 'work-1'))?.state).toBe('completed');
+  });
+
+  it('a claim-owned close with a STALE fencingToken is rejected as fencing-conflict and Work is unchanged (work-lifecycle "Stale token cannot close Work")', async () => {
+    const d = deps();
+    await seed(d.work, { state: 'accepted' });
+    const claimed = expectOk(await startWork(transitionCmd(), { work: d.work }));
+    expect(claimed.fencingToken).toBe(1);
+
+    const cmd: CompleteWorkCommand = {
+      ...transitionCmd(),
+      fencingToken: 0, // stale — the work is owned by token 1
+      outcome: { result: 'closed', success: true },
+    };
+    const result = await completeWork(cmd, d);
+
+    expect(result.ok).toBe(false);
+    if (result.ok === false) {
+      expect(result.reason).toBe('fencing-conflict');
+      expect(result.current?.fencingToken).toBe(1);
+    }
+    const stored = await d.work.get('acme', 'work-1');
+    expect(stored?.state).toBe('in_progress');
+    expect(stored?.fencingToken).toBe(1);
+  });
+
+  it('a claim-owned close WITHOUT a fencingToken stays version-only (plain admin close is unaffected)', async () => {
+    const d = deps();
+    await seed(d.work, { state: 'in_progress', fencingToken: 0 });
+
+    const value = expectOk(
+      await completeWork({ ...transitionCmd(), outcome: { result: 'closed', success: true } }, d),
+    );
+
+    expect(value.state).toBe('completed');
+    expect(value.fencingToken).toBe(0);
   });
 });
 

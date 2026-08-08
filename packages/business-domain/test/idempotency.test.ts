@@ -46,6 +46,7 @@ async function setup(): Promise<{
     description: 'execute the close',
     state: 'in_progress',
     version: 2,
+    fencingToken: 0,
     evidenceRefs: ['evid-a'],
   };
   await work.save(workObj);
@@ -235,6 +236,7 @@ describe('idempotent completeWork — pre-flight failures leave NO journal row',
       description: 'already done',
       state: 'completed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: [],
     });
 

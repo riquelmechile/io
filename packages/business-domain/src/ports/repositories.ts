@@ -29,13 +29,40 @@ export interface DelegationRepository {
 /**
  * Result of a compare-and-swap write (ADR-0002/D4): `{ ok: true; value }` when
  * the expected version matched and the write succeeded (version bumped +1), or
- * `{ ok: false; reason: 'version-conflict'; current? }` when it did NOT match —
- * the stored work is left UNCHANGED and `current` carries it when available.
- * No last-write-wins overwrite ever occurs.
+ * `{ ok: false; reason: 'version-conflict' | 'fencing-conflict'; current? }`
+ * when it did NOT match — the stored work is left UNCHANGED and `current`
+ * carries it when available. `version-conflict` = stale expected version (a
+ * concurrent transition won); `fencing-conflict` = the version matched but a
+ * claim-owned terminal close supplied a token that does not own the work
+ * (zombie writer). Both route to the same T2 reconciliation; the distinct
+ * reason diagnoses zombie vs race. No last-write-wins overwrite ever occurs.
  */
 export type CasResult =
   | { ok: true; value: Work }
-  | { ok: false; reason: 'version-conflict'; current?: Work };
+  | {
+      ok: false;
+      reason: 'version-conflict' | 'fencing-conflict';
+      current?: Work;
+    };
+
+/**
+ * Claim-scoped fencing directive for the Work CAS (fencing-tokens change,
+ * design "Work CAS evolution"): `updateIfVersion` MAY receive one to mint or
+ * check claim ownership atomically within the SAME compare-and-swap.
+ *
+ * - `{ kind: 'claim' }` — a fresh claim: the adapter/fake mints the NEXT
+ *   server-side token (`fencing_token = fencing_token + 1`), atomically in the
+ *   same statement, and returns it on the updated Work.
+ * - `{ kind: 'terminal', expectedFencingToken }` — a claim-owned terminal
+ *   close: the CAS MUST also match the stored fencing token. A token mismatch
+ *   leaves Work unchanged and returns the typed `'fencing-conflict'`.
+ *
+ * Absent ⇒ version-only CAS (plain transitions / admin closes are unaffected —
+ * the pre-fencing epoch token 0 is inert).
+ */
+export type FencingDirective =
+  | { readonly kind: 'claim' }
+  | { readonly kind: 'terminal'; readonly expectedFencingToken: number };
 
 export interface WorkRepository {
   /** Insert-only: creates a NEW work. Not the state-change path for an existing work. */
@@ -45,9 +72,15 @@ export interface WorkRepository {
    * Compare-and-swap update (D4): writes ONLY when `expectedVersion` matches
    * the stored `version`, bumping it to `version + 1` on success. A mismatch
    * returns `{ ok: false, reason: 'version-conflict', current? }` and NEVER
-   * overwrites the stored work.
+   * overwrites the stored work. When a {@link FencingDirective} is supplied,
+   * the CAS additionally mints (claim) or checks (terminal) the claim-scoped
+   * fencing token in the SAME atomic statement (fencing-tokens change).
    */
-  updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult>;
+  updateIfVersion(
+    work: Work,
+    expectedVersion: number,
+    fencing?: FencingDirective,
+  ): Promise<CasResult>;
   /**
    * Tenant-scoped actionable read (work-lifecycle delta): the company's Work in
    * the states declared by `ACTIONABLE_WORK_STATES` (currently only `accepted`),

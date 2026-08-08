@@ -1,4 +1,8 @@
-import type { BusinessReceiptRepository, WorkRepository } from '../ports/repositories.js';
+import type {
+  BusinessReceiptRepository,
+  FencingDirective,
+  WorkRepository,
+} from '../ports/repositories.js';
 import type { IdempotencyJournalPort } from '../ports/idempotency.js';
 import type { Deliverable, Work, WorkOutcome, WorkState } from '../types.js';
 import { canTransitionWork } from '../transitions.js';
@@ -18,6 +22,7 @@ export type UseCaseReason =
   | 'not-found'
   | 'invalid-transition'
   | 'version-conflict'
+  | 'fencing-conflict'
   | 'work-already-exists'
   | 'invalid-command'
   | 'idempotency-conflict'
@@ -56,6 +61,12 @@ export interface CompleteWorkCommand extends TransitionWorkCommand {
   /** Required when the idempotent terminal close issues a receipt (D5/D6). */
   readonly policyHash?: string;
   readonly artifactHash?: string;
+  /**
+   * Optional claim fencing token (fencing-tokens change): when supplied, the
+   * terminal close CAS must ALSO match the stored Work token (claim-owned
+   * close). Absent ⇒ version-only terminal CAS (plain/unclaimed admin closes).
+   */
+  readonly fencingToken?: number;
 }
 
 /** Repository PORTS ONLY (zero @io/*) needed by the complete-work use case. */
@@ -91,12 +102,18 @@ export function dedupe(values: readonly string[]): readonly string[] {
  * FRESH version from get — the caller's `expectedVersion`, when provided, is a
  * cheap early-out that never replaces the atomic CAS). Every failure is a
  * result, never a throw.
+ *
+ * `fencing` (optional, fencing-tokens change): forwarded to the atomic CAS —
+ * a `claim` directive mints the next server-side token; a `terminal` directive
+ * additionally checks claim ownership (stale token → typed `fencing-conflict`).
+ * Absent ⇒ version-only CAS (plain transitions unchanged).
  */
 export async function applyWorkTransition(
   target: WorkState,
   cmd: TransitionWorkCommand,
   workRepo: WorkRepository,
   buildNext: (current: Work) => Work = (current) => ({ ...current, state: target }),
+  fencing?: FencingDirective,
 ): Promise<UseCaseResult<Work>> {
   if (!cmd.workId) return { ok: false, reason: 'invalid-command' };
   const current = await workRepo.get(cmd.companyId, cmd.workId);
@@ -108,10 +125,12 @@ export async function applyWorkTransition(
     // The caller is provably stale; short-circuit before a doomed write.
     return { ok: false, reason: 'version-conflict', current };
   }
-  const cas = await workRepo.updateIfVersion(buildNext(current), current.version);
+  const cas = await workRepo.updateIfVersion(buildNext(current), current.version, fencing);
   if (!cas.ok) {
-    // The atomic CAS is authoritative: a concurrent writer won.
-    return { ok: false, reason: 'version-conflict', current: cas.current };
+    // The atomic CAS is authoritative: a concurrent writer won (version) or a
+    // claim-owned terminal close supplied a token that does not own the work
+    // (fencing). Both are typed conflicts with the current work attached.
+    return { ok: false, reason: cas.reason, current: cas.current };
   }
   return { ok: true, value: cas.value };
 }

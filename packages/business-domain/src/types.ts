@@ -70,6 +70,14 @@ export interface Work {
   /** Numeric optimistic-concurrency counter; initialized to 1 on creation
    * (ADR-0002). CAS bumps it by one on each successful transition. */
   readonly version: number;
+  /**
+   * Claim-scoped fencing token (zombie-writer protection, fencing-tokens
+   * change): monotonic counter minted server-side at the Work claim CAS and
+   * required on every claim-owned terminal write. Initialized to 0 — the valid
+   * pre-fencing epoch (legacy rows / unclaimed work). A fresh claim increments
+   * it by one inside the same CAS; resume retains the stored token.
+   */
+  readonly fencingToken?: number;
   readonly deliverable?: Deliverable;
   readonly evidenceRefs: readonly string[];
   readonly outcome?: WorkOutcome;

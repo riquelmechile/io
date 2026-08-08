@@ -69,6 +69,7 @@ describe('Work type', () => {
       description: 'execute the quarterly close',
       state: 'proposed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: ['evid-1', 'evid-2'],
     };
     expect(work.workId).toBe('work-1');
@@ -87,6 +88,7 @@ describe('Work type', () => {
       description: 'execute task',
       state: 'proposed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: [],
     };
     expect(work.version).toBe(1);
@@ -104,6 +106,7 @@ describe('Work type', () => {
       description: 'execute task',
       state: 'completed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: [],
       deliverable,
       outcome,
@@ -123,9 +126,45 @@ describe('Work type', () => {
       description: 'd',
       state: 'proposed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: [],
     };
     expect(work.delegationId).toBe('');
+  });
+
+  it('requires fencingToken — a numeric field initialized to 0 (the valid pre-fencing epoch)', () => {
+    const work: Work = {
+      workId: 'work-4',
+      companyId: 'acme',
+      delegationId: 'del-1',
+      proposer: 'p1',
+      description: 'd',
+      state: 'proposed',
+      version: 1,
+      fencingToken: 0,
+      evidenceRefs: [],
+    };
+    expect(work.fencingToken).toBe(0);
+    expect(typeof work.fencingToken).toBe('number');
+  });
+
+  it('a proposed Work carrying every mandatory field incl. fencingToken 0 is accepted as valid', () => {
+    // work-lifecycle delta, "Valid proposed work" scenario: proposed Work with
+    // every mandatory field, version 1, and fencingToken 0 MUST be valid.
+    const work: Work = {
+      workId: 'work-5',
+      companyId: 'acme',
+      delegationId: 'del-1',
+      proposer: 'p1',
+      description: 'd',
+      state: 'proposed',
+      version: 1,
+      fencingToken: 0,
+      evidenceRefs: [],
+    };
+    expect(work.state).toBe('proposed');
+    expect(work.version).toBe(1);
+    expect(work.fencingToken).toBe(0);
   });
 });
 
