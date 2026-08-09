@@ -31,7 +31,7 @@ const PROTECTED_SOURCES: Record<string, string> = {
   'supervisor/supervisor.ts': '5e7fa7cd205ce02daed6e5efe1d4ec176e02e7075a7f856621ccdff52be123da',
   'supervisor/tick.ts': 'aa5ddab3b052933185c37e284045483ea8df2446c6bbc890969bec7478861f25',
   'supervisor/types.ts': '0e6a67b80a111e04e6f91d5e3e318b573a05ef60aba06b5f482690d8b75e2948',
-  'worker/worker.ts': '63d3e13f177d6f3c3cfd72e68e045090576efe8b45f82176d70b87dc1f70dc6f',
+  'worker/worker.ts': '32f55a40c103c67ed285c3687435168887375bc4f2198a0abc7a733c504c736f',
   'heartbeat/cycle.ts': '9808756b51a37907bfc0b070fbf364c15f028e0ff3e0777abf94af1c90a50e75',
   'heartbeat/evaluate.ts': '56984e32f758e1a17b02937b20658cb91452a016d33331f5b907d806540efbe0',
   'dispatch/dispatch.ts': 'b8a0de4642799fa3061432f4bbc49b7d3ac54472cb859e2e28833263de321cd5',
@@ -122,14 +122,16 @@ describe('PR2 model-threading identity (WD Wiring S2; ST Seam S2)', () => {
     }
   });
 
-  it('runWorker differs ONLY by the model parameter AND the claim-token threading: stripping both restores the PR1 baseline bytes (ST Seam S2 + fencing)', () => {
+  it('runWorker differs ONLY by the model parameter AND the fencing-token threading (S1 claim-close + S2 journal-token): stripping them restores the PR1 baseline bytes (ST Seam S2 + fencing)', () => {
     const current = readFileSync(resolve(SRC_ROOT, 'worker/worker.ts'), 'utf8');
     // Normalize away (1) the model-tier threading (the required 3rd arg —
     // biome wraps the long signature — its type-only import, and the `model`
-    // field fed to prepareIntent) and (2) the fencing-token threading (the
-    // claim-scoped token threaded into the terminal close + the verify-fail
-    // reconcile, with its explanatory comment). The result must be
-    // byte-identical to the PR1 single-line-signature baseline.
+    // field fed to prepareIntent) and (2) ALL fencing-token threading — Slice 1
+    // (the claim token threaded into the terminal close + the verify-fail
+    // reconcile, with its explanatory comment) AND Slice 2 (the token arg on
+    // the pre-effect reconcilePreEffect call, and the terminal-branch
+    // in_flight-only guard that the complete status guard requires). The
+    // result must be byte-identical to the PR1 single-line-signature baseline.
     const normalized = current
       .replace("import type { ModelTier } from '@io/business-domain/src/index.js';\n", '')
       .replace(
@@ -137,8 +139,31 @@ describe('PR2 model-threading identity (WD Wiring S2; ST Seam S2)', () => {
         'export async function runWorker(input: unknown, deps: WorkerDeps): Promise<WorkerResult> {',
       )
       .replace(/\n {4}model,\n/, '\n')
-      // Fencing threading (fencing-tokens change): the claim token threaded
-      // into the terminal close and the verify-fail reconcile.
+      // S2: the terminal branch's in_flight-only guard (the complete status
+      // guard forbids completing a marker row) — restore the S1 token-free
+      // close shape.
+      .replace(
+        "      if (journalNow !== undefined && journalNow.status === 'in_flight') {\n" +
+          '        // Close the attempt honestly with the token-free UNRESOLVED sentinel\n' +
+          '        // (the status-guarded `complete` transitions only in_flight rows; the\n' +
+          '        // honest stale-holder close carries NO token). An aborted_retryable\n' +
+          '        // marker row is NOT completed here — the status guard forbids\n' +
+          '        // regressing a marker to a completion, and every retry of the key\n' +
+          '        // short-circuits at this terminal branch with the typed UNRESOLVED\n' +
+          '        // result (no reopen, no effect, no second receipt).\n' +
+          '        await deps.journal.complete(journalNow.attemptId, UNRESOLVED_RESULT);\n' +
+          '      }',
+        '      if (journalNow !== undefined) {\n' +
+          '        await deps.journal.complete(journalNow.attemptId, UNRESOLVED_RESULT);\n' +
+          '      }',
+      )
+      // S2: the claim token threaded into the pre-effect reconcile call.
+      .replace(
+        '\n    intent.attemptId,\n    work.fencingToken,\n  );',
+        '\n    intent.attemptId,\n  );',
+      )
+      // S1: the claim token threaded into the terminal close and the
+      // verify-fail reconcile, with its explanatory comment.
       .replace(
         '\n        // The claim-scoped fencing token (fencing-tokens change): minted at\n' +
           '        // the winning claim CAS (0 → N+1) and retained on resume without a\n' +

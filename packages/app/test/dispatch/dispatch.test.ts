@@ -189,6 +189,7 @@ describe('dispatchCompanyActivation — replay safety (R4) and orphan non-guaran
       idempotencyKey,
       requestHash,
       attemptId,
+      fencingToken: 0,
     });
     const recorded = { ...work, state: 'completed', version: 3 };
     await h.journal.complete(attemptId, recorded);

@@ -4,13 +4,18 @@ import {
   InMemoryWorkRepository,
 } from '@io/business-domain/src/ports/fakes.js';
 import type { JournalEntry } from '@io/business-domain/src/ports/idempotency.js';
-import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
+import type {
+  CasResult,
+  FencingDirective,
+  WorkRepository,
+} from '@io/business-domain/src/ports/repositories.js';
 import type { Work } from '@io/business-domain/src/types.js';
 import type { CompleteWorkCommand } from '@io/business-domain/src/use-cases/index.js';
 import { completeWork, IdempotentFlowAbortError } from '@io/business-domain/src/use-cases/index.js';
 import type { DbConnection } from '@io/database/src/connection.js';
 import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { PgWorkRepository } from '@io/database/src/work-adapter.js';
+import { PgIdempotencyJournalRepository } from '@io/database/src/idempotency-adapter.js';
 import { describe, expect, it } from 'vitest';
 
 import { decidePreEffect } from '../src/worker/reconcile.js';
@@ -50,6 +55,7 @@ function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
     requestHash: HASH,
     attemptId: ATTEMPT,
     status: 'completed',
+    fencingToken: 0,
     resultJson: { ok: true, note: 'done' },
     ...overrides,
   };
@@ -78,9 +84,10 @@ async function runBoth(entryOverrides: Partial<JournalEntry>, requestHash: strin
     idempotencyKey: row.idempotencyKey,
     requestHash: row.requestHash,
     attemptId: row.attemptId,
+    fencingToken: 0,
   });
   if (row.status === 'completed') await journal.complete(row.attemptId, row.resultJson);
-  if (row.status === 'aborted_retryable') await journal.markRetryable(row.attemptId);
+  if (row.status === 'aborted_retryable') await journal.markRetryable(row.attemptId, 0);
   const work = new InMemoryWorkRepository();
   await work.save(acceptedWork());
   const app = decidePreEffect(await journal.lookup(row.companyId, row.idempotencyKey), requestHash);
@@ -159,8 +166,15 @@ class RacingWorkRepository implements WorkRepository {
     return stored;
   }
 
-  updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
-    return this.inner.updateIfVersion(work, expectedVersion);
+  updateIfVersion(
+    work: Work,
+    expectedVersion: number,
+    fencing?: FencingDirective,
+  ): Promise<CasResult> {
+    // Forward the directive (fencing-tokens): the racing double must mint on a
+    // `claim` and check on a `terminal` exactly like the inner repository —
+    // dropping it would make the claim never mint (token stuck at 0).
+    return this.inner.updateIfVersion(work, expectedVersion, fencing);
   }
 
   async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
@@ -417,5 +431,112 @@ describe('B11 parity 3 — fencing CAS: InMemory fake ≡ PgWorkRepository (clai
       expect(fakeTerminal.value.state).toBe('completed');
       expect(fakeTerminal.value.fencingToken).toBe(1);
     }
+  });
+});
+
+describe('B11 parity 4 — journal fencing: InMemory fake ≡ Pg adapter (store / matching / stale / token-0)', () => {
+  /** The SAME journal state seeded into the fake and the PG adapter (over the
+   * in-memory connection): one in_flight row owned by `token`. */
+  async function seedBoth(token: number): Promise<{
+    fake: InMemoryIdempotencyJournalRepository;
+    pg: PgIdempotencyJournalRepository;
+  }> {
+    const fake = new InMemoryIdempotencyJournalRepository();
+    const pg = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+    for (const repo of [fake, pg]) {
+      await repo.insertInFlight({
+        companyId: COMPANY,
+        idempotencyKey: KEY,
+        requestHash: HASH,
+        attemptId: ATTEMPT,
+        fencingToken: token,
+      });
+    }
+    return { fake, pg };
+  }
+
+  it('insertInFlight stores the claim token in BOTH: the in_flight row carries the token', async () => {
+    const { fake, pg } = await seedBoth(5);
+
+    expect((await fake.lookup(COMPANY, KEY))?.status).toBe('in_flight');
+    expect((await fake.lookup(COMPANY, KEY))?.fencingToken).toBe(5);
+    expect((await pg.lookup(COMPANY, KEY))?.status).toBe('in_flight');
+    expect((await pg.lookup(COMPANY, KEY))?.fencingToken).toBe(5);
+  });
+
+  it('matching-token markRetryable: BOTH mark aborted_retryable and RETAIN token N (no increment)', async () => {
+    const { fake, pg } = await seedBoth(5);
+
+    await fake.markRetryable(ATTEMPT, 5);
+    await pg.markRetryable(ATTEMPT, 5);
+
+    const f = await fake.lookup(COMPANY, KEY);
+    const p = await pg.lookup(COMPANY, KEY);
+    expect(f?.status).toBe('aborted_retryable');
+    expect(p?.status).toBe('aborted_retryable');
+    expect(f?.fencingToken).toBe(5);
+    expect(p?.fencingToken).toBe(5);
+  });
+
+  it('stale-token markRetryable: BOTH reject WITHOUT mutation — status and token unchanged', async () => {
+    const { fake, pg } = await seedBoth(5);
+
+    const fErr = await fake
+      .markRetryable(ATTEMPT, 3)
+      .then(() => undefined)
+      .catch((error: Error) => error);
+    const pErr = await pg
+      .markRetryable(ATTEMPT, 3)
+      .then(() => undefined)
+      .catch((error: Error) => error);
+
+    expect(fErr).toBeInstanceOf(Error);
+    expect(pErr).toBeInstanceOf(Error);
+    const f = await fake.lookup(COMPANY, KEY);
+    const p = await pg.lookup(COMPANY, KEY);
+    expect(f?.status).toBe('in_flight');
+    expect(p?.status).toBe('in_flight');
+    expect(f?.fencingToken).toBe(5);
+    expect(p?.fencingToken).toBe(5);
+  });
+
+  it('token-0 (epoch) is valid in BOTH: an unclaimed / legacy close stores and marks at 0', async () => {
+    const { fake, pg } = await seedBoth(0);
+
+    expect((await fake.lookup(COMPANY, KEY))?.fencingToken).toBe(0);
+    expect((await pg.lookup(COMPANY, KEY))?.fencingToken).toBe(0);
+
+    await fake.markRetryable(ATTEMPT, 0);
+    await pg.markRetryable(ATTEMPT, 0);
+    expect((await fake.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
+    expect((await pg.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
+    expect((await fake.lookup(COMPANY, KEY))?.fencingToken).toBe(0);
+    expect((await pg.lookup(COMPANY, KEY))?.fencingToken).toBe(0);
+  });
+
+  it('the controlled-retry reopen RETAINS token N in BOTH: the original attemptId and token survive (no re-claim, no increment)', async () => {
+    const { fake, pg } = await seedBoth(5);
+    await fake.markRetryable(ATTEMPT, 5);
+    await pg.markRetryable(ATTEMPT, 5);
+
+    // Same-key same-hash retry: reopen keeps the ORIGINAL attemptId + token N.
+    const retryEntry = {
+      companyId: COMPANY,
+      idempotencyKey: KEY,
+      requestHash: HASH,
+      attemptId: 'att:acme:close-2026-q3-retry',
+      fencingToken: 99,
+    };
+    expect(await fake.insertInFlight(retryEntry)).toEqual({ ok: true });
+    expect(await pg.insertInFlight(retryEntry)).toEqual({ ok: true });
+
+    const f = await fake.lookup(COMPANY, KEY);
+    const p = await pg.lookup(COMPANY, KEY);
+    expect(f?.status).toBe('in_flight');
+    expect(p?.status).toBe('in_flight');
+    expect(f?.attemptId).toBe(ATTEMPT); // original kept
+    expect(p?.attemptId).toBe(ATTEMPT);
+    expect(f?.fencingToken).toBe(5); // N retained — never incremented
+    expect(p?.fencingToken).toBe(5);
   });
 });

@@ -14,6 +14,8 @@ import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { describe, expect, it } from 'vitest';
 
 import { decidePreEffect, reconcilePreEffect } from '../src/worker/reconcile.js';
+import { reconcilePostEffectFailure } from '../src/worker/finalize.js';
+import type { EffectRecord, SandboxAction } from '../src/sandbox/sandbox-port.js';
 import { runWorker } from '../src/worker/worker.js';
 import { harness, seed, workerInput } from './worker-helpers.js';
 
@@ -32,6 +34,7 @@ function entry(overrides: Partial<JournalEntry> = {}): JournalEntry {
     requestHash: 'hash-1',
     attemptId: 'att:acme:close-2026-q3',
     status: 'completed',
+    fencingToken: 0,
     resultJson: { ok: true, note: 'done' },
     ...overrides,
   };
@@ -97,7 +100,14 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
   it('none → proceed and insertInFlight creates the in_flight row', async () => {
     const journal = new InMemoryIdempotencyJournalRepository();
 
-    const decision = await reconcilePreEffect(journal, 'acme', 'close-2026-q3', 'hash-1', ATTEMPT);
+    const decision = await reconcilePreEffect(
+      journal,
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      ATTEMPT,
+      0,
+    );
 
     expect(decision).toEqual({ kind: 'proceed' });
     const row = await journal.lookup('acme', 'close-2026-q3');
@@ -112,10 +122,18 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
-    await journal.markRetryable(ATTEMPT);
+    await journal.markRetryable(ATTEMPT, 0);
 
-    const decision = await reconcilePreEffect(journal, 'acme', 'close-2026-q3', 'hash-1', ATTEMPT);
+    const decision = await reconcilePreEffect(
+      journal,
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      ATTEMPT,
+      0,
+    );
 
     expect(decision).toEqual({ kind: 'proceed' });
     const row = await journal.lookup('acme', 'close-2026-q3');
@@ -130,10 +148,18 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
     await journal.complete(ATTEMPT, { ok: true, note: 'done' });
 
-    const decision = await reconcilePreEffect(journal, 'acme', 'close-2026-q3', 'hash-1', ATTEMPT);
+    const decision = await reconcilePreEffect(
+      journal,
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      ATTEMPT,
+      0,
+    );
 
     expect(decision).toEqual({ kind: 'replay', resultJson: { ok: true, note: 'done' } });
     const row = await journal.lookup('acme', 'close-2026-q3');
@@ -148,9 +174,17 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
 
-    const decision = await reconcilePreEffect(journal, 'acme', 'close-2026-q3', 'hash-1', ATTEMPT);
+    const decision = await reconcilePreEffect(
+      journal,
+      'acme',
+      'close-2026-q3',
+      'hash-1',
+      ATTEMPT,
+      0,
+    );
 
     expect(decision).toEqual({ kind: 'recovery' });
     const row = await journal.lookup('acme', 'close-2026-q3');
@@ -165,9 +199,17 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
 
-    const decision = await reconcilePreEffect(journal, 'acme', 'close-2026-q3', 'hash-2', ATTEMPT);
+    const decision = await reconcilePreEffect(
+      journal,
+      'acme',
+      'close-2026-q3',
+      'hash-2',
+      ATTEMPT,
+      0,
+    );
 
     expect(decision).toEqual({ kind: 'deny', reason: 'idempotency-conflict' });
     const row = await journal.lookup('acme', 'close-2026-q3');
@@ -181,6 +223,7 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       'close-2026-q3',
       'hash-1',
       'att:acme:loser',
+      0,
     );
     // The claim was lost; the re-decide sees the winner's in_flight row → recovery
     // (NOT proceed) — exactly one effect is preserved on the worker path too.
@@ -194,6 +237,7 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       'close-2026-q3',
       'hash-1',
       'att:acme:loser',
+      0,
     );
     // The re-decide on the fresh aborted_retryable + same-hash row WOULD be
     // `proceed` (reopen) — but NO claim was secured, so it MUST be recovery
@@ -209,6 +253,7 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       'close-2026-q3',
       'hash-1',
       'att:acme:loser',
+      0,
     );
     expect(decision).toEqual({ kind: 'recovery' });
     expect(decision.kind).not.toBe('proceed');
@@ -221,6 +266,7 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       'close-2026-q3',
       'hash-1',
       'att:acme:loser',
+      0,
     );
     expect(decision).toEqual({ kind: 'replay', resultJson: { ok: true, note: 'winner-done' } });
   });
@@ -232,6 +278,7 @@ describe('reconcilePreEffect — journal-anchored driver', () => {
       'close-2026-q3',
       'hash-1',
       'att:acme:loser',
+      0,
     );
     expect(decision).toEqual({ kind: 'deny', reason: 'idempotency-conflict' });
   });
@@ -251,6 +298,7 @@ class LostClaimThenWinnerJournal implements IdempotencyJournalPort {
       requestHash: 'hash-1',
       attemptId: 'att:acme:winner',
       status: 'in_flight',
+      fencingToken: 0,
     };
   }
 
@@ -260,7 +308,7 @@ class LostClaimThenWinnerJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
 }
 
 /** Models a same-key race loser whose fresh re-decide WOULD be `proceed` (F2):
@@ -279,6 +327,7 @@ class LostClaimThenRetryableJournal implements IdempotencyJournalPort {
       requestHash: 'hash-1',
       attemptId: 'att:acme:winner',
       status: 'aborted_retryable',
+      fencingToken: 0,
     };
   }
 
@@ -288,7 +337,7 @@ class LostClaimThenRetryableJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
 }
 
 /** Models a same-key race loser whose fresh re-decide WOULD be `proceed` because
@@ -303,7 +352,7 @@ class LostClaimThenVanishedJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
 }
 
 /** Models a same-key race loser whose fresh re-decide sees the winner's
@@ -325,6 +374,7 @@ class LostClaimThenCompletedJournal implements IdempotencyJournalPort {
       requestHash: this.winnerHash,
       attemptId: 'att:acme:winner',
       status: 'completed',
+      fencingToken: 0,
       resultJson: this.winnerResult,
     };
   }
@@ -335,7 +385,7 @@ class LostClaimThenCompletedJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
 }
 
 /** DbConnection double that counts committed vs rolled-back transactions. */
@@ -392,8 +442,15 @@ class RacingWorkRepository implements WorkRepository {
     return stored;
   }
 
-  updateIfVersion(work: Work, expectedVersion: number): Promise<CasResult> {
-    return this.inner.updateIfVersion(work, expectedVersion);
+  updateIfVersion(
+    work: Work,
+    expectedVersion: number,
+    fencing?: import('@io/business-domain/src/ports/repositories.js').FencingDirective,
+  ): Promise<CasResult> {
+    // Forward the directive (fencing-tokens): the racing double must mint on a
+    // `claim` and check on a `terminal` exactly like the inner repository —
+    // dropping it would make the claim never mint (token stuck at 0).
+    return this.inner.updateIfVersion(work, expectedVersion, fencing);
   }
 
   async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
@@ -421,6 +478,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
     await h.journal.complete(ATTEMPT, { ok: true, note: 'done' });
 
@@ -443,6 +501,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-0',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
     await h.journal.complete(ATTEMPT, { ok: true });
 
@@ -465,8 +524,9 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
-    await h.journal.markRetryable(ATTEMPT);
+    await h.journal.markRetryable(ATTEMPT, 0);
 
     const result = await runWorker(workerInput(), h, 'flash');
 
@@ -485,8 +545,9 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-0',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
-    await h.journal.markRetryable(ATTEMPT);
+    await h.journal.markRetryable(ATTEMPT, 0);
 
     const result = await runWorker(workerInput({ requestHash: 'hash-1' }), h, 'flash');
 
@@ -506,6 +567,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
 
     const result = await runWorker(workerInput(), h, 'flash');
@@ -609,6 +671,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3-key2',
       requestHash: 'hash-2',
       attemptId: key2Attempt,
+      fencingToken: 0,
     });
     await h.journal.complete(key2Attempt, { ok: true, state: 'completed' });
 
@@ -619,8 +682,9 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
-    await h.journal.markRetryable(ATTEMPT);
+    await h.journal.markRetryable(ATTEMPT, 0);
 
     const result = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
 
@@ -635,11 +699,15 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     expect(h.sandbox.executes).toHaveLength(0);
     expect(conn.commits).toBe(0);
     expect(conn.rollbacks).toBe(0);
-    // The attempt was closed honestly: NO retryable marker left on a terminal
-    // key (a marker would invite an endless retry of a key whose work is done).
+    // The attempt is closed honestly: the key returns the typed UNRESOLVED
+    // result on EVERY retry (the terminal branch short-circuits before any
+    // effect/receipt), so the marker row is NEVER regressed to a completion —
+    // the complete status guard (fencing-tokens spec) forbids completing a
+    // non-in_flight row. A marker on a terminal-work key never reopens (the
+    // terminal branch precedes the reopen), so it invites no retry loop.
     const row = await h.journal.lookup('acme', 'close-2026-q3');
-    expect(row?.status).toBe('completed');
-    expect(row?.resultJson).toEqual({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.resultJson).toBeUndefined();
     // The terminal work was NOT mutated by the retry.
     expect((await h.work.get('acme', 'work-1'))?.state).toBe('completed');
   });
@@ -665,6 +733,7 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
       idempotencyKey: 'close-2026-q3',
       requestHash: 'hash-1',
       attemptId: ATTEMPT,
+      fencingToken: 0,
     });
 
     const result = await runWorker(workerInput(), h, 'flash');
@@ -679,5 +748,161 @@ describe('cycle reconciliation (WC reconciliation pre-effect)', () => {
     expect(row?.status).toBe('in_flight');
     expect(row?.attemptId).toBe(ATTEMPT);
     expect((await h.work.get('acme', 'work-1'))?.state).toBe('in_progress');
+  });
+});
+
+describe('journal fencing token threading through the worker cycle (task 2.4)', () => {
+  it('the worker threads the MINTED claim token into the pre-effect insert: the in_flight row carries token 1 after a fresh runWorker claim', async () => {
+    const h = harness();
+    await seed(h);
+
+    const result = await runWorker(workerInput(), h, 'flash');
+
+    expect(result.ok).toBe(true);
+    // The claim minted token 1 (accepted token 0 → in_progress token 1); the
+    // pre-effect insertInFlight (reconcilePreEffect) stored THAT token.
+    const row = await h.journal.lookup('acme', 'close-2026-q3');
+    expect(row?.status).toBe('in_flight');
+    expect(row?.fencingToken).toBe(1);
+  });
+
+  it('a REAL finalize CAS-loss persists the retryable marker WITH the claim token N: markRetryable(attemptId, N) lands (spec "Marker set on CAS loss with applied effect and in-progress work")', async () => {
+    const h = harness();
+    await seed(h);
+    const conn = new TxTrackingConnection(new InMemoryDbConnection());
+    const racing = new RacingWorkRepository(h.work, (work) => ({ ...work, state: 'in_progress' }));
+
+    const lost = await runWorker(
+      workerInput(),
+      {
+        ...h,
+        work: racing,
+        connection: conn,
+        repositories: () => ({
+          work: racing,
+          receipts: h.receipts,
+          journal: h.journal,
+          events: h.events,
+        }),
+      },
+      'flash',
+    );
+
+    expect(lost.ok).toBe(false);
+    if (lost.ok) return;
+    expect(lost.reason).toBe('cas-lost-retryable');
+    // The marker is CLAIM-GATED: the row is owned by the claim token 1 (the
+    // pre-effect insert stored it) and the worker presented the retained token
+    // 1 — the marker write matched and persisted WITH token 1.
+    const row = await h.journal.lookup('acme', 'close-2026-q3');
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.fencingToken).toBe(1);
+    // A controlled retry reopens and RETAINS that same token N (no re-claim,
+    // no increment) — spec "Controlled retry retains its token".
+    await h.journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: 'hash-1',
+      attemptId: ATTEMPT,
+      fencingToken: 99, // a fresh claim WOULD mint higher — the retry must NOT adopt it
+    });
+    const reopened = await h.journal.lookup('acme', 'close-2026-q3');
+    expect(reopened?.status).toBe('in_flight');
+    expect(reopened?.fencingToken).toBe(1);
+  });
+
+  it('a STALE token at the worker reconcile boundary cannot mark retryable: the marker write is refused (fail loud), the row stays in_flight under the REAL claim', async () => {
+    const h = harness();
+    await seed(h);
+    const current = await h.work.get('acme', 'work-1');
+    if (current === undefined) throw new Error('test setup: work not seeded');
+    // Claim → token 1; the journal row is owned by token 1 (pre-effect store).
+    const claimed = await h.work.updateIfVersion(
+      { ...current, state: 'in_progress' },
+      current.version,
+      { kind: 'claim' },
+    );
+    if (!claimed.ok) throw new Error('test setup: claim failed');
+    await h.journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: 'hash-1',
+      attemptId: ATTEMPT,
+      fencingToken: 1,
+    });
+    const effect = await h.sandbox.execute({
+      type: 'create-document',
+      relativePath: 'docs/stale.md',
+      content: 'stale-holder effect',
+    });
+
+    // A ZOMBIE holder (token 0) reconciles a post-effect failure: the effect is
+    // undone (the zombie's own effect), then the claim-gated marker write is
+    // REFUSED — fail loud (R4-001), never a zombie-issued marker.
+    await expect(
+      reconcilePostEffectFailure(
+        { work: h.work, journal: h.journal, sandbox: h.sandbox },
+        {
+          companyId: 'acme',
+          workId: 'work-1',
+          idempotencyKey: 'close-2026-q3',
+          requestHash: 'hash-1',
+          attemptId: ATTEMPT,
+          fencingToken: 0, // STALE — not the claim owner
+          effect,
+        },
+      ),
+    ).rejects.toThrow(/fencing token mismatch/i);
+
+    expect(h.sandbox.undos).toHaveLength(1);
+    const row = await h.journal.lookup('acme', 'close-2026-q3');
+    expect(row?.status).toBe('in_flight'); // untouched by the zombie
+    expect(row?.fencingToken).toBe(1);
+    expect((await h.work.get('acme', 'work-1'))?.state).toBe('in_progress');
+  });
+
+  it('a MATCHING token at the worker reconcile boundary marks retryable: the claim owner undoes + persists the marker WITH token N (spec marker-set scenario)', async () => {
+    const h = harness();
+    await seed(h);
+    const current = await h.work.get('acme', 'work-1');
+    if (current === undefined) throw new Error('test setup: work not seeded');
+    const claimed = await h.work.updateIfVersion(
+      { ...current, state: 'in_progress' },
+      current.version,
+      { kind: 'claim' },
+    );
+    if (!claimed.ok) throw new Error('test setup: claim failed');
+    await h.journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'close-2026-q3',
+      requestHash: 'hash-1',
+      attemptId: ATTEMPT,
+      fencingToken: 1,
+    });
+    const effect = await h.sandbox.execute({
+      type: 'create-document',
+      relativePath: 'docs/owner.md',
+      content: 'claim-owner effect',
+    });
+
+    const result = await reconcilePostEffectFailure(
+      { work: h.work, journal: h.journal, sandbox: h.sandbox },
+      {
+        companyId: 'acme',
+        workId: 'work-1',
+        idempotencyKey: 'close-2026-q3',
+        requestHash: 'hash-1',
+        attemptId: ATTEMPT,
+        fencingToken: 1, // the claim owner
+        effect,
+      },
+    );
+
+    expect(result).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
+    expect(h.sandbox.undos).toHaveLength(1);
+    const row = await h.journal.lookup('acme', 'close-2026-q3');
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.fencingToken).toBe(1);
+    expect(row?.resultJson).toBeUndefined();
   });
 });

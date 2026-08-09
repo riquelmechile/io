@@ -85,6 +85,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         idempotencyKey,
         requestHash,
         attemptId,
+        fencingToken: 0,
       });
       const recorded = recordedResult(companyId, 'c3-del', workId);
       await harness.journal.complete(attemptId, recorded);
@@ -145,6 +146,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         idempotencyKey,
         requestHash: 'hash-c3-original',
         attemptId,
+        fencingToken: 0,
       });
       await harness.journal.complete(attemptId, recordedResult(companyId, 'c3-del2', workId));
 

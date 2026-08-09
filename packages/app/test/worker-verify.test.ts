@@ -124,6 +124,7 @@ async function closeReady(h: WorkerHarness): Promise<EffectRecord> {
     idempotencyKey: KEY,
     requestHash: HASH,
     attemptId: ATTEMPT,
+    fencingToken: 0,
   });
   return h.sandbox.execute(docAction);
 }

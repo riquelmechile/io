@@ -220,9 +220,12 @@ export async function reconcilePostEffectFailure(
   if (input.effect.applied) {
     // T2(i): the work is STILL in_progress and the effect WAS applied — reverse
     // it, then set the retryable marker in its OWN committed write (never a
-    // failure-complete).
+    // failure-complete). The marker write is CLAIM-GATED (fencing-tokens
+    // change): markRetryable(attemptId, token) succeeds only when the supplied
+    // token still owns the journal row — a stale holder (zombie) cannot mark a
+    // row it no longer owns.
     await deps.sandbox.undo(input.effect.undo);
-    await deps.journal.markRetryable(input.attemptId);
+    await deps.journal.markRetryable(input.attemptId, input.fencingToken);
     return { ok: false, reason: 'cas-lost-retryable', current };
   }
   // in_progress + NO effect applied: the attempt has no durable side effect —

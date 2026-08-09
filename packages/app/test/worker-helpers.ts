@@ -174,9 +174,9 @@ export class RecordingJournal implements IdempotencyJournalPort {
     return this.inner.complete(attemptId, resultJson);
   }
 
-  async markRetryable(attemptId: string): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken: number): Promise<void> {
     this.log.push(`markRetryable:${attemptId}`);
-    return this.inner.markRetryable(attemptId);
+    return this.inner.markRetryable(attemptId, fencingToken);
   }
 
   snapshot(): readonly JournalEntry[] {

@@ -356,7 +356,7 @@ describe('journal fencing token (task 2.1) — token store / token-0 / tenant sc
     expect((await journal.lookup('acme', 'key-0'))?.fencingToken).toBe(0);
   });
 
-  it('complete REJECTS a completed row WITHOUT mutation (interim: a marker MAY still complete — the legacy honest close the pre-wiring worker relies on)', async () => {
+  it('complete REJECTS a non-in_flight row WITHOUT mutation: completed stays completed, marker stays aborted_retryable', async () => {
     const journal = new InMemoryIdempotencyJournalRepository();
     await journal.insertInFlight({
       companyId: 'acme',
@@ -373,9 +373,7 @@ describe('journal fencing token (task 2.1) — token store / token-0 / tenant sc
     expect((await journal.lookup('acme', 'key-1'))?.status).toBe('completed');
     expect((await journal.lookup('acme', 'key-1'))?.resultJson).toEqual({ ok: true, note: 'done' });
 
-    // Interim (pre-wiring worker compat): complete on an aborted_retryable
-    // MARKER row still succeeds — the legacy honest close. The strict
-    // in_flight-only guard (marker rejection) lands with the worker wiring.
+    // Mark retryable, then complete on the MARKER row must reject and leave it unchanged.
     await journal.insertInFlight({
       companyId: 'acme',
       idempotencyKey: 'key-2',
@@ -384,8 +382,10 @@ describe('journal fencing token (task 2.1) — token store / token-0 / tenant sc
       fencingToken: 0,
     });
     await journal.markRetryable('att:acme:key-2', 0);
-    await journal.complete('att:acme:key-2', { ok: true });
-    expect((await journal.lookup('acme', 'key-2'))?.status).toBe('completed');
+    await expect(journal.complete('att:acme:key-2', { ok: true })).rejects.toThrow(
+      /in_flight|not/i,
+    );
+    expect((await journal.lookup('acme', 'key-2'))?.status).toBe('aborted_retryable');
   });
 
   it('token-free honest UNRESOLVED T2(ii) close lands: complete(attemptId, sentinel) succeeds WITHOUT any token check', async () => {

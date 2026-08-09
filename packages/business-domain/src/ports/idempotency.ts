@@ -42,7 +42,7 @@ export interface JournalEntry {
    * the valid pre-fencing epoch: legacy rows and unclaimed admin closes default
    * to it and remain valid (spec "Pre-fencing row remains valid").
    */
-  readonly fencingToken?: number;
+  readonly fencingToken: number;
   /** Stored use-case result captured when the attempt completed (replayed). */
   readonly resultJson?: unknown;
 }
@@ -57,7 +57,7 @@ export interface NewJournalEntry {
    * the Work claim CAS and carried into the pre-effect journal insert. Token 0
    * (the epoch) is valid for unclaimed admin closes and legacy rows.
    */
-  readonly fencingToken?: number;
+  readonly fencingToken: number;
 }
 
 /**
@@ -98,11 +98,11 @@ export interface IdempotencyJournalPort {
    * Finalize CAS-loss recovery: in_flight → aborted_retryable (a durable
    * retryable marker distinct from in_flight and completed, so a controlled
    * retry can reopen the key instead of bricking it). Clears resultJson.
-   * Rejects when the attempt is missing, its status is not in_flight, OR —
-   * when a token is supplied — the supplied token does not equal the stored
-   * claim token (a stale holder cannot mark a row it no longer owns —
-   * fencing-tokens change). MUST be invoked in its OWN committed write (not
-   * inside a rolling-back finalize tx).
+   * Rejects when the attempt is missing, its status is not in_flight, OR the
+   * supplied token does not equal the stored claim token (a stale holder
+   * cannot mark a row it no longer owns — fencing-tokens change).
+   * MUST be invoked in its OWN committed write (not inside a rolling-back
+   * finalize tx).
    */
-  markRetryable(attemptId: string, fencingToken?: number): Promise<void>;
+  markRetryable(attemptId: string, fencingToken: number): Promise<void>;
 }

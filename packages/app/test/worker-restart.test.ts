@@ -93,6 +93,7 @@ async function crashAfterInsertInFlightAndEffect(
     idempotencyKey: KEY,
     requestHash: HASH,
     attemptId: ATTEMPT,
+    fencingToken: 0,
   });
   const sandbox = new DurableSandboxFake(sandboxPath);
   const effect = await sandbox.execute(docAction);
@@ -134,6 +135,7 @@ describe('durable restart recovery (WC durable-restart)', () => {
         idempotencyKey: KEY,
         requestHash: HASH,
         attemptId: ATTEMPT,
+        fencingToken: 0,
       });
       expect((await journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
     } finally {
@@ -151,6 +153,7 @@ describe('durable restart recovery (WC durable-restart)', () => {
         idempotencyKey: KEY,
         requestHash: HASH,
         attemptId: ATTEMPT,
+        fencingToken: 0,
       });
 
       const second = new DurableJournalFake(jsonFilePersistence(journalPath)); // restart
@@ -185,6 +188,7 @@ describe('durable restart recovery (WC durable-restart)', () => {
         idempotencyKey: KEY,
         requestHash: HASH,
         attemptId: ATTEMPT,
+        fencingToken: 0,
       });
       // NO effect was executed: the durable undo log is empty.
       const sandbox = new DurableSandboxFake(sandboxPath);
@@ -196,6 +200,46 @@ describe('durable restart recovery (WC durable-restart)', () => {
       expect((await journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
       expect(await sandbox.wasApplied('undo-never')).toBe(false);
       expect((await work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('the claim fencing token SURVIVES a restart WITH the marker: the aborted_retryable row restores with token N, and the controlled retry uses N (fake mirrors PG durability — task 2.5)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'io-restart-'));
+    try {
+      const journalPath = join(dir, 'journal.json');
+      const first = new DurableJournalFake(jsonFilePersistence(journalPath));
+      await first.insertInFlight({
+        companyId: COMPANY,
+        idempotencyKey: KEY,
+        requestHash: HASH,
+        attemptId: ATTEMPT,
+        fencingToken: 7,
+      });
+      await first.markRetryable(ATTEMPT, 7);
+
+      // RESTART: a FRESH fake over the same file — the marker AND its claim
+      // token survive (a purely in-memory wipe would lose both).
+      const second = new DurableJournalFake(jsonFilePersistence(journalPath));
+      const row = await second.lookup(COMPANY, KEY);
+      expect(row?.status).toBe('aborted_retryable');
+      expect(row?.attemptId).toBe(ATTEMPT);
+      expect(row?.fencingToken).toBe(7);
+
+      // The controlled retry after the restart reopens and RETAINS token N —
+      // never re-minted, never incremented (spec "Controlled retry retains its
+      // token").
+      await second.insertInFlight({
+        companyId: COMPANY,
+        idempotencyKey: KEY,
+        requestHash: HASH,
+        attemptId: ATTEMPT,
+        fencingToken: 99, // a fresh claim WOULD mint higher — the retry must not adopt it
+      });
+      const reopened = await second.lookup(COMPANY, KEY);
+      expect(reopened?.status).toBe('in_flight');
+      expect(reopened?.fencingToken).toBe(7);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

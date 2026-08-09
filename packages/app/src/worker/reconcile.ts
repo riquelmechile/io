@@ -52,17 +52,21 @@ export async function reconcilePreEffect(
   idempotencyKey: string,
   requestHash: string,
   attemptId: string,
+  fencingToken: number,
 ): Promise<PreEffectDecision> {
   const entry = await journal.lookup(companyId, idempotencyKey);
   const decision = decidePreEffect(entry, requestHash);
   if (decision.kind === 'proceed') {
     // none → INSERT in_flight; aborted_retryable + same hash → reopen. Any
     // other existing status never reaches here (replay/deny/recovery returned).
+    // The claim-scoped fencing token rides into the pre-effect insert (the row
+    // is the claim-ownership record; token retained on a controlled retry).
     const claim = await journal.insertInFlight({
       companyId,
       idempotencyKey,
       requestHash,
       attemptId,
+      fencingToken,
     });
     if (!claim.ok) {
       // Lost the same-key race: another attempt claimed the key between our

@@ -108,7 +108,14 @@ export async function runWorker(
         }
         return { ok: true, replayed: true, resultJson: journalNow.resultJson };
       }
-      if (journalNow !== undefined) {
+      if (journalNow !== undefined && journalNow.status === 'in_flight') {
+        // Close the attempt honestly with the token-free UNRESOLVED sentinel
+        // (the status-guarded `complete` transitions only in_flight rows; the
+        // honest stale-holder close carries NO token). An aborted_retryable
+        // marker row is NOT completed here — the status guard forbids
+        // regressing a marker to a completion, and every retry of the key
+        // short-circuits at this terminal branch with the typed UNRESOLVED
+        // result (no reopen, no effect, no second receipt).
         await deps.journal.complete(journalNow.attemptId, UNRESOLVED_RESULT);
       }
       return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current };
@@ -168,6 +175,7 @@ export async function runWorker(
     idempotencyKey,
     requestHash,
     intent.attemptId,
+    work.fencingToken,
   );
   if (decision.kind === 'replay') {
     return { ok: true, replayed: true, resultJson: decision.resultJson };

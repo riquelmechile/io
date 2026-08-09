@@ -123,6 +123,10 @@ async function closeReady(h: WorkerHarness): Promise<{ effect: EffectRecord }> {
     idempotencyKey: KEY,
     requestHash: HASH,
     attemptId: ATTEMPT,
+    // The journal row stores the MINTED claim token (1) — exactly what the
+    // worker's pre-effect insertInFlight writes after the claim, so the T2(i)
+    // markRetryable(attemptId, token) gate matches (fencing-tokens change).
+    fencingToken: 1,
   });
   const effect = await h.sandbox.execute({
     type: 'create-document',
@@ -329,6 +333,7 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
         idempotencyKey: KEY,
         requestHash: HASH,
         attemptId: ATTEMPT,
+        fencingToken: 0,
       }),
     ).resolves.toEqual({ ok: true });
     expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
@@ -338,24 +343,27 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(await h.sandbox.wasApplied(effect.undo.handleId)).toBe(false);
   });
 
-  it('STALE-token close: a holder with the WRONG token cannot close — T1 rolls back Work+journal+receipt+event atomically (fencing "Stale-token close rolls back atomically")', async () => {
+  it('STALE-token close: a holder with the WRONG token cannot close — T1 rolls back Work+journal+receipt+event atomically, and the ZOMBIE cannot mark the row retryable (fencing "Stale-token close rolls back atomically" + "Stale token cannot mark retryable")', async () => {
     const h = harness();
     const { effect } = await closeReady(h); // claim minted token 1, work in_progress
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
     // The holder presents token 0 — NOT the minted claim token 1. The T1 CAS
     // (token-checked terminal directive) must NOT land.
-    const result = await finalizeInFlightWorkAtomically(
+    const attempt = finalizeInFlightWorkAtomically(
       finalizeDeps(h, conn),
       finalizeInput(effect, { fencingToken: 0 }),
     );
 
-    // T1 aborted (fencing-conflict → FinalizeCasLostError → rollback), then T2
-    // reconciles honestly: the work is still in_progress + effect applied →
-    // undo + retryable marker (never a failure-complete).
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toBe('cas-lost-retryable');
+    // T1 aborted (fencing-conflict → FinalizeCasLostError → rollback). The T2
+    // reconcile then hits the CLAIM-OWNERSHIP GATE: the effect is undone (the
+    // zombie's own effect is reversed), but markRetryable(attemptId, 0) against
+    // the stored claim token 1 is REJECTED — a stale holder must never mark a
+    // row it does not own. The rejection FAILS LOUDLY (R4-001): the zombie
+    // cannot close AND cannot mutate the row. The row stays in_flight under the
+    // REAL claim (token 1); a later recovery pass sees in_flight + no applied
+    // effect → clean replay (self-healing, never a fabricated resolution).
+    await expect(attempt).rejects.toThrow(/fencing token mismatch/i);
     // Every terminal mutation rolled back atomically: no receipt, no event,
     // no journal.complete, no work terminal state.
     expect(h.receipts.saves).toHaveLength(0);
@@ -367,10 +375,15 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(stored?.state).toBe('in_progress');
     expect(stored?.fencingToken).toBe(1);
     expect(stored?.version).toBe(2);
-    // T2(i) honest reconciliation: effect undone + marker set (own committed write).
+    // The zombie's effect was reversed (its own effect is undone), but the
+    // journal row is UNTOUCHED by the zombie: still in_flight, still owned by
+    // token 1 — the marker write was refused (never a failure-complete, never
+    // a zombie-issued marker).
     expect(h.sandbox.undos).toHaveLength(1);
     expect(await h.sandbox.wasApplied(effect.undo.handleId)).toBe(false);
-    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
+    const row = await h.journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('in_flight');
+    expect(row?.fencingToken).toBe(1);
   });
 
   it('matching-token close succeeds: the claim owner presents the minted token 1 and the terminal CAS lands (fencing happy path)', async () => {

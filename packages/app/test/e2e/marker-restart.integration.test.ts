@@ -75,8 +75,14 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         seeded.version,
       );
       if (!claimed.ok) throw new Error('test setup: claim failed');
-      await harness.journal.insertInFlight({ companyId, idempotencyKey, requestHash, attemptId });
-      await harness.journal.markRetryable(attemptId);
+      await harness.journal.insertInFlight({
+        companyId,
+        idempotencyKey,
+        requestHash,
+        attemptId,
+        fencingToken: 0,
+      });
+      await harness.journal.markRetryable(attemptId, 0);
 
       // The marker is durable in live PG: status aborted_retryable, attempt kept,
       // NO receipt issued by the lost close.
