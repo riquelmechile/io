@@ -34,6 +34,15 @@ export interface JournalEntry {
   readonly requestHash: string;
   readonly attemptId: string;
   readonly status: JournalStatus;
+  /**
+   * Claim-scoped fencing token (fencing-tokens change): the token minted at the
+   * Work claim CAS, stored on the journal row pre-effect. It proves claim
+   * ownership for `markRetryable` (stale token → rejected) and is retained on a
+   * controlled retry / reopen (never re-minted, never incremented). Token 0 is
+   * the valid pre-fencing epoch: legacy rows and unclaimed admin closes default
+   * to it and remain valid (spec "Pre-fencing row remains valid").
+   */
+  readonly fencingToken?: number;
   /** Stored use-case result captured when the attempt completed (replayed). */
   readonly resultJson?: unknown;
 }
@@ -43,6 +52,12 @@ export interface NewJournalEntry {
   readonly idempotencyKey: string;
   readonly requestHash: string;
   readonly attemptId: string;
+  /**
+   * The claim-scoped fencing token (fencing-tokens change): the token minted at
+   * the Work claim CAS and carried into the pre-effect journal insert. Token 0
+   * (the epoch) is valid for unclaimed admin closes and legacy rows.
+   */
+  readonly fencingToken?: number;
 }
 
 /**
@@ -83,9 +98,11 @@ export interface IdempotencyJournalPort {
    * Finalize CAS-loss recovery: in_flight → aborted_retryable (a durable
    * retryable marker distinct from in_flight and completed, so a controlled
    * retry can reopen the key instead of bricking it). Clears resultJson.
-   * Rejects when the attempt is missing or its status is not in_flight.
-   * MUST be invoked in its OWN committed write (not inside a rolling-back
-   * finalize tx).
+   * Rejects when the attempt is missing, its status is not in_flight, OR —
+   * when a token is supplied — the supplied token does not equal the stored
+   * claim token (a stale holder cannot mark a row it no longer owns —
+   * fencing-tokens change). MUST be invoked in its OWN committed write (not
+   * inside a rolling-back finalize tx).
    */
-  markRetryable(attemptId: string): Promise<void>;
+  markRetryable(attemptId: string, fencingToken?: number): Promise<void>;
 }

@@ -371,6 +371,9 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       // is a lost claim (typed result), never a thrown error.
       return { ok: false, reason: 'attempt-in-flight' };
     }
+    // The claim token rides on the row via the spread (NewJournalEntry carries
+    // fencingToken — the fake stores it pre-effect, mirroring the PG column).
+    // Token 0 (the epoch) is valid for unclaimed/legacy rows.
     const row: JournalEntry = { ...entry, status: 'in_flight' };
     this.byKey.set(key, row);
     this.byAttempt.set(entry.attemptId, row);
@@ -382,6 +385,15 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
     if (entry === undefined) {
       throw new Error(`no journal entry for attempt: ${attemptId}`);
     }
+    if (entry.status !== 'in_flight' && entry.status !== 'aborted_retryable') {
+      // Status guard (fencing-tokens spec): a completed row must never
+      // re-complete. Rejected without mutation. Token-FREE by contract: the
+      // honest T2(ii) UNRESOLVED close needs no token. (Interim: an
+      // aborted_retryable marker MAY still complete — the legacy honest close
+      // the pre-wiring worker relies on; the strict in_flight-only guard lands
+      // with the worker wiring.)
+      throw new Error(`attempt is not in_flight: ${attemptId} (status: ${entry.status})`);
+    }
     const updated: JournalEntry = { ...entry, status: 'completed', resultJson };
     this.byAttempt.set(attemptId, updated);
     this.byKey.set(
@@ -390,7 +402,7 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
     );
   }
 
-  async markRetryable(attemptId: string): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken?: number): Promise<void> {
     const entry = this.byAttempt.get(attemptId);
     if (entry === undefined) {
       throw new Error(`no journal entry for attempt: ${attemptId}`);
@@ -399,6 +411,15 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       // Only an in-flight attempt can be marked retryable: a completed attempt
       // must never regress to a marker, and a marker is never re-marked.
       throw new Error(`attempt is not in_flight: ${attemptId} (status: ${entry.status})`);
+    }
+    if (fencingToken !== undefined && entry.fencingToken !== fencingToken) {
+      // Claim-ownership gate (fencing-tokens spec, "Stale token cannot mark
+      // retryable"): the marker write is OWNED by the claim. A stale holder
+      // (zombie) supplies a token that no longer owns the row — rejected
+      // WITHOUT mutation, exactly like the PG adapter's AND fencing_token=$5.
+      throw new Error(
+        `fencing token mismatch for attempt: ${attemptId} (stored ${entry.fencingToken}, supplied ${fencingToken})`,
+      );
     }
     const updated: JournalEntry = { ...entry, status: 'aborted_retryable', resultJson: undefined };
     this.byAttempt.set(attemptId, updated);
@@ -473,8 +494,8 @@ export class DurableJournalFake implements IdempotencyJournalPort {
     this.persist();
   }
 
-  async markRetryable(attemptId: string): Promise<void> {
-    await this.delegate.markRetryable(attemptId);
+  async markRetryable(attemptId: string, fencingToken?: number): Promise<void> {
+    await this.delegate.markRetryable(attemptId, fencingToken);
     this.persist();
   }
 

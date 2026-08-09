@@ -103,12 +103,17 @@ async function completeWorkIdempotent(
   }
 
   // 3. Writes begin (pre-effect): claim the key (record the attempt in_flight).
+  //    The journal row stores the claim fencing token (`cmd.fencingToken`, or
+  //    the pre-fencing epoch 0 for unclaimed admin closes) — a controlled
+  //    retry / markRetryable proves claim ownership against it (fencing-tokens
+  //    change).
   const attemptId = attemptIdFor(cmd.companyId, cmd.idempotencyKey);
   const claim = await deps.journal.insertInFlight({
     companyId: cmd.companyId,
     idempotencyKey: cmd.idempotencyKey,
     requestHash: cmd.requestHash,
     attemptId,
+    fencingToken: cmd.fencingToken ?? 0,
   });
   if (!claim.ok) {
     // Lost the same-key race at the claim boundary: a concurrent attempt owns

@@ -141,6 +141,7 @@ describe('idempotent completeWork — DENY (D6)', () => {
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
 
     const result = await completeWork(completeCmd(), deps);
@@ -195,6 +196,7 @@ describe('journal fake — UNRESOLVED sentinel parity with PG (F1/F4)', () => {
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     await journal.complete('att:acme:key-1', { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
 
@@ -281,5 +283,234 @@ describe('idempotent completeWork — pre-flight failures leave NO journal row',
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('invalid-command');
     expect(await journal.lookup('acme', 'key-1')).toBeUndefined();
+  });
+});
+
+describe('journal fencing token (task 2.1) — token store / token-0 / tenant scope / complete status guard', () => {
+  it('insertInFlight stores the claim token PRE-effect: the in_flight row carries the token, no stored result yet', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('in_flight');
+    expect(entry?.fencingToken).toBe(7);
+    expect(entry?.resultJson).toBeUndefined();
+  });
+
+  it('lookup is TOKEN-FREE: replay / DENY / attempt-in-flight resolve without any token argument', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+    await journal.complete('att:acme:key-1', { state: 'completed', version: 3 });
+
+    // Replay: the completed row reads back WITHOUT a token in the lookup call.
+    const completed = await journal.lookup('acme', 'key-1');
+    expect(completed?.status).toBe('completed');
+    expect(completed?.fencingToken).toBe(7);
+
+    // attempt-in-flight: a second claim on the SAME key loses WITHOUT a token check.
+    const claim = await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1-again',
+      fencingToken: 8,
+    });
+    expect(claim).toEqual({ ok: false, reason: 'attempt-in-flight' });
+  });
+
+  it('tenant scope: a lookup under another company sees no row', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+
+    expect(await journal.lookup('other-co', 'key-1')).toBeUndefined();
+  });
+
+  it('token 0 is VALID (pre-fencing epoch): an unclaimed / legacy close inserts and stays at 0', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    const claim = await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-0',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-0',
+      fencingToken: 0,
+    });
+    expect(claim).toEqual({ ok: true });
+    expect((await journal.lookup('acme', 'key-0'))?.fencingToken).toBe(0);
+  });
+
+  it('complete REJECTS a completed row WITHOUT mutation (interim: a marker MAY still complete — the legacy honest close the pre-wiring worker relies on)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 0,
+    });
+    await journal.complete('att:acme:key-1', { ok: true, note: 'done' });
+    // A second complete on the COMPLETED row must reject and leave it unchanged.
+    await expect(journal.complete('att:acme:key-1', { ok: true, note: 'again' })).rejects.toThrow(
+      /in_flight|not/i,
+    );
+    expect((await journal.lookup('acme', 'key-1'))?.status).toBe('completed');
+    expect((await journal.lookup('acme', 'key-1'))?.resultJson).toEqual({ ok: true, note: 'done' });
+
+    // Interim (pre-wiring worker compat): complete on an aborted_retryable
+    // MARKER row still succeeds — the legacy honest close. The strict
+    // in_flight-only guard (marker rejection) lands with the worker wiring.
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-2',
+      requestHash: 'hash-2',
+      attemptId: 'att:acme:key-2',
+      fencingToken: 0,
+    });
+    await journal.markRetryable('att:acme:key-2', 0);
+    await journal.complete('att:acme:key-2', { ok: true });
+    expect((await journal.lookup('acme', 'key-2'))?.status).toBe('completed');
+  });
+
+  it('token-free honest UNRESOLVED T2(ii) close lands: complete(attemptId, sentinel) succeeds WITHOUT any token check', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 3,
+    });
+    // NO token argument — the honest stale-holder close is token-free by contract.
+    await journal.complete('att:acme:key-1', { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('completed');
+    expect(entry?.resultJson).toEqual({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+  });
+
+  it('completeWork threads the claim token into the journal row: cmd.fencingToken lands on the stored entry', async () => {
+    const work = new InMemoryWorkRepository();
+    await work.save({
+      workId: 'work-2',
+      companyId: 'acme',
+      delegationId: 'del-1',
+      proposer: 'principal-2',
+      description: 'claim-owned close',
+      state: 'in_progress',
+      version: 2,
+      fencingToken: 5,
+      evidenceRefs: ['evid-a'],
+    });
+    const receipts = new InMemoryBusinessReceiptRepository();
+    const journal = new InMemoryIdempotencyJournalRepository();
+
+    const value = expectOk(
+      await completeWork(completeCmd({ workId: 'work-2', fencingToken: 5 }), {
+        work,
+        receipts,
+        journal,
+      }),
+    );
+
+    expect(value.state).toBe('completed');
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.fencingToken).toBe(5);
+  });
+});
+
+describe('markRetryable token gate (task 2.2) — matching marks, stale rejects, retry retains N', () => {
+  it('matching token marks the attempt retryable and RETAINS token N (no increment, no re-claim)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+
+    await journal.markRetryable('att:acme:key-1', 7);
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('aborted_retryable');
+    expect(entry?.fencingToken).toBe(7); // retained — a controlled retry uses N, never a fresh claim
+    expect(entry?.resultJson).toBeUndefined();
+  });
+
+  it('a STALE token cannot mark retryable: rejected WITHOUT mutation — status and stored token preserved', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+
+    await expect(journal.markRetryable('att:acme:key-1', 3)).rejects.toThrow(/fencing|token/i);
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('in_flight');
+    expect(entry?.fencingToken).toBe(7);
+  });
+
+  it('the marker is distinct from in_flight and completed (spec: neither)', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+    await journal.markRetryable('att:acme:key-1', 7);
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('aborted_retryable');
+    expect(entry?.status).not.toBe('in_flight');
+    expect(entry?.status).not.toBe('completed');
+  });
+
+  it('a controlled retry retains token N: reopening the marker keeps N — a fresh claim token is NOT adopted (spec "Controlled retry retains its token")', async () => {
+    const journal = new InMemoryIdempotencyJournalRepository();
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1',
+      fencingToken: 7,
+    });
+    await journal.markRetryable('att:acme:key-1', 7);
+
+    // Same-key retry resumes: reopen (same hash) — the ORIGINAL token N is
+    // retained even though a fresh claim WOULD mint a higher token.
+    await journal.insertInFlight({
+      companyId: 'acme',
+      idempotencyKey: 'key-1',
+      requestHash: 'hash-1',
+      attemptId: 'att:acme:key-1-retry',
+      fencingToken: 9,
+    });
+
+    const entry = await journal.lookup('acme', 'key-1');
+    expect(entry?.status).toBe('in_flight');
+    expect(entry?.attemptId).toBe('att:acme:key-1'); // original kept
+    expect(entry?.fencingToken).toBe(7); // N retained — never incremented
   });
 });

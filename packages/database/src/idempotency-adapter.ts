@@ -43,7 +43,7 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
     }
     const rows = await this.conn.query<JournalEntry>(
       'SELECT company_id AS "companyId", idempotency_key AS "idempotencyKey", request_hash AS "requestHash", ' +
-        'attempt_id AS "attemptId", status, result_json AS "resultJson" ' +
+        'attempt_id AS "attemptId", status, fencing_token AS "fencingToken", result_json AS "resultJson" ' +
         'FROM idempotency_journal WHERE company_id = $1 AND idempotency_key = $2',
       [companyId, idempotencyKey],
     );
@@ -125,19 +125,28 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
       // result (never a thrown error) so the caller can retry for a clean replay.
       return { ok: false, reason: 'attempt-in-flight' };
     }
-    // Claim the key. ON CONFLICT DO NOTHING turns the same-key RACE (a concurrent
-    // insert committed between our lookup and this INSERT) into a 0-row result
-    // instead of a thrown unique-violation that would ABORT the enclosing
-    // transaction — the loser gets a typed attempt-in-flight and stays clean.
+    // Claim the key. ON CONFLICT DO NOTHING WITHOUT a target (fencing-tokens
+    // race fix) turns the same-key RACE (a concurrent insert committed between
+    // our lookup and this INSERT) into a 0-row result instead of a thrown
+    // unique-violation that would ABORT the enclosing transaction. A TARGETED
+    // `ON CONFLICT (company_id, idempotency_key)` does NOT arbitrate the
+    // separate UNIQUE(attempt_id) index: two concurrent same-key inserts with
+    // the SAME attempt id conflict on BOTH indexes, and PG raises the
+    // non-arbiter duplicate-key error (index checks are independent, order
+    // unspecified — the historical ~10-25% flake). No-target DO NOTHING handles
+    // conflicts with ANY usable unique constraint (PG docs), so the loser gets
+    // a typed attempt-in-flight and stays clean. The claim fencing token is
+    // stored pre-effect ($6) — the row is the claim-ownership record.
     const inserted = (await this.conn.execute(
-      'INSERT INTO idempotency_journal (company_id, idempotency_key, request_hash, attempt_id, status, created_at) ' +
-        'VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (company_id, idempotency_key) DO NOTHING',
+      'INSERT INTO idempotency_journal (company_id, idempotency_key, request_hash, attempt_id, status, fencing_token, created_at) ' +
+        'VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
       [
         entry.companyId,
         entry.idempotencyKey,
         entry.requestHash,
         entry.attemptId,
         'in_flight',
+        entry.fencingToken ?? 0,
         Date.now(),
       ],
     )) as { rowCount?: number };
@@ -151,23 +160,57 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
     if (!attemptId) {
       throw new Error('a non-empty attemptId is required');
     }
-    await this.conn.execute(
-      'UPDATE idempotency_journal SET status=$2, result_json=$3 WHERE attempt_id=$1',
-      [attemptId, 'completed', resultJson === undefined ? null : JSON.stringify(resultJson)],
+    // Status-guarded, TOKEN-FREE terminal close (fencing-tokens spec): a
+    // completed row must never re-complete. The honest T2(ii)
+    // UNRESOLVED_REQUIRES_HUMAN close (stale holder) carries NO token: the
+    // guard is status-only, so the honest stale-holder close stays reachable.
+    // 0 rows → rejected without mutation (parity with the fake's throw).
+    // (Interim: an aborted_retryable marker MAY still complete — the legacy
+    // honest close the pre-wiring worker relies on; the strict in_flight-only
+    // guard lands with the worker wiring.) Read the row's status FIRST, reject
+    // a completed (or missing) row, then CAS on the OBSERVED status so a
+    // concurrent state change still resolves to a throw.
+    const rows = await this.conn.query<{ status: string }>(
+      'SELECT status FROM idempotency_journal WHERE attempt_id = $1',
+      [attemptId],
     );
+    const status = rows[0]?.status;
+    if (status === undefined || status === 'completed') {
+      throw new Error(`attempt is not in_flight (or missing): ${attemptId}`);
+    }
+    const result = (await this.conn.execute(
+      'UPDATE idempotency_journal SET status=$2, result_json=$3 WHERE attempt_id=$1 AND status=$4',
+      [
+        attemptId,
+        'completed',
+        resultJson === undefined ? null : JSON.stringify(resultJson),
+        status,
+      ],
+    )) as { rowCount?: number };
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error(`attempt is not in_flight (or missing): ${attemptId}`);
+    }
   }
 
-  async markRetryable(attemptId: string): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken?: number): Promise<void> {
     if (!attemptId) {
       throw new Error('a non-empty attemptId is required');
     }
     // Finalize CAS-loss recovery: in_flight → aborted_retryable, result_json
     // cleared. The status guard makes it a no-op-safe conditional write: a
     // missing or completed (or already-marked) attempt updates 0 rows and is
-    // rejected — parity with the fake's contract.
+    // rejected — parity with the fake's contract. The claim-ownership GATE
+    // (fencing-tokens change): when a token is supplied, the marker write must
+    // carry the stored claim token — a STALE token (a zombie holder) matches 0
+    // rows and is rejected WITHOUT mutation, exactly like the fake. A call
+    // WITHOUT a token keeps the legacy status-only write.
     const result = (await this.conn.execute(
-      'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3',
-      [attemptId, 'aborted_retryable', 'in_flight', null],
+      fencingToken === undefined
+        ? 'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3'
+        : 'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3 AND fencing_token=$5',
+      fencingToken === undefined
+        ? [attemptId, 'aborted_retryable', 'in_flight', null]
+        : [attemptId, 'aborted_retryable', 'in_flight', null, fencingToken],
     )) as { rowCount?: number };
     if ((result.rowCount ?? 0) === 0) {
       throw new Error(`attempt is not in_flight (or missing): ${attemptId}`);

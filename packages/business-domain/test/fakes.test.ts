@@ -558,6 +558,7 @@ describe('InMemoryIdempotencyJournalRepository — markRetryable (IJ marker-dist
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     return journal;
   }
@@ -565,7 +566,7 @@ describe('InMemoryIdempotencyJournalRepository — markRetryable (IJ marker-dist
   it('in_flight → aborted_retryable, a status distinct from in_flight and completed, with resultJson cleared', async () => {
     const journal = await seedInFlight();
 
-    await journal.markRetryable('att:acme:key-1');
+    await journal.markRetryable('att:acme:key-1', 0);
 
     const entry = await journal.lookup('acme', 'key-1');
     expect(entry?.status).toBe('aborted_retryable');
@@ -576,19 +577,19 @@ describe('InMemoryIdempotencyJournalRepository — markRetryable (IJ marker-dist
 
   it('rejects a missing attemptId', async () => {
     const journal = await seedInFlight();
-    await expect(journal.markRetryable('att:missing')).rejects.toThrow(/attempt/i);
+    await expect(journal.markRetryable('att:missing', 0)).rejects.toThrow(/attempt/i);
   });
 
   it('rejects a completed attempt (the marker never overwrites completed)', async () => {
     const journal = await seedInFlight();
     await journal.complete('att:acme:key-1', { ok: true });
-    await expect(journal.markRetryable('att:acme:key-1')).rejects.toThrow(/not in_flight/i);
+    await expect(journal.markRetryable('att:acme:key-1', 0)).rejects.toThrow(/not in_flight/i);
   });
 
   it('rejects an already-retryable attempt (only in_flight can be marked)', async () => {
     const journal = await seedInFlight();
-    await journal.markRetryable('att:acme:key-1');
-    await expect(journal.markRetryable('att:acme:key-1')).rejects.toThrow(/not in_flight/i);
+    await journal.markRetryable('att:acme:key-1', 0);
+    await expect(journal.markRetryable('att:acme:key-1', 0)).rejects.toThrow(/not in_flight/i);
   });
 });
 
@@ -600,6 +601,7 @@ describe('InMemoryIdempotencyJournalRepository — lookup decision data (IJ repl
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     await journal.complete('att:acme:key-1', { result: 'closed', success: true });
 
@@ -616,6 +618,7 @@ describe('InMemoryIdempotencyJournalRepository — lookup decision data (IJ repl
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
 
     const entry = await journal.lookup('acme', 'key-1');
@@ -635,6 +638,7 @@ describe('InMemoryIdempotencyJournalRepository — lookup decision data (IJ repl
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
 
     expect(await journal.lookup('other-company', 'key-1')).toBeUndefined();
@@ -652,8 +656,9 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
-    await journal.markRetryable('att:acme:key-1');
+    await journal.markRetryable('att:acme:key-1', 0);
     return journal;
   }
 
@@ -665,6 +670,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-NEW',
+      fencingToken: 0,
     });
 
     const entry = await journal.lookup('acme', 'key-1');
@@ -682,6 +688,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
         idempotencyKey: 'key-1',
         requestHash: 'hash-DIFFERENT',
         attemptId: 'att:acme:key-2',
+        fencingToken: 0,
       }),
     ).rejects.toThrow(/hash|conflict/i);
 
@@ -696,6 +703,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
 
     await expect(
@@ -704,6 +712,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-2',
+        fencingToken: 0,
       }),
     ).resolves.toEqual({ ok: false, reason: 'attempt-in-flight' });
   });
@@ -715,6 +724,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     await journal.complete('att:acme:key-1', { ok: true });
 
@@ -724,6 +734,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-2',
+        fencingToken: 0,
       }),
     ).resolves.toEqual({ ok: false, reason: 'attempt-in-flight' });
   });
@@ -735,6 +746,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     expect(claim).toEqual({ ok: true });
 
@@ -745,6 +757,7 @@ describe('InMemoryIdempotencyJournalRepository — reopen on aborted_retryable (
       idempotencyKey: 'key-1',
       requestHash: 'hash-1',
       attemptId: 'att:acme:key-1',
+      fencingToken: 0,
     });
     expect(lost).toEqual({ ok: false, reason: 'attempt-in-flight' });
   });
@@ -906,8 +919,9 @@ describe('DurableJournalFake — JSON durability across a simulated restart (IJ 
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-1',
+        fencingToken: 0,
       });
-      await first.markRetryable('att:acme:key-1');
+      await first.markRetryable('att:acme:key-1', 0);
 
       // Simulated restart: a FRESH fake over the same JSON file.
       const second = new DurableJournalFake(jsonFilePersistence(path));
@@ -929,6 +943,7 @@ describe('DurableJournalFake — JSON durability across a simulated restart (IJ 
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-1',
+        fencingToken: 0,
       });
       await first.complete('att:acme:key-1', { result: 'closed', success: true });
 
@@ -950,8 +965,9 @@ describe('DurableJournalFake — JSON durability across a simulated restart (IJ 
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-1',
+        fencingToken: 0,
       });
-      await first.markRetryable('att:acme:key-1');
+      await first.markRetryable('att:acme:key-1', 0);
 
       const second = new DurableJournalFake(jsonFilePersistence(path));
       await second.insertInFlight({
@@ -959,6 +975,7 @@ describe('DurableJournalFake — JSON durability across a simulated restart (IJ 
         idempotencyKey: 'key-1',
         requestHash: 'hash-1',
         attemptId: 'att:acme:key-2',
+        fencingToken: 0,
       });
 
       const reopened = await second.lookup('acme', 'key-1');

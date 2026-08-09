@@ -752,6 +752,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         idempotencyKey: 'guard-key',
         requestHash: 'hash-1',
         attemptId: 'att:acme-corp:guard-key',
+        fencingToken: 0,
       });
       // Simulate a stale/inconsistent stored result: a completed journal row
       // whose result_json is NOT a well-formed Work (missing required fields).
@@ -769,6 +770,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         idempotencyKey: 'unresolved-key',
         requestHash: 'hash-1',
         attemptId: 'att:acme-corp:unresolved-key',
+        fencingToken: 0,
       });
       // Production legitimately closes an unresolvable attempt with the NON-Work
       // UNRESOLVED sentinel (finalize T2(ii), worker.ts) — it has NO workId. A
@@ -793,6 +795,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         idempotencyKey: 'guard-ok-key',
         requestHash: 'hash-1',
         attemptId: 'att:acme-corp:guard-ok-key',
+        fencingToken: 0,
       });
       await repo.complete('att:acme-corp:guard-ok-key', completedWork);
 
@@ -911,6 +914,154 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     });
   });
 
+  describe('journal fencing tokens (task 2.7) — token store / stale gate / status guard / restart durability — live PG', () => {
+    /** A journal adapter over the pool (no transaction needed for standalone reads). */
+    const poolJournal = () => new PgIdempotencyJournalRepository(conn);
+
+    it('insertInFlight stores the claim token PRE-effect in live PG: the in_flight row carries the token', async () => {
+      const repo = poolJournal();
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'token-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:token-key',
+        fencingToken: 7,
+      });
+
+      const row = await repo.lookup('acme-corp', 'token-key');
+      expect(row?.status).toBe('in_flight');
+      expect(row?.fencingToken).toBe(7);
+    });
+
+    it('matching-token markRetryable persists the marker WITH token N in live PG; a FRESH read (restart simulation) still sees it (spec "Marker survives a restart")', async () => {
+      const repo = poolJournal();
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'restart-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:restart-key',
+        fencingToken: 7,
+      });
+
+      await repo.markRetryable('att:acme-corp:restart-key', 7);
+
+      // A FRESH adapter over the pool = a fresh read path (restart at the DB
+      // layer): the marker AND its claim token survive.
+      const fresh = poolJournal();
+      const row = await fresh.lookup('acme-corp', 'restart-key');
+      expect(row?.status).toBe('aborted_retryable');
+      expect(row?.attemptId).toBe('att:acme-corp:restart-key');
+      expect(row?.fencingToken).toBe(7);
+      expect(row?.resultJson).toBeUndefined();
+    });
+
+    it('a STALE token cannot mark retryable in live PG: rejected WITHOUT mutation — status and token unchanged', async () => {
+      const repo = poolJournal();
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'stale-key',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:stale-key',
+        fencingToken: 7,
+      });
+
+      await expect(repo.markRetryable('att:acme-corp:stale-key', 3)).rejects.toThrow(
+        /in_flight|attempt/i,
+      );
+
+      const row = await repo.lookup('acme-corp', 'stale-key');
+      expect(row?.status).toBe('in_flight');
+      expect(row?.fencingToken).toBe(7);
+    });
+
+    it('complete is STATUS-GUARDED and TOKEN-FREE in live PG: a completed row is rejected unchanged, and the honest UNRESOLVED T2(ii) close lands without a token', async () => {
+      const repo = poolJournal();
+      const completedWork: Work = { ...sampleWork(), state: 'completed', version: 3 };
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'guard-key-2',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:guard-key-2',
+        fencingToken: 3,
+      });
+      await repo.complete('att:acme-corp:guard-key-2', completedWork);
+
+      // A second complete on the completed row is REJECTED (0 rows) unchanged.
+      await expect(repo.complete('att:acme-corp:guard-key-2', completedWork)).rejects.toThrow(
+        /in_flight|attempt/i,
+      );
+      const done = await repo.lookup('acme-corp', 'guard-key-2');
+      expect(done?.status).toBe('completed');
+      expect(done?.resultJson).toEqual(completedWork);
+
+      // The honest token-free UNRESOLVED close (T2(ii)) on an in_flight row:
+      // NO token argument, status guard passes, sentinel stored.
+      await repo.insertInFlight({
+        companyId: 'acme-corp',
+        idempotencyKey: 'unresolved-key-2',
+        requestHash: 'hash-1',
+        attemptId: 'att:acme-corp:unresolved-key-2',
+        fencingToken: 3,
+      });
+      await repo.complete('att:acme-corp:unresolved-key-2', {
+        ok: false,
+        reason: 'UNRESOLVED_REQUIRES_HUMAN',
+      });
+      const closed = await repo.lookup('acme-corp', 'unresolved-key-2');
+      expect(closed?.status).toBe('completed');
+      expect(closed?.resultJson).toEqual({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    });
+
+    it('stale-token terminal close rolls back the WHOLE journal+receipt write in live PG: an IdempotentFlowAbortError leaves NO in_flight row and NO receipt (worker-cycle "Stale-token close rolls back atomically", journal layer)', async () => {
+      // A work claimed at token 1 (accepted → in_progress, claim directive).
+      const w: Work = {
+        ...sampleWork(),
+        state: 'accepted',
+        version: 1,
+        fencingToken: 0,
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+      const claimed = await workRepo.updateIfVersion({ ...w, state: 'in_progress' }, 1, {
+        kind: 'claim',
+      });
+      if (!claimed.ok) throw new Error('test setup: claim failed');
+
+      // A ZOMBIE (token 0) tries the atomic idempotent close: the T1 CAS is
+      // token-checked, so it fails as fencing-conflict AFTER the in_flight
+      // insert — the enclosing transaction must ROLL BACK the journal row and
+      // never issue a receipt.
+      const cmd: CompleteWorkCommand = {
+        companyId: 'acme-corp',
+        actor: 'principal-2',
+        workId: 'work-001',
+        idempotencyKey: 'stale-close-key',
+        requestHash: 'hash-1',
+        policyHash: 'sha256:policy-hash-123',
+        artifactHash: 'sha256:artifact-hash-789',
+        outcome: { result: 'closed successfully', success: true },
+        evidenceRefs: ['evid-2'],
+        fencingToken: 0, // STALE — the claim minted 1
+      };
+      await expect(completeWorkAtomically(conn, cmd)).rejects.toThrow(/fencing-conflict/i);
+
+      // FULL rollback: no journal row, no receipt, work untouched (in_progress,
+      // token 1, version 2).
+      const journalRows = await conn.query<{ attempt_id: string }>(
+        'SELECT attempt_id FROM idempotency_journal',
+        [],
+      );
+      expect(journalRows).toEqual([]);
+      expect(
+        await receiptRepo.get('acme-corp', 'rcpt:att:acme-corp:stale-close-key'),
+      ).toBeUndefined();
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('in_progress');
+      expect(stored?.fencingToken).toBe(1);
+      expect(stored?.version).toBe(2);
+    });
+  });
+
   describe('same-key race loser — typed result + exactly-one-effect (D6) — live PG', () => {
     it('two concurrent claims on the same key: exactly one wins, the loser gets a typed attempt-in-flight (never a throw)', async () => {
       const claimKey = {
@@ -918,6 +1069,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         idempotencyKey: 'race-key',
         requestHash: 'hash-1',
         attemptId: 'att:acme-corp:race-key',
+        fencingToken: 0,
       };
       const [a, b] = await Promise.all([
         conn.transaction((tx) => new PgIdempotencyJournalRepository(tx).insertInFlight(claimKey)),
@@ -928,6 +1080,35 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       const losses = [a, b].filter((r) => r.ok === false && r.reason === 'attempt-in-flight');
       expect(wins).toHaveLength(1);
       expect(losses).toHaveLength(1);
+    });
+
+    it('HAMMER (task 2.3 race fix): 25 consecutive same-key claim races on DISTINCT keys ALL resolve typed — exactly one winner each, NEVER a throw (the no-target ON CONFLICT DO NOTHING arbitrates BOTH unique indexes; the historical ~10-25% attempt_id duplicate-key throw is gone)', async () => {
+      const repo = new PgIdempotencyJournalRepository(conn);
+      // Same attempt_id for BOTH concurrent claims — the exact surface that
+      // used to throw on UNIQUE(attempt_id) when the targeted ON CONFLICT
+      // clause did not arbitrate it. 25 independent keys × 2 racing claims.
+      for (let i = 0; i < 25; i++) {
+        const key = `race-key-${i}`;
+        const claimKey = {
+          companyId: 'acme-corp',
+          idempotencyKey: key,
+          requestHash: `hash-${i}`,
+          attemptId: `att:acme-corp:${key}`,
+          fencingToken: i,
+        };
+        const [a, b] = await Promise.all([
+          conn.transaction((tx) => repo.insertInFlight(claimKey)),
+          conn.transaction((tx) => repo.insertInFlight(claimKey)),
+        ]);
+        const wins = [a, b].filter((r) => r.ok === true);
+        const losses = [a, b].filter((r) => r.ok === false && r.reason === 'attempt-in-flight');
+        expect(wins, `iteration ${i}: expected exactly one winner`).toHaveLength(1);
+        expect(losses, `iteration ${i}: loser must be a TYPED attempt-in-flight`).toHaveLength(1);
+        // The winning row persists with its claim token (pre-effect store).
+        const row = await repo.lookup('acme-corp', key);
+        expect(row?.status).toBe('in_flight');
+        expect(row?.fencingToken).toBe(i);
+      }
     });
 
     it('two concurrent terminal closes on the same key issue EXACTLY ONE receipt and bump the version once (no throw)', async () => {
