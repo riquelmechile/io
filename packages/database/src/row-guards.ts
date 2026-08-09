@@ -48,6 +48,11 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
+/** A non-negative integer: the fencing-token domain (epoch 0 .. N). */
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 /** Validate a `work` table row (as aliased by the adapter) before use. */
 export function parseWorkRow(input: unknown): RowGuardResult<Work> {
   if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -71,6 +76,11 @@ export function parseWorkRow(input: unknown): RowGuardResult<Work> {
   if (!isPositiveInteger(row.version)) {
     return fail('work row version must be a positive integer');
   }
+  // Fencing token (010): MUST be a non-negative integer — the pre-fencing epoch
+  // is 0 (legacy rows default to 0), so ≥0 is the valid domain.
+  if (!isNonNegativeInteger(row.fencingToken)) {
+    return fail('work row fencingToken must be a non-negative integer');
+  }
   if (!isStringArray(row.evidenceRefs)) {
     return fail('work row evidenceRefs must be an array of strings');
   }
@@ -92,6 +102,7 @@ export function parseWorkRow(input: unknown): RowGuardResult<Work> {
       description: row.description,
       state: row.state as WorkState,
       version: row.version,
+      fencingToken: row.fencingToken as number,
       evidenceRefs: row.evidenceRefs,
       deliverable,
       outcome,

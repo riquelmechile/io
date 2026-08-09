@@ -95,6 +95,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         description: 'retry-scoped quarterly close document',
         state: 'accepted',
         version: 1,
+        fencingToken: 0,
         evidenceRefs: [],
       });
 

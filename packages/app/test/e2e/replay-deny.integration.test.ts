@@ -27,6 +27,7 @@ function recordedResult(companyId: string, delegationId: string, workId: string)
     description: 'c3 recorded terminal result',
     state: 'completed',
     version: 3,
+    fencingToken: 0,
     evidenceRefs: ['c3-evid'],
   };
 }

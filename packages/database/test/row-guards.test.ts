@@ -24,6 +24,7 @@ function workRow(overrides: Record<string, unknown> = {}): Record<string, unknow
     description: 'execute the close',
     state: 'in_progress',
     version: 2,
+    fencingToken: 0,
     evidenceRefs: ['evid-a', 'evid-b'],
     deliverable: { description: 'report.pdf', format: 'pdf' },
     outcome: { result: 'on track', success: true },
@@ -81,6 +82,11 @@ describe('parseWorkRow (D7)', () => {
       [],
       workRow({ workId: '' }),
       workRow({ companyId: undefined }),
+      // work-lifecycle delta "Missing delegation reference rejected" / "Empty
+      // companyId rejected": an empty delegationId or empty companyId MUST be
+      // rejected as invalid (Work Execution Fields requirement).
+      workRow({ delegationId: '' }),
+      workRow({ companyId: '' }),
       workRow({ state: 'bogus' }),
       workRow({ version: 0 }),
       workRow({ version: 1.5 }),
@@ -93,6 +99,42 @@ describe('parseWorkRow (D7)', () => {
       const result = parseWorkRow(bad);
       expect(result.ok).toBe(false);
       if (result.ok === false) expect(result.reason).not.toBe('');
+    }
+  });
+
+  it('rejects an empty delegationId and an empty companyId with a reason naming the field (scenario pin)', () => {
+    const noDelegation = parseWorkRow(workRow({ delegationId: '' }));
+    expect(noDelegation.ok).toBe(false);
+    if (noDelegation.ok === false) expect(noDelegation.reason).toMatch(/delegationId/i);
+
+    const noCompany = parseWorkRow(workRow({ companyId: '' }));
+    expect(noCompany.ok).toBe(false);
+    if (noCompany.ok === false) expect(noCompany.reason).toMatch(/companyId/i);
+  });
+
+  it('accepts fencingToken 0 (the valid pre-fencing epoch) and a minted positive token', () => {
+    const epoch = parseWorkRow(workRow({ fencingToken: 0 }));
+    expect(epoch.ok).toBe(true);
+    if (epoch.ok) expect(epoch.value.fencingToken).toBe(0);
+
+    const minted = parseWorkRow(workRow({ fencingToken: 3 }));
+    expect(minted.ok).toBe(true);
+    if (minted.ok) expect(minted.value.fencingToken).toBe(3);
+  });
+
+  it('rejects a corrupt fencingToken (negative, non-integer, or missing) with a NON-EMPTY reason', () => {
+    for (const bad of [
+      { fencingToken: -1 },
+      { fencingToken: 1.5 },
+      { fencingToken: '1' },
+      { fencingToken: undefined },
+    ]) {
+      const result = parseWorkRow(workRow(bad));
+      expect(result.ok).toBe(false);
+      if (result.ok === false) {
+        expect(result.reason).toMatch(/fencingToken/i);
+        expect(result.reason).not.toBe('');
+      }
     }
   });
 });

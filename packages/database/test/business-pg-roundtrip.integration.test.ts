@@ -5,7 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { BusinessReceipt, Company, Delegation, Work } from '@io/business-domain/src/index.js';
-import type { CompleteWorkCommand, CompleteWorkDeps } from '@io/business-domain/src/index.js';
+import type {
+  CasResult,
+  CompleteWorkCommand,
+  CompleteWorkDeps,
+} from '@io/business-domain/src/index.js';
 import { completeWork } from '@io/business-domain/src/index.js';
 import { evidenceId } from '@io/business-domain/src/index.js';
 import {
@@ -30,6 +34,7 @@ const SCHEMA_002 = join(pkgRoot, 'sql', '002_create_business_tables.sql');
 const SCHEMA_003 = join(pkgRoot, 'sql', '003_harden_columns.sql');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
 const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
+const SCHEMA_010 = join(pkgRoot, 'sql', '010_fencing_tokens.sql');
 
 /**
  * Integration test — REAL PostgreSQL round-trip for all four business-domain
@@ -84,6 +89,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     await conn.execute(readFileSync(SCHEMA_003, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_004, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_009, 'utf8'), []);
+    await conn.execute(readFileSync(SCHEMA_010, 'utf8'), []);
     companyRepo = new PgCompanyRepository(conn);
     delegationRepo = new PgDelegationRepository(conn);
     workRepo = new PgWorkRepository(conn);
@@ -129,6 +135,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       description: 'execute the Q4 financial close',
       state: 'completed',
       version: 1,
+      fencingToken: 0,
       evidenceRefs: ['evid-1', 'evid-2', 'evid-3'],
       deliverable: { description: 'q4-close-report.pdf', format: 'pdf' },
       outcome: { result: 'closed successfully', success: true },
@@ -236,6 +243,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         description: 'minimal work item',
         state: 'proposed',
         version: 1,
+        fencingToken: 0,
         evidenceRefs: [],
       };
       await workRepo.save(w);
@@ -610,6 +618,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         ...sampleWork(),
         state: 'in_progress',
         version: 2,
+        fencingToken: 0,
         evidenceRefs: ['evid-1'],
       };
       await workRepo.save(w);
@@ -794,6 +803,114 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     });
   });
 
+  describe('fencing tokens (010) — claim→close cycle against live PostgreSQL (fencing-tokens e2e)', () => {
+    /** An ACCEPTED Work at version 1, token 0 — claimable. */
+    async function seedAccepted(): Promise<Work> {
+      const w: Work = {
+        ...sampleWork(),
+        state: 'accepted',
+        version: 1,
+        fencingToken: 0,
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+      return w;
+    }
+
+    it('end-to-end claim→close: the claim mints token 1, the token-checked close completes, and exactly one receipt persists (worker-cycle "End-to-end happy path against live PostgreSQL")', async () => {
+      const w = await seedAccepted();
+
+      // 1. Claim: accepted → in_progress with the claim directive — the CAS
+      //    mints the NEXT token server-side (0 → 1) and returns it.
+      const claimed = (await workRepo.updateIfVersion({ ...w, state: 'in_progress' }, w.version, {
+        kind: 'claim',
+      })) as Extract<CasResult, { ok: true }>;
+      expect(claimed.ok).toBe(true);
+      expect(claimed.value.fencingToken).toBe(1);
+      expect(claimed.value.version).toBe(2);
+
+      // 2. Terminal close: the claim owner presents the minted token — the
+      //    token-checked CAS lands (completed, token retained).
+      const closed = (await workRepo.updateIfVersion(
+        { ...claimed.value, state: 'completed' },
+        claimed.value.version,
+        { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken ?? 0 },
+      )) as Extract<CasResult, { ok: true }>;
+      expect(closed.ok).toBe(true);
+      expect(closed.value.state).toBe('completed');
+      expect(closed.value.fencingToken).toBe(1);
+
+      // 3. Terminal Work persisted: completed, token 1, version 3.
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('completed');
+      expect(stored?.fencingToken).toBe(1);
+      expect(stored?.version).toBe(3);
+
+      // 4. One receipt for the terminal close (terminal_event_id = attempt id).
+      await receiptRepo.save({
+        receiptId: 'rcpt:att:acme-corp:fencing-e2e',
+        companyId: 'acme-corp',
+        workId: 'work-001',
+        delegationId: 'del-001',
+        actor: 'principal-2',
+        policyHash: 'sha256:policy-hash-123',
+        evidenceRefs: ['evid-1'],
+        terminalState: 'completed',
+        terminalEventId: 'att:acme-corp:fencing-e2e',
+        artifactHash: 'sha256:artifact-hash-789',
+        issuedAt: 1750000000000,
+      });
+      const receipts = await conn.query<{ receipt_id: string }>(
+        'SELECT receipt_id FROM business_receipt WHERE work_id = $1',
+        ['work-001'],
+      );
+      expect(receipts).toHaveLength(1);
+    });
+
+    it('stale-token close against live PG: the terminal CAS is rejected as fencing-conflict and no terminal mutation persists (worker-cycle "Stale-token close rolls back atomically")', async () => {
+      const w = await seedAccepted();
+      const claimed = await workRepo.updateIfVersion({ ...w, state: 'in_progress' }, w.version, {
+        kind: 'claim',
+      });
+      if (!claimed.ok) throw new Error('test setup: claim failed');
+
+      // A zombie holder with token 0 tries to close a work owned by token 1.
+      const stale = (await workRepo.updateIfVersion(
+        { ...claimed.value, state: 'completed' },
+        claimed.value.version,
+        { kind: 'terminal', expectedFencingToken: 0 },
+      )) as Extract<CasResult, { ok: false }>;
+
+      expect(stale.ok).toBe(false);
+      expect(stale.reason).toBe('fencing-conflict');
+      expect(stale.current?.fencingToken).toBe(1);
+      // Work unchanged: still in_progress, token 1, version 2.
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('in_progress');
+      expect(stored?.fencingToken).toBe(1);
+      expect(stored?.version).toBe(2);
+    });
+
+    it('pre-fencing rows are inert: a version-only close on token 0 works exactly as before (no token required)', async () => {
+      const w: Work = {
+        ...sampleWork(),
+        state: 'in_progress',
+        version: 2,
+        fencingToken: 0, // legacy row: the epoch token
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+
+      // Plain (version-only) close — no directive — still succeeds on token 0.
+      const closed = await workRepo.updateIfVersion({ ...w, state: 'completed' }, 2);
+      expect(closed.ok).toBe(true);
+      if (closed.ok) {
+        expect(closed.value.state).toBe('completed');
+        expect(closed.value.fencingToken).toBe(0);
+      }
+    });
+  });
+
   describe('same-key race loser — typed result + exactly-one-effect (D6) — live PG', () => {
     it('two concurrent claims on the same key: exactly one wins, the loser gets a typed attempt-in-flight (never a throw)', async () => {
       const claimKey = {
@@ -818,6 +935,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         ...sampleWork(),
         state: 'in_progress',
         version: 2,
+        fencingToken: 0,
         evidenceRefs: ['evid-1'],
       };
       await workRepo.save(w);

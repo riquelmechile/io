@@ -56,6 +56,7 @@ function work(id: string): Work {
     description: 'execute the quarterly close',
     state: 'proposed',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: ['evid-a', 'evid-b'],
   };
 }
@@ -223,8 +224,8 @@ describe('PgWorkRepository', () => {
       expect(inserts).toHaveLength(1);
       expect(inserts[0]?.sql).toBe(
         'INSERT INTO work (work_id, company_id, delegation_id, proposer, description, state, version, ' +
-          'deliverable, evidence_refs, outcome, created_at) ' +
-          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',
+          'fencing_token, deliverable, evidence_refs, outcome, created_at) ' +
+          'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
       );
       const params = inserts[0]?.params ?? [];
       expect(params[0]).toBe('work-1');
@@ -234,10 +235,11 @@ describe('PgWorkRepository', () => {
       expect(params[4]).toBe('execute the quarterly close');
       expect(params[5]).toBe('proposed');
       expect(params[6]).toBe(1);
-      expect(params[7]).toBeNull();
-      expect(params[8]).toBe(JSON.stringify(['evid-a', 'evid-b']));
-      expect(params[9]).toBeNull();
-      expect(typeof params[10]).toBe('number');
+      expect(params[7]).toBe(0); // fencing_token: pre-fencing epoch
+      expect(params[8]).toBeNull();
+      expect(params[9]).toBe(JSON.stringify(['evid-a', 'evid-b']));
+      expect(params[10]).toBeNull();
+      expect(typeof params[11]).toBe('number');
     });
 
     it('passes deliverable/outcome objects when present', async () => {
@@ -252,8 +254,8 @@ describe('PgWorkRepository', () => {
 
       const inserts = db.operations.filter((op) => op.sql.startsWith('INSERT'));
       const params = inserts[0]?.params ?? [];
-      expect(params[7]).toBe(JSON.stringify({ description: 'report.pdf', format: 'pdf' }));
-      expect(params[9]).toBe(JSON.stringify({ result: 'success', success: true }));
+      expect(params[8]).toBe(JSON.stringify({ description: 'report.pdf', format: 'pdf' }));
+      expect(params[10]).toBe(JSON.stringify({ result: 'success', success: true }));
     });
   });
 
@@ -267,7 +269,7 @@ describe('PgWorkRepository', () => {
       const selects = db.operations.filter((op) => op.sql.startsWith('SELECT'));
       expect(selects[0]?.sql).toBe(
         'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
-          'state, version, deliverable, evidence_refs AS "evidenceRefs", outcome ' +
+          'state, version, fencing_token AS "fencingToken", deliverable, evidence_refs AS "evidenceRefs", outcome ' +
           'FROM work WHERE company_id = $1 AND work_id = $2',
       );
       expect(selects[0]?.params).toEqual(['acme', 'work-1']);
@@ -326,7 +328,7 @@ describe('PgWorkRepository', () => {
       const actionable = selects.at(-1);
       expect(actionable?.sql).toBe(
         'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
-          'state, version, deliverable, evidence_refs AS "evidenceRefs", outcome ' +
+          'state, version, fencing_token AS "fencingToken", deliverable, evidence_refs AS "evidenceRefs", outcome ' +
           'FROM work WHERE company_id = $1 AND state = ANY($2) ORDER BY id ASC',
       );
       expect(actionable?.params).toEqual(['acme', ['accepted']]);
@@ -439,6 +441,142 @@ describe('PgWorkRepository', () => {
         expect(loser.current?.version).toBe(2);
       }
       expect((await repo.get('acme', 'work-1'))?.version).toBe(2);
+    });
+  });
+
+  describe('updateIfVersion — fencing directives (fencing-tokens change)', () => {
+    it('claim mints the next token server-side via query() with UPDATE … RETURNING fencing_token', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      const w = work('work-1');
+      await repo.save(w);
+      const next: Work = { ...w, state: 'in_progress' };
+
+      const result = (await repo.updateIfVersion(next, 1, { kind: 'claim' })) as Extract<
+        CasResult,
+        { ok: true }
+      >;
+
+      expect(result.ok).toBe(true);
+      // The minted token is read back from the RETURNING row.
+      expect(result.value.fencingToken).toBe(1);
+      expect(result.value.version).toBe(2);
+
+      // The claim used query() (rows returned), NOT execute() — and the SQL
+      // bumps fencing_token in the same statement, returning it.
+      const queries = db.operations.filter((op) => op.sql.includes('RETURNING'));
+      expect(queries).toHaveLength(1);
+      expect(queries[0]?.sql).toBe(
+        'UPDATE work SET description=$4, state=$5, deliverable=$6, evidence_refs=$7, outcome=$8, ' +
+          'version=version+1, fencing_token=fencing_token+1 ' +
+          'WHERE work_id=$1 AND company_id=$2 AND version=$3 ' +
+          'RETURNING fencing_token AS "fencingToken"',
+      );
+      const params = queries[0]?.params ?? [];
+      expect(params[0]).toBe('work-1');
+      expect(params[1]).toBe('acme');
+      expect(params[2]).toBe(1);
+      expect(params[4]).toBe('in_progress');
+
+      // The stored work carries the minted token.
+      const stored = await repo.get('acme', 'work-1');
+      expect(stored?.fencingToken).toBe(1);
+      expect(stored?.version).toBe(2);
+    });
+
+    it('claim on a stale version yields version-conflict (never mints, never overwrites)', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      const w = work('work-1');
+      await repo.save(w);
+
+      const result = (await repo.updateIfVersion(
+        { ...w, state: 'in_progress' },
+        0, // stale version
+        { kind: 'claim' },
+      )) as Extract<CasResult, { ok: false }>;
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('version-conflict');
+      const stored = await repo.get('acme', 'work-1');
+      expect(stored?.fencingToken).toBe(0);
+      expect(stored?.version).toBe(1);
+    });
+
+    it('terminal directive pins AND fencing_token=$X in the WHERE clause (claim-owned close)', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      const w = work('work-1');
+      await repo.save(w);
+      // Claim first: stored token becomes 1.
+      const claimed = (await repo.updateIfVersion({ ...w, state: 'in_progress' }, 1, {
+        kind: 'claim',
+      })) as Extract<CasResult, { ok: true }>;
+      expect(claimed.value.fencingToken).toBe(1);
+
+      await repo.updateIfVersion({ ...claimed.value, state: 'completed' }, claimed.value.version, {
+        kind: 'terminal',
+        expectedFencingToken: 1,
+      });
+
+      const updates = db.operations.filter((op) => op.sql.startsWith('UPDATE'));
+      const terminal = updates.at(-1);
+      expect(terminal?.sql).toBe(
+        'UPDATE work SET description=$4, state=$5, deliverable=$6, evidence_refs=$7, outcome=$8, ' +
+          'version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3 AND fencing_token=$9',
+      );
+      const params = terminal?.params ?? [];
+      expect(params[8]).toBe(1); // $9 = expectedFencingToken in the WHERE clause
+    });
+
+    it('terminal directive with a STALE token yields fencing-conflict and leaves the stored work unchanged', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      const w = work('work-1');
+      await repo.save(w);
+      const claimed = (await repo.updateIfVersion({ ...w, state: 'in_progress' }, 1, {
+        kind: 'claim',
+      })) as Extract<CasResult, { ok: true }>;
+      expect(claimed.value.fencingToken).toBe(1);
+
+      const result = (await repo.updateIfVersion(
+        { ...claimed.value, state: 'completed' },
+        claimed.value.version,
+        { kind: 'terminal', expectedFencingToken: 0 }, // stale
+      )) as Extract<CasResult, { ok: false }>;
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('fencing-conflict');
+      expect(result.current?.fencingToken).toBe(1);
+      const stored = await repo.get('acme', 'work-1');
+      expect(stored?.state).toBe('in_progress');
+      expect(stored?.fencingToken).toBe(1);
+    });
+
+    it('claim FAILS LOUDLY when the connection returns a non-numeric minted token (R4-001 boundary guard)', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      const w = work('work-1');
+      await repo.save(w);
+      // Sabotage the RETURNING projection: emit the minted BIGINT as a string
+      // (as a node-postgres pool WITHOUT the int8→number parser would). The
+      // claim statement is short-circuited at the connection layer — nothing
+      // reaches the store (no mint, no state change).
+      const originalQuery = db.query.bind(db) as typeof db.query;
+      db.query = async <T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> => {
+        if (sql.includes('RETURNING')) {
+          return [{ fencingToken: '1' }] as unknown as readonly T[];
+        }
+        return originalQuery(sql, params);
+      };
+
+      await expect(
+        repo.updateIfVersion({ ...w, state: 'in_progress' }, 1, { kind: 'claim' }),
+      ).rejects.toThrow(/fencing_token/i);
+      // The stored work is untouched: no mint, no state change.
+      const stored = await repo.get('acme', 'work-1');
+      expect(stored?.state).toBe('proposed');
+      expect(stored?.fencingToken).toBe(0);
     });
   });
 });

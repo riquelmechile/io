@@ -35,6 +35,7 @@ function storedWork(): Work {
     description: 'execute the close',
     state: 'completed',
     version: 3,
+    fencingToken: 0,
     evidenceRefs: ['evid-1'],
   };
 }

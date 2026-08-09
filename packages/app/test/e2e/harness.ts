@@ -142,6 +142,9 @@ const MIGRATIONS = [
   '005_journal_retryable_status.sql',
   '006_business_events.sql',
   '007_skills.sql',
+  '008_heartbeat_cursor.sql',
+  '009_work_company_state_index.sql',
+  '010_fencing_tokens.sql',
 ];
 
 /** Boot the harness: probe PG, recreate the scratch DB, migrate, wire the stack. */
@@ -255,6 +258,7 @@ export async function seedAcceptedWork(
     description: 'execute the low-risk quarterly close document create',
     state: 'accepted',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: [],
   };
   await harness.company.save(company);

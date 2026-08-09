@@ -51,26 +51,30 @@ export class InMemoryDbConnection implements DbConnection {
     }
     const update = parseUpdate(sql);
     if (update) {
-      const rows = this.table(update.table);
-      const matched = rows.filter((row) =>
-        update.where.every((condition) => row[condition.column] === params[condition.param - 1]),
-      );
-      for (const row of matched) {
-        for (const set of update.sets) {
-          if (set.increment) {
-            row[set.column] = Number(row[set.column]) + 1;
-          } else {
-            row[set.column] = reviveValue(params[set.param - 1]);
-          }
-        }
-      }
-      return { rowCount: matched.length };
+      return { rowCount: applyUpdate(this, update, params).rowCount };
     }
     return undefined;
   }
 
   async query<T>(sql: string, params: readonly unknown[]): Promise<readonly T[]> {
     this._operations.push({ sql, params });
+    // UPDATE … RETURNING (fencing claim mint): an UPDATE that returns rows, so
+    // query() — not execute() — is the honest port call. Parse the RETURNING
+    // list, apply the update, and project the RETURNING columns of the matched
+    // rows (exactly like PostgreSQL). 0 matched rows ⇒ [].
+    const returning = parseUpdateReturning(sql);
+    if (returning) {
+      const update = parseUpdate(returning.updateSql);
+      if (!update) return [];
+      const { rows } = applyUpdate(this, update, params);
+      return rows.map((row) => {
+        const out: Record<string, unknown> = {};
+        returning.items.forEach((item) => {
+          out[item.alias] = row[item.column];
+        });
+        return out as T;
+      });
+    }
     const select = parseSelect(sql);
     if (!select) return [];
 
@@ -146,6 +150,11 @@ export class InMemoryDbConnection implements DbConnection {
     return rows;
   }
 
+  /** Public read of a table's rows (module-level helpers apply UPDATEs). */
+  tableRows(name: string): Row[] {
+    return this.table(name);
+  }
+
   private nextId(table: string): number {
     const next = (this.idCounters.get(table) ?? 0) + 1;
     this.idCounters.set(table, next);
@@ -160,6 +169,55 @@ export interface DbOperation {
 }
 
 type Row = Record<string, unknown>;
+
+/** A parsed `UPDATE … RETURNING col AS "alias", …` (fencing claim mint). */
+interface ParsedUpdateReturning {
+  /** The UPDATE statement WITHOUT the RETURNING clause (parseUpdate-parseable). */
+  readonly updateSql: string;
+  /** The RETURNING projection: DB column → output alias. */
+  readonly items: readonly { readonly column: string; readonly alias: string }[];
+}
+
+/** Apply a parsed UPDATE to the fake's table; returns the matched (mutated) rows. */
+function applyUpdate(
+  db: InMemoryDbConnection,
+  update: ParsedUpdate,
+  params: readonly unknown[],
+): { rows: readonly Row[]; rowCount: number } {
+  const rows = db.tableRows(update.table);
+  const matched = rows.filter((row) =>
+    update.where.every((condition) => row[condition.column] === params[condition.param - 1]),
+  );
+  for (const row of matched) {
+    for (const set of update.sets) {
+      if (set.increment) {
+        row[set.column] = Number(row[set.column]) + 1;
+      } else {
+        row[set.column] = reviveValue(params[set.param - 1]);
+      }
+    }
+  }
+  return { rows: matched, rowCount: matched.length };
+}
+
+/** Parse `UPDATE … RETURNING <list>` into the UPDATE SQL + RETURNING items. */
+function parseUpdateReturning(sql: string): ParsedUpdateReturning | undefined {
+  const match = /^(UPDATE\s+.*?)\s+RETURNING\s+(.+)$/is.exec(sql);
+  const updateSql = match?.[1];
+  const list = match?.[2];
+  if (!updateSql || !list) return undefined;
+  const items = list.split(',').map((part) => {
+    const aliased = /^\s*(\w+)\s+AS\s+"([^"]+)"\s*$/i.exec(part);
+    if (aliased) {
+      const column = aliased[1];
+      const alias = aliased[2];
+      if (column && alias) return { column, alias };
+    }
+    const column = part.trim();
+    return { column, alias: column };
+  });
+  return { updateSql, items };
+}
 
 interface ParsedInsert {
   readonly table: string;

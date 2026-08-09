@@ -12,6 +12,7 @@ const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
 const SCHEMA_007 = join(pkgRoot, 'sql', '007_skills.sql');
 const SCHEMA_008 = join(pkgRoot, 'sql', '008_heartbeat_cursor.sql');
 const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
+const SCHEMA_010 = join(pkgRoot, 'sql', '010_fencing_tokens.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -304,6 +305,43 @@ describe('sql/009_work_company_state_index.sql (company-scoped actionable read �
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
     expect(statements.length).toBeGreaterThanOrEqual(1);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
+  });
+});
+
+describe('sql/010_fencing_tokens.sql (zombie-writer protection — fencing tokens)', () => {
+  function read010(): string {
+    return existsSync(SCHEMA_010) ? readFileSync(SCHEMA_010, 'utf8') : '';
+  }
+
+  it('ships sql/010_fencing_tokens.sql', () => {
+    expect(existsSync(SCHEMA_010)).toBe(true);
+  });
+
+  it('adds fencing_token to work: BIGINT NOT NULL DEFAULT 0 with IF NOT EXISTS', () => {
+    expect(read010()).toMatch(
+      /ALTER\s+TABLE\s+work\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+fencing_token\s+BIGINT\s+NOT\s+NULL\s+DEFAULT\s+0/i,
+    );
+  });
+
+  it('adds fencing_token to idempotency_journal: BIGINT NOT NULL DEFAULT 0 with IF NOT EXISTS', () => {
+    expect(read010()).toMatch(
+      /ALTER\s+TABLE\s+idempotency_journal\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+fencing_token\s+BIGINT\s+NOT\s+NULL\s+DEFAULT\s+0/i,
+    );
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read010()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(2);
     for (const statement of statements) {
       expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
     }
