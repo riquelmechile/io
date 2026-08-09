@@ -29,6 +29,7 @@ const work: Work = {
   description: 'execute the quarterly close',
   state: 'accepted',
   version: 1,
+  fencingToken: 0,
   evidenceRefs: [],
 };
 
@@ -90,6 +91,7 @@ describe('stable-prefix byte stability (R2 + R6)', () => {
         description: 'a completely different task with unique markers',
         state: 'in_progress',
         version: 3,
+        fencingToken: 0,
         evidenceRefs: ['ev-99'],
       },
     };

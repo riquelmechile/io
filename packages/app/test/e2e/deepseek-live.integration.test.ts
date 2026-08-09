@@ -189,6 +189,7 @@ describe.skipIf(!process.env.DEEPSEEK_API_KEY || process.env.IO_LIVE_LLM !== '1'
             description: 'live retry-scoped quarterly close document',
             state: 'accepted',
             version: 1,
+            fencingToken: 0,
             evidenceRefs: [],
           });
 

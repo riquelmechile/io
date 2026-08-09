@@ -415,7 +415,7 @@ describe('InMemoryWorkRepository CAS (updateIfVersion, ADR-0002/D4)', () => {
     const terminal = await repo.updateIfVersion(
       { ...claimed.value, state: 'completed' },
       claimed.value.version,
-      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken ?? 0 },
+      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken },
     );
 
     expect(terminal.ok).toBe(true);
@@ -457,7 +457,7 @@ describe('InMemoryWorkRepository CAS (updateIfVersion, ADR-0002/D4)', () => {
     const result = (await repo.updateIfVersion(
       { ...claimed.value, state: 'completed' },
       1, // stale version
-      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken ?? 0 },
+      { kind: 'terminal', expectedFencingToken: claimed.value.fencingToken },
     )) as Extract<CasResult, { ok: false }>;
 
     expect(result.ok).toBe(false);

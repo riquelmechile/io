@@ -5,9 +5,11 @@ import type { WorkerResult } from '../src/worker/types.js';
 import { harness, seed, workerInput } from './worker-helpers.js';
 
 /**
- * B1 — Worker scaffold + CAS claim (WC single-winner): the cycle claims Work
- * through the CAS `startWork` use case at the current `expectedVersion`.
- * Among concurrent claimants exactly ONE wins; every loser gets an explicit
+ * B1 — Worker scaffold + CAS claim (WC single-winner + fencing): the cycle
+ * claims Work through the CAS `startWork` use case at the current
+ * `expectedVersion`. Among concurrent claimants exactly ONE wins — and (fencing
+ * change) that winner mints the NEXT server-side fencing token atomically in
+ * the same CAS (epoch 0 → 1); every loser gets an explicit
  * `{ ok: false, reason: 'version-conflict' }` and MUST NOT proceed to an
  * effect. A claim never fails silently.
  */
@@ -32,6 +34,38 @@ describe('worker claim (WC single-winner)', () => {
     const stored = await h.work.get('acme', 'work-1');
     expect(stored?.state).toBe('in_progress');
     expect(stored?.version).toBe(2);
+  });
+
+  it('the WINNER mints and returns the next server-side fencing token (0 → 1) (fencing: claim mint at CAS)', async () => {
+    const h = harness();
+    await seed(h);
+
+    const result = await runWorker(workerInput(), h, 'flash');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || 'replayed' in result) return;
+    // The claim CAS minted the token and the cycle captured it on the Work.
+    expect(result.work.fencingToken).toBe(1);
+    expect(result.work.version).toBe(2);
+    const stored = await h.work.get('acme', 'work-1');
+    expect(stored?.fencingToken).toBe(1);
+  });
+
+  it('the LOSER never mints: version-conflict with no token bump on the stored work (fencing: single winner)', async () => {
+    const h = harness();
+    await seed(h);
+
+    const results = await Promise.all([
+      runWorker(workerInput(), h, 'flash'),
+      runWorker(workerInput(), h, 'flash'),
+    ]);
+
+    const losers = results.filter((r) => !r.ok);
+    expect(losers).toHaveLength(1);
+    // The stored token advanced exactly once (the winner's mint): 0 → 1. The
+    // loser's failed claim did NOT mint a second token.
+    const stored = await h.work.get('acme', 'work-1');
+    expect(stored?.fencingToken).toBe(1);
   });
 
   it('the losing claimant stops: no effect, no receipt, no journal write from the loser', async () => {

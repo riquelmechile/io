@@ -122,7 +122,7 @@ export class InMemoryWorkRepository implements WorkRepository {
     // NEXT server-side token atomically within the same CAS (epoch 0 → 1).
     const updated: Work =
       fencing?.kind === 'claim'
-        ? { ...work, version: expectedVersion + 1, fencingToken: (current.fencingToken ?? 0) + 1 }
+        ? { ...work, version: expectedVersion + 1, fencingToken: current.fencingToken + 1 }
         : { ...work, version: expectedVersion + 1 };
     this.entries.set(work.workId, updated);
     return { ok: true, value: updated };

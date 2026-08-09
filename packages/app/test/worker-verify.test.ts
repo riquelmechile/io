@@ -138,6 +138,9 @@ function reconcileInput(
     idempotencyKey: KEY,
     requestHash: HASH,
     attemptId: ATTEMPT,
+    // The shared post-effect reconcile carries the claim token (the claim at
+    // line 118 is version-only here, so the epoch token 0 is the honest value).
+    fencingToken: 0,
     effect,
     ...overrides,
   };

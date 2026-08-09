@@ -206,6 +206,7 @@ export async function runWorker(
         idempotencyKey,
         requestHash,
         attemptId: intent.attemptId,
+        fencingToken: work.fencingToken,
         effect,
       },
     );
@@ -235,6 +236,11 @@ export async function runWorker(
         idempotencyKey,
         requestHash,
         attemptId: intent.attemptId,
+        // The claim-scoped fencing token (fencing-tokens change): minted at
+        // the winning claim CAS (0 → N+1) and retained on resume without a
+        // fresh claim. The T1 terminal CAS requires it — a stale token rolls
+        // the close back (zombie-writer protection).
+        fencingToken: work.fencingToken,
         effect,
       },
     );

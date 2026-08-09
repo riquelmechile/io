@@ -10,6 +10,7 @@ import type { CompleteWorkCommand } from '@io/business-domain/src/use-cases/inde
 import { completeWork, IdempotentFlowAbortError } from '@io/business-domain/src/use-cases/index.js';
 import type { DbConnection } from '@io/database/src/connection.js';
 import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
+import { PgWorkRepository } from '@io/database/src/work-adapter.js';
 import { describe, expect, it } from 'vitest';
 
 import { decidePreEffect } from '../src/worker/reconcile.js';
@@ -101,6 +102,7 @@ function acceptedWork(): Work {
     description: 'execute the quarterly close',
     state: 'accepted',
     version: 1,
+    fencingToken: 0,
     evidenceRefs: [],
   };
 }
@@ -290,5 +292,130 @@ describe('B11 parity 2 — CAS-loss → markRetryable → retry-wins ≡ foundat
     // ---- EQUIVALENCE: both worlds end with a SUCCESSFUL same-key retry.
     expect(foundationRetry.ok).toBe(true);
     expect(retry.ok).toBe(true);
+  });
+});
+
+describe('B11 parity 3 — fencing CAS: InMemory fake ≡ PgWorkRepository (claim mint / stale-close / matching-close)', () => {
+  /** The claimable accepted Work at version 1, token 0 — identical in both worlds. */
+  async function seedBoth(): Promise<{ fake: InMemoryWorkRepository; pg: PgWorkRepository }> {
+    const fake = new InMemoryWorkRepository();
+    const pg = new PgWorkRepository(new InMemoryDbConnection());
+    for (const repo of [fake, pg]) {
+      await repo.save(acceptedWork());
+    }
+    return { fake, pg };
+  }
+
+  it('claim: BOTH mint the NEXT token 0 → 1, bump version 1 → 2, store the same state', async () => {
+    const { fake, pg } = await seedBoth();
+
+    const fakeClaim = (await fake.updateIfVersion(
+      { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    )) as Extract<CasResult, { ok: true }>;
+    const pgClaim = (await pg.updateIfVersion(
+      { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    )) as Extract<CasResult, { ok: true }>;
+
+    // OUTCOMES match: both ok, same minted token, same version bump.
+    expect(fakeClaim.ok).toBe(true);
+    expect(pgClaim.ok).toBe(true);
+    expect(pgClaim.value.fencingToken).toBe(fakeClaim.value.fencingToken);
+    expect(pgClaim.value.version).toBe(fakeClaim.value.version);
+    expect(pgClaim.value.state).toBe(fakeClaim.value.state);
+
+    // STORED STATES match (token + version + state).
+    const fakeStored = await fake.get(COMPANY, WORK_ID);
+    const pgStored = await pg.get(COMPANY, WORK_ID);
+    expect(pgStored?.fencingToken).toBe(fakeStored?.fencingToken);
+    expect(pgStored?.version).toBe(fakeStored?.version);
+    expect(pgStored?.state).toBe(fakeStored?.state);
+    expect(fakeStored?.fencingToken).toBe(1);
+    expect(fakeStored?.version).toBe(2);
+  });
+
+  it('stale-token terminal close: BOTH return fencing-conflict and leave the stored work unchanged (same token/version/state)', async () => {
+    const { fake, pg } = await seedBoth();
+    // Claim in both worlds: token 1, version 2, in_progress.
+    const fakeClaim = await fake.updateIfVersion(
+      { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    );
+    const pgClaim = await pg.updateIfVersion(
+      { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    );
+    if (!fakeClaim.ok || !pgClaim.ok) throw new Error('test setup: claim failed');
+
+    // A stale holder (token 0) tries the terminal close in BOTH worlds.
+    const fakeTerminal = (await fake.updateIfVersion(
+      { ...fakeClaim.value, state: 'completed' },
+      fakeClaim.value.version,
+      { kind: 'terminal', expectedFencingToken: 0 },
+    )) as Extract<CasResult, { ok: false }>;
+    const pgTerminal = (await pg.updateIfVersion(
+      { ...pgClaim.value, state: 'completed' },
+      pgClaim.value.version,
+      { kind: 'terminal', expectedFencingToken: 0 },
+    )) as Extract<CasResult, { ok: false }>;
+
+    // OUTCOMES match: typed fencing-conflict with the same current token.
+    expect(fakeTerminal.ok).toBe(false);
+    expect(pgTerminal.ok).toBe(false);
+    expect(pgTerminal.reason).toBe(fakeTerminal.reason);
+    expect(fakeTerminal.reason).toBe('fencing-conflict');
+    expect(pgTerminal.current?.fencingToken).toBe(fakeTerminal.current?.fencingToken);
+
+    // STORED STATES match and are UNCHANGED (token 1, version 2, in_progress).
+    const fakeStored = await fake.get(COMPANY, WORK_ID);
+    const pgStored = await pg.get(COMPANY, WORK_ID);
+    expect(pgStored?.fencingToken).toBe(fakeStored?.fencingToken);
+    expect(pgStored?.version).toBe(fakeStored?.version);
+    expect(pgStored?.state).toBe(fakeStored?.state);
+    expect(fakeStored?.state).toBe('in_progress');
+    expect(fakeStored?.fencingToken).toBe(1);
+    expect(fakeStored?.version).toBe(2);
+  });
+
+  it('matching-token terminal close: BOTH complete the work, retain the claim token, bump version once', async () => {
+    const { fake, pg } = await seedBoth();
+    const fakeClaim = await fake.updateIfVersion(
+      { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    );
+    const pgClaim = await pg.updateIfVersion(
+      { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+      1,
+      { kind: 'claim' },
+    );
+    if (!fakeClaim.ok || !pgClaim.ok) throw new Error('test setup: claim failed');
+
+    const fakeTerminal = await fake.updateIfVersion(
+      { ...fakeClaim.value, state: 'completed' },
+      fakeClaim.value.version,
+      { kind: 'terminal', expectedFencingToken: fakeClaim.value.fencingToken },
+    );
+    const pgTerminal = await pg.updateIfVersion(
+      { ...pgClaim.value, state: 'completed' },
+      pgClaim.value.version,
+      { kind: 'terminal', expectedFencingToken: pgClaim.value.fencingToken },
+    );
+
+    expect(fakeTerminal.ok).toBe(true);
+    expect(pgTerminal.ok).toBe(true);
+    if (fakeTerminal.ok && pgTerminal.ok) {
+      // Same outcome: completed, retained token, version N+1.
+      expect(pgTerminal.value.state).toBe(fakeTerminal.value.state);
+      expect(pgTerminal.value.fencingToken).toBe(fakeTerminal.value.fencingToken);
+      expect(pgTerminal.value.version).toBe(fakeTerminal.value.version);
+      expect(fakeTerminal.value.state).toBe('completed');
+      expect(fakeTerminal.value.fencingToken).toBe(1);
+    }
   });
 });

@@ -28,6 +28,7 @@ const work: Work = {
   description: 'execute the quarterly close',
   state: 'accepted',
   version: 1,
+  fencingToken: 0,
   evidenceRefs: [],
 };
 

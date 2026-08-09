@@ -77,7 +77,7 @@ export interface Work {
    * pre-fencing epoch (legacy rows / unclaimed work). A fresh claim increments
    * it by one inside the same CAS; resume retains the stored token.
    */
-  readonly fencingToken?: number;
+  readonly fencingToken: number;
   readonly deliverable?: Deliverable;
   readonly evidenceRefs: readonly string[];
   readonly outcome?: WorkOutcome;

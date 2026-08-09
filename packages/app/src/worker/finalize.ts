@@ -109,6 +109,15 @@ export interface FinalizeInput {
   readonly idempotencyKey: string;
   readonly requestHash: string;
   readonly attemptId: string;
+  /**
+   * The claim-scoped fencing token (fencing-tokens change): the token the
+   * worker captured at claim (minted by the startWork CAS). The T1 terminal
+   * CAS supplies it as a `terminal` FencingDirective — the close lands ONLY
+   * when the caller still owns the Work (matching version AND claim token). A
+   * stale token (zombie writer) loses the CAS and T1 rolls back every terminal
+   * mutation atomically.
+   */
+  readonly fencingToken: number;
   /** The applied effect + undo handle (undo log = applied SoT, §9.8). */
   readonly effect: EffectRecord;
   /** Optional receipt policy/artifact identities; default to the worker
@@ -262,10 +271,18 @@ export async function finalizeInFlightWorkAtomically(
         // closes the attempt honestly (no undo, no marker).
         throw new FinalizeCasLostError();
       }
-      const cas = await work.updateIfVersion({ ...current, state: 'completed' }, current.version);
+      // Token-checked terminal CAS (fencing-tokens change): the close lands
+      // ONLY when the caller still owns the Work — matching version AND the
+      // claim token. A stale token (zombie writer) yields fencing-conflict and
+      // rolls back every terminal mutation (work, receipt, event, journal).
+      const cas = await work.updateIfVersion({ ...current, state: 'completed' }, current.version, {
+        kind: 'terminal',
+        expectedFencingToken: input.fencingToken,
+      });
       if (!cas.ok) {
-        // A concurrent writer won after our read: STOP before the receipt and
-        // roll back. The pre-committed in_flight row (different tx) survives.
+        // A concurrent writer won after our read (version) OR the caller no
+        // longer owns the claim (fencing): STOP before the receipt and roll
+        // back. The pre-committed in_flight row (different tx) survives.
         throw new FinalizeCasLostError();
       }
       const completed = cas.value;

@@ -31,7 +31,7 @@ const PROTECTED_SOURCES: Record<string, string> = {
   'supervisor/supervisor.ts': '5e7fa7cd205ce02daed6e5efe1d4ec176e02e7075a7f856621ccdff52be123da',
   'supervisor/tick.ts': 'aa5ddab3b052933185c37e284045483ea8df2446c6bbc890969bec7478861f25',
   'supervisor/types.ts': '0e6a67b80a111e04e6f91d5e3e318b573a05ef60aba06b5f482690d8b75e2948',
-  'worker/worker.ts': '948e7c21f3deabe9c10d1461933978b95d034d31b4210ae94795358cbdf30e62',
+  'worker/worker.ts': '63d3e13f177d6f3c3cfd72e68e045090576efe8b45f82176d70b87dc1f70dc6f',
   'heartbeat/cycle.ts': '9808756b51a37907bfc0b070fbf364c15f028e0ff3e0777abf94af1c90a50e75',
   'heartbeat/evaluate.ts': '56984e32f758e1a17b02937b20658cb91452a016d33331f5b907d806540efbe0',
   'dispatch/dispatch.ts': 'b8a0de4642799fa3061432f4bbc49b7d3ac54472cb859e2e28833263de321cd5',
@@ -122,19 +122,32 @@ describe('PR2 model-threading identity (WD Wiring S2; ST Seam S2)', () => {
     }
   });
 
-  it('runWorker differs ONLY by the model parameter: stripping the model threading restores the PR1 baseline bytes (ST Seam S2)', () => {
+  it('runWorker differs ONLY by the model parameter AND the claim-token threading: stripping both restores the PR1 baseline bytes (ST Seam S2 + fencing)', () => {
     const current = readFileSync(resolve(SRC_ROOT, 'worker/worker.ts'), 'utf8');
-    // Normalize away the model-tier threading: the required 3rd arg (biome
-    // wraps the long signature), its type-only import, and the `model` field
-    // fed to prepareIntent. The result must be byte-identical to the PR1
-    // single-line signature baseline.
+    // Normalize away (1) the model-tier threading (the required 3rd arg —
+    // biome wraps the long signature — its type-only import, and the `model`
+    // field fed to prepareIntent) and (2) the fencing-token threading (the
+    // claim-scoped token threaded into the terminal close + the verify-fail
+    // reconcile, with its explanatory comment). The result must be
+    // byte-identical to the PR1 single-line-signature baseline.
     const normalized = current
       .replace("import type { ModelTier } from '@io/business-domain/src/index.js';\n", '')
       .replace(
         'export async function runWorker(\n  input: unknown,\n  deps: WorkerDeps,\n  model: ModelTier,\n): Promise<WorkerResult> {',
         'export async function runWorker(input: unknown, deps: WorkerDeps): Promise<WorkerResult> {',
       )
-      .replace(/\n {4}model,\n/, '\n');
+      .replace(/\n {4}model,\n/, '\n')
+      // Fencing threading (fencing-tokens change): the claim token threaded
+      // into the terminal close and the verify-fail reconcile.
+      .replace(
+        '\n        // The claim-scoped fencing token (fencing-tokens change): minted at\n' +
+          '        // the winning claim CAS (0 → N+1) and retained on resume without a\n' +
+          '        // fresh claim. The T1 terminal CAS requires it — a stale token rolls\n' +
+          '        // the close back (zombie-writer protection).\n' +
+          '        fencingToken: work.fencingToken,\n',
+        '\n',
+      )
+      .replace('\n        fencingToken: work.fencingToken,', '');
     expect(sha256Of(normalized)).toBe(PR1_WORKER_BASELINE);
   });
 

@@ -107,13 +107,17 @@ class RacingWorkRepository implements WorkRepository {
   }
 }
 
-/** Claimed (in_progress) work + committed in_flight journal row + applied effect. */
+/** Claimed (in_progress) work + committed in_flight journal row + applied effect.
+ * The claim mints the fencing token (0 → 1) exactly like the worker's claim. */
 async function closeReady(h: WorkerHarness): Promise<{ effect: EffectRecord }> {
   await seed(h);
   const current = await h.work.get(COMPANY, WORK_ID);
   if (current === undefined) throw new Error('test setup: work not seeded');
-  const claimed = await h.work.updateIfVersion({ ...current, state: 'in_progress' }, 1);
+  const claimed = await h.work.updateIfVersion({ ...current, state: 'in_progress' }, 1, {
+    kind: 'claim',
+  });
   if (!claimed.ok) throw new Error('test setup: claim failed');
+  expect(claimed.ok && claimed.value.fencingToken).toBe(1);
   await h.journal.insertInFlight({
     companyId: COMPANY,
     idempotencyKey: KEY,
@@ -159,6 +163,9 @@ function finalizeInput(
     idempotencyKey: KEY,
     requestHash: HASH,
     attemptId: ATTEMPT,
+    // The claim minted token 1 (closeReady uses the claim directive); the
+    // claim-owned terminal close must present the retained token.
+    fencingToken: 1,
     effect,
     ...overrides,
   };
@@ -274,7 +281,6 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(first.events.appends[0]?.payload).not.toHaveProperty('content');
     expect(first.events.appends[0]?.payload).not.toHaveProperty('relativePath');
   });
-
   it('T1 CAS-loss: stops BEFORE receipts.save → T1 ROLLS BACK; the pre-committed in_flight row survives; marker is NOT a failure-complete', async () => {
     const h = harness();
     const { effect } = await closeReady(h);
@@ -330,6 +336,63 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
     expect(h.sandbox.undos).toHaveLength(1);
     expect(await h.sandbox.wasApplied(effect.undo.handleId)).toBe(false);
+  });
+
+  it('STALE-token close: a holder with the WRONG token cannot close — T1 rolls back Work+journal+receipt+event atomically (fencing "Stale-token close rolls back atomically")', async () => {
+    const h = harness();
+    const { effect } = await closeReady(h); // claim minted token 1, work in_progress
+    const conn = new TxTrackingConnection(new InMemoryDbConnection());
+
+    // The holder presents token 0 — NOT the minted claim token 1. The T1 CAS
+    // (token-checked terminal directive) must NOT land.
+    const result = await finalizeInFlightWorkAtomically(
+      finalizeDeps(h, conn),
+      finalizeInput(effect, { fencingToken: 0 }),
+    );
+
+    // T1 aborted (fencing-conflict → FinalizeCasLostError → rollback), then T2
+    // reconciles honestly: the work is still in_progress + effect applied →
+    // undo + retryable marker (never a failure-complete).
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('cas-lost-retryable');
+    // Every terminal mutation rolled back atomically: no receipt, no event,
+    // no journal.complete, no work terminal state.
+    expect(h.receipts.saves).toHaveLength(0);
+    expect(h.events.appends).toHaveLength(0);
+    expect(conn.commits).toBe(0);
+    expect(conn.rollbacks).toBe(1);
+    expect(h.journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
+    const stored = await h.work.get(COMPANY, WORK_ID);
+    expect(stored?.state).toBe('in_progress');
+    expect(stored?.fencingToken).toBe(1);
+    expect(stored?.version).toBe(2);
+    // T2(i) honest reconciliation: effect undone + marker set (own committed write).
+    expect(h.sandbox.undos).toHaveLength(1);
+    expect(await h.sandbox.wasApplied(effect.undo.handleId)).toBe(false);
+    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
+  });
+
+  it('matching-token close succeeds: the claim owner presents the minted token 1 and the terminal CAS lands (fencing happy path)', async () => {
+    const h = harness();
+    const { effect } = await closeReady(h);
+    const conn = new TxTrackingConnection(new InMemoryDbConnection());
+
+    const result = await finalizeInFlightWorkAtomically(
+      finalizeDeps(h, conn),
+      finalizeInput(effect, { fencingToken: 1 }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || 'replayed' in result) return;
+    expect(result.work.state).toBe('completed');
+    expect(h.receipts.saves).toHaveLength(1);
+    expect(conn.commits).toBe(1);
+    expect(conn.rollbacks).toBe(0);
+    const stored = await h.work.get(COMPANY, WORK_ID);
+    expect(stored?.state).toBe('completed');
+    // The terminal close retains the claim token (no re-mint).
+    expect(stored?.fencingToken).toBe(1);
   });
 
   it('T2(ii): work already terminal + effect applied → NO undo, NO marker, journal.complete(UNRESOLVED) → UNRESOLVED_REQUIRES_HUMAN', async () => {

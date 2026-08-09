@@ -99,6 +99,13 @@ export async function recoverInFlightWork(
   const lastApplied = appliedEntries[appliedEntries.length - 1];
   const effect: EffectRecord = lastApplied !== undefined ? lastApplied : noAppliedEffect();
 
+  // The claim-scoped fencing token (fencing-tokens change): retained on the
+  // Work row — recovery resumes WITHOUT a fresh claim, so it presents the
+  // stored token (never re-mints). Read here so the shared reconcile's
+  // FinalizeInput contract is satisfied with the honest retained token.
+  const retained = await deps.work.get(input.companyId, input.workId);
+  const fencingToken = retained?.fencingToken ?? 0;
+
   return reconcilePostEffectFailure(
     { work: deps.work, journal: deps.journal, sandbox: deps.sandbox },
     {
@@ -107,6 +114,7 @@ export async function recoverInFlightWork(
       idempotencyKey: input.idempotencyKey,
       requestHash: input.requestHash,
       attemptId: input.attemptId,
+      fencingToken,
       effect,
     },
   );
