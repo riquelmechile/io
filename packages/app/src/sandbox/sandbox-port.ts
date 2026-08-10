@@ -42,4 +42,8 @@ export interface SandboxPort {
   undo(handle: UndoHandle): Promise<void>;
   /** Whether the effect for `handleId` is still applied (undo log = SoT). */
   wasApplied(handleId: string): Promise<boolean>;
+  /** Every currently-applied effect record (effect SoT — recovery evidence).
+   * Excludes undone entries; consulted during reconciliation to distinguish an
+   * applied effect from one that never ran. */
+  snapshotUndoLog(): readonly EffectRecord[];
 }

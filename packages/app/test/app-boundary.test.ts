@@ -103,6 +103,10 @@ class TraceSandbox implements SandboxPort {
     this.trace?.push('sandbox:verify:wasApplied');
     return this.inner.wasApplied(handleId);
   }
+
+  snapshotUndoLog(): readonly EffectRecord[] {
+    return this.inner.snapshotUndoLog();
+  }
 }
 
 function listTsFiles(dir: string): string[] {

@@ -148,6 +148,10 @@ export class RecordingSandbox implements SandboxPort {
   async wasApplied(handleId: string): Promise<boolean> {
     return this.inner.wasApplied(handleId);
   }
+
+  snapshotUndoLog(): readonly EffectRecord[] {
+    return this.inner.snapshotUndoLog();
+  }
 }
 
 /** Journal double that delegates to the in-memory journal and records a

@@ -77,6 +77,10 @@ class InTxAwareSandbox implements SandboxPort {
   async wasApplied(handleId: string): Promise<boolean> {
     return this.inner.wasApplied(handleId);
   }
+
+  snapshotUndoLog(): readonly EffectRecord[] {
+    return this.inner.snapshotUndoLog();
+  }
 }
 
 describe('effect outside the terminal transaction (WC effect-outside-tx)', () => {

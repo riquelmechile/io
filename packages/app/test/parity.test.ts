@@ -16,8 +16,15 @@ import type { DbConnection } from '@io/database/src/connection.js';
 import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { PgWorkRepository } from '@io/database/src/work-adapter.js';
 import { PgIdempotencyJournalRepository } from '@io/database/src/idempotency-adapter.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { DurableSandboxFake } from '../src/sandbox/durable-sandbox-fake.js';
+import { FileDocumentSandbox } from '../src/sandbox/file-document-sandbox.js';
+import { InMemorySandbox } from '../src/sandbox/in-memory-sandbox.js';
+import type { EffectRecord, SandboxAction, SandboxPort } from '../src/sandbox/sandbox-port.js';
 import { decidePreEffect } from '../src/worker/reconcile.js';
 import { runWorker } from '../src/worker/worker.js';
 import { harness, principals, seed, workerInput } from './worker-helpers.js';
@@ -538,5 +545,125 @@ describe('B11 parity 4 — journal fencing: InMemory fake ≡ Pg adapter (store 
     expect(p?.attemptId).toBe(ATTEMPT);
     expect(f?.fencingToken).toBe(5); // N retained — never incremented
     expect(p?.fencingToken).toBe(5);
+  });
+});
+
+describe('B11 parity 5 — sandbox undo-log snapshot: FileDocumentSandbox ≡ DurableSandboxFake ≡ InMemorySandbox (applied/undone/no-effect)', () => {
+  const docA: SandboxAction = {
+    type: 'create-document',
+    relativePath: 'docs/a.md',
+    content: 'alpha',
+  };
+  const docB: SandboxAction = {
+    type: 'create-document',
+    relativePath: 'docs/b.md',
+    content: 'beta',
+  };
+
+  /** The undo-log SNAPSHOT shape — identical across the three implementations.
+   * `absolutePath` is intentionally excluded: FileDocumentSandbox resolves real
+   * tmp paths while the fakes use a virtual FS — the parity is on undo-log
+   * SNAPSHOT behavior, not the storage medium. */
+  function snapshotShape(records: readonly EffectRecord[]) {
+    return records.map((record) => ({
+      effectId: record.effectId,
+      action: record.action,
+      applied: record.applied,
+      undo: {
+        handleId: record.undo.handleId,
+        action: record.undo.action,
+        applied: record.undo.applied,
+      },
+    }));
+  }
+
+  /** Build the three subjects: the shipped adapter over a real tmp root, the
+   * JSON-durable fake, and the in-memory fake. Returns them with a cleanup. */
+  function newSubjects(): {
+    subjects: Array<{ name: string; sandbox: SandboxPort }>;
+    cleanup: () => void;
+  } {
+    const dirs: string[] = [];
+    const tmp = (prefix: string): string => {
+      const dir = mkdtempSync(join(tmpdir(), prefix));
+      dirs.push(dir);
+      return dir;
+    };
+    const subjects = [
+      {
+        name: 'FileDocumentSandbox (real fs + JSON undo log)',
+        sandbox: new FileDocumentSandbox(join(tmp('io-parity-sandbox-fs-'), 'root')),
+      },
+      {
+        name: 'DurableSandboxFake (virtual fs + JSON undo log)',
+        sandbox: new DurableSandboxFake(join(tmp('io-parity-sandbox-durable-'), 'state.json')),
+      },
+      { name: 'InMemorySandbox (virtual fs + in-memory undo log)', sandbox: new InMemorySandbox() },
+    ];
+    return {
+      subjects,
+      cleanup: () => {
+        for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  }
+
+  it('no-effect: ALL THREE snapshot an empty undo log', async () => {
+    const { subjects, cleanup } = newSubjects();
+    try {
+      for (const { name, sandbox } of subjects) {
+        expect(sandbox.snapshotUndoLog(), `${name} — fresh sandbox`).toEqual([]);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('applied: ALL THREE record one entry per executed effect with IDENTICAL snapshot shapes', async () => {
+    const { subjects, cleanup } = newSubjects();
+    try {
+      for (const { sandbox } of subjects) {
+        await sandbox.execute(docA);
+        await sandbox.execute(docB);
+      }
+      const shapes = subjects.map(({ name, sandbox }) => ({
+        name,
+        snapshot: snapshotShape(sandbox.snapshotUndoLog()),
+      }));
+      // Non-trivial: exactly two applied entries in every implementation.
+      for (const { name, snapshot } of shapes) {
+        expect(snapshot, `${name} — two applied entries`).toHaveLength(2);
+      }
+      const [fs, durable, inMem] = shapes;
+      expect(durable?.snapshot).toEqual(fs?.snapshot);
+      expect(inMem?.snapshot).toEqual(fs?.snapshot);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('undone: ALL THREE EXCLUDE the undone entry from the snapshot (applied-only)', async () => {
+    const { subjects, cleanup } = newSubjects();
+    try {
+      for (const { sandbox } of subjects) {
+        const a = await sandbox.execute(docA);
+        await sandbox.execute(docB);
+        await sandbox.undo(a.undo);
+      }
+      const shapes = subjects.map(({ name, sandbox }) => ({
+        name,
+        snapshot: snapshotShape(sandbox.snapshotUndoLog()),
+      }));
+      for (const { name, snapshot } of shapes) {
+        expect(snapshot, `${name} — only the applied entry remains`).toHaveLength(1);
+        expect(snapshot[0]?.action.relativePath, `${name} — the B entry`).toBe('docs/b.md');
+        expect(snapshot[0]?.undo.handleId, `${name} — handle id 2`).toBe('undo-2');
+      }
+      const [fs, durable, inMem] = shapes;
+      expect(durable?.snapshot).toEqual(fs?.snapshot);
+      expect(inMem?.snapshot).toEqual(fs?.snapshot);
+    } finally {
+      cleanup();
+    }
   });
 });
