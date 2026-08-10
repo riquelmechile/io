@@ -14,18 +14,43 @@
 
 | Rev | Fecha | `main` | Qué cambió en este doc | Por qué cambió |
 |-----|-------|--------|------------------------|----------------|
-| **6** (vigente) | 2026-08-08 | `929daef` | Paso 3 y Post-Paso 3 siguen **COMPLETOS** y se completan **3 slices post-work-dispatch** (daemon-lifecycle, heartbeat-decision-events, pro-escalation) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-work-dispatch. Conteo de tests **1071 → 1169**. Specs synced **23 → 24** (1 NEW: `daemon-lifecycle`; MODIFIED: `heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`). Hito acumulado: el runtime ya corre en producción (daemon zero-dep, schedule sin solapamiento, shutdown gracioso), la decisión del pre-gate se vuelve hecho de negocio auditable (eventos `heartbeat.decision`), y §13.2 completa su escalada Flash→Pro determinística por `riskClass`. El flake PG concurrente de Paso 3 queda resuelto de facto (`152768d`, paralelismo de archivos off). El snapshot de Rev 5 se conserva marcado como superado. | Los 3 primeros ítems del roadmap posterior a work-dispatch se completaron en limpio: ciclos SDD con verify **PASS** (7/7+12/12, 6/6+21/21, 7/7+19/19), live E2E DeepSeek/PG 3/3 en pro-escalation, archivados y pusheados. |
+| **7** (vigente) | 2026-08-08 | `ea1dc59` | Se completa **fencing-tokens** (1er ítem post-work-dispatch): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS. Se agrega trazabilidad por slice. Conteo de tests **1243 → 1243** (post-archive). Specs synced **24 → 24** (3 MODIFIED: `work-lifecycle`, `worker-cycle`, `idempotency-journal`). Hito: el journal idempotency queda cercado — `markRetryable` con claim-ownership gate, `complete` con status guard, y el flake pre-existente de race de PG corregido (no-target ON CONFLICT). El snapshot de Rev 6 se conserva marcado como superado. | El ciclo SDD fencing-tokens se completó en limpio: 5 commits stacked-to-main (b83b5ec→ea1dc59), verify PASS 7/7 reqs / 36/36 escenarios, live-PG e2e 50/50 sequential, race hammer 25/25 (0 throws). Review adversarial cazó y refutó R4-001 (BIGINT string false positive) con read-only refuter; defense-in-depth guard añadido al borde RETURNING. |
+| **6** (superada) | 2026-08-08 | `929daef` | Paso 3 y Post-Paso 3 siguen **COMPLETOS** y se completan **3 slices post-work-dispatch** (daemon-lifecycle, heartbeat-decision-events, pro-escalation) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-work-dispatch. Conteo de tests **1071 → 1169**. Specs synced **23 → 24** (1 NEW: `daemon-lifecycle`; MODIFIED: `heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`). Hito acumulado: el runtime ya corre en producción (daemon zero-dep, schedule sin solapamiento, shutdown gracioso), la decisión del pre-gate se vuelve hecho de negocio auditable (eventos `heartbeat.decision`), y §13.2 completa su escalada Flash→Pro determinística por `riskClass`. El flake PG concurrente de Paso 3 queda resuelto de facto (`152768d`, paralelismo de archivos off). El snapshot de Rev 5 se conserva marcado como superado. | Los 3 primeros ítems del roadmap posterior a work-dispatch se completaron en limpio: ciclos SDD con verify **PASS** (7/7+12/12, 6/6+21/21, 7/7+19/19), live E2E DeepSeek/PG 3/3 en pro-escalation, archivados y pusheados. |
 | **5** (superada) | 2026-08-02 | `4eb2451` | Paso 3 sigue **COMPLETO** y se completan **3 slices post-Paso 3** (heartbeat-activation, supervisor-timer, work-dispatch) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-Paso 3. Conteo de tests **968 → 1071**. Specs synced **21 → 23** (2 NEW: `supervisor-timer`, `work-dispatch`; MODIFIED: `worker-cycle`, `heartbeat`, `business-event`, `work-lifecycle`). Hito acumulado: el ahorro de costo §2 se vuelve **REAL** — `activate` dispara un ciclo de worker que despacha trabajo accionable; `no-llm-heartbeat` no gasta LLM. Supervisor durable (wake-ups sin trabajo + cursor per-company) + dispatch desde `onActivate`. El snapshot de Rev 4 se conserva marcado como superado. | Los 3 slices que siguen al roadmap de Paso 3 se completaron en limpio (heartbeat-activation, supervisor-timer, work-dispatch): ciclos SDD con verify **PASS**, archivados y pusheados. `work-dispatch` hace real el ahorro de costo del pre-gate §13.2 construido en Paso 3. |
 | **4** (superada) | 2026-08-01 | `d5b42e9` | Paso 3 pasa de "🔄 SIGUIENTE" a **"✅ COMPLETO"** (6 slices verificados + archivados + pusheados). Se agrega trazabilidad por slice (archive, spec canónica, commits). Conteo de tests **757 → 968**. Specs synced **17 → 21** (4 NEW: `context-compiler`, `business-event`, `skill`, `heartbeat`). Hito acumulado: worker end-to-end vs DeepSeek V4 real + PG vivo, contexto compilado (KV-cache, skills en segmento 7), log append-only BusinessEvent y pre-gate determinístico §13.2 (heartbeats). El snapshot de Rev 3 se conserva marcado como superado. | Los 6 slices del roadmap de Paso 3 se completaron en limpio (context-compiler, deepseek-live-e2e, businessevent, first-skill, skill-segment7, heartbeats): ciclos SDD con verify **PASS** —o PASS WITH WARNINGS por el flake PG preexistente—, archivados y pusheados. |
 | **3** (superada) | 2026-08-01 | `2523614` | Paso 2 `first-enterprise-vertical` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 3 pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **604 → 757** (+E2E 9/9 vs PG vivo). Se registra la decisión del usuario (marker reintentable = paridad con la fundación) y las 3 correcciones del review adversarial. El snapshot de Rev 2 se conserva marcado como superado. | El ciclo SDD `first-enterprise-vertical` se completó: **18/18 requisitos, 47/47 escenarios, 0 blockers**, verify **PASS**, review adversarial CLEAN por slice (A/B/C). La primera vertical de empresa corre de punta a punta contra PostgreSQL vivo. |
 | **2** (superada) | 2026-07-31 | `4cc0b15` | Paso 1 `harden` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 2 `first-enterprise-vertical` pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **411 → 604**. Se agrega evidencia de verify por slice y el snapshot de Rev 1 se conserva marcado como superado. | El ciclo limpio `harden-first-enterprise-vertical-foundation` se completó: **18/18 requisitos, 61/61 escenarios, 0 blockers, 0 critical**, review adversarial CLEAN en cada slice (A/B/C). Se cumplió la *regla de oro* (no abrir la vertical sin harden limpio) → la vertical queda desbloqueada. |
 | **1** (superada) | 2026-07-31 | `4ea1653` | Versión inicial. Baseline `deepseek-client` cerrada; `harden` como Paso 1 pendiente; `first-enterprise-vertical` como Paso 2. | Reset a una baseline limpia tras el ciclo harden **contaminado** (hacks de gate: findings vacíos inyectados y gap-fixes post-verify). Se documentó el punto de partida estable para rehacer el harden en limpio. |
 
-**Estado actual (Rev 6):** `main @ 929daef` = `origin/main`. Paso 3 **COMPLETO** + Post-Paso 3 **COMPLETO** + 3 slices post-work-dispatch (daemon-lifecycle, heartbeat-decision-events, pro-escalation). Siguiente: fencing tokens — ver "Próximos pasos" en Post-work-dispatch.
+**Estado actual (Rev 7):** `main @ ea1dc59` = `origin/main`. fencing-tokens **COMPLETO Y ARCHIVADO**. Siguiente: recovery dirigido por supervisor (Scope B).
 
 ---
 
-## Estado actual (Rev 6 — vigente)
+## Estado actual (Rev 7 — vigente)
+
+| Check | Resultado |
+|-------|-----------|
+| Commit | `ea1dc59` — archive `fencing-tokens` |
+| GitHub `main` | = local = `ea1dc59` |
+| `pnpm check` | GREEN (format, tsc, build, lint, test) |
+| Tests | **1243 passed / 6 skipped** |
+| E2E DeepSeek/PG | GREEN (fencing e2e 50/50 sequential, race hammer 25/25) |
+| Post-work-dispatch | **✅ COMPLETO** — 4/4 (daemon-lifecycle, heartbeat-decision-events, pro-escalation, fencing-tokens) |
+| Specs synced | 3 MODIFIED (`work-lifecycle`, `worker-cycle`, `idempotency-journal`) (total 24) |
+| Archive (último) | `openspec/changes/archive/2026-08-08-fencing-tokens/` |
+
+### Evolución del conteo de tests (durante Rev 7)
+
+| Momento | Tests | Delta / motivo |
+|---------|-------|----------------|
+| Baseline (Rev 6, `929daef`) | 1169 passed / 6 skipped | Post-work-dispatch completo (pro-escalation) |
+| fencing-tokens (claim-mint + terminal-check + journal-fencing + race-fix) | **1243 passed / 6 skipped** | +74 (migration 010, FencingDirective, claim RETURNING, terminal CAS, markRetryable gate, complete status guard, RaceArbitratingConnection double, parity, live-PG e2e, R4-001 guard) |
+
+---
+
+## Snapshot histórico (Rev 6 — superada, se conserva para trazabilidad)
+
+> ⚠️ **Este bloque refleja el estado a `929daef` y YA NO es el punto de partida vigente.**
 
 | Check | Resultado |
 |-------|-----------|
@@ -377,7 +402,7 @@ explore → propose → design → spec → tasks
 - [x] **Daemon / process lifecycle wiring** → hecho en `daemon-lifecycle` (Rev 6): daemon de producción zero-dep, schedule sin solapamiento, shutdown gracioso.
 - [x] **heartbeat-decision BusinessEvents** → hecho en `heartbeat-decision-events` (Rev 6): la decisión del pre-gate se registra como hecho de negocio.
 - [x] **Escalamiento a Pro** → hecho en `pro-escalation` (Rev 6): tier / escalation determinístico por `riskClass`.
-- [ ] **Fencing tokens** (protección contra escritores zombies).
+- [x] **Fencing tokens** → hecho en `fencing-tokens` (Rev 7): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS; markRetryable con claim-ownership gate; complete con status guard; flake pre-existente de PG race corregido.
 - [ ] **Recovery dirigido por supervisor (Scope B)** (`recoverInFlightWork` para Work `in_progress` huérfano post-claim).
 - [ ] **Skill outcome BusinessEvents** (más allá de `work.completed`).
 - [ ] **Learning / promotion (Increment 8)**: ciclo candidate → active.
@@ -444,13 +469,14 @@ main @ 929daef  ← AQUÍ ESTAMOS (Rev 6, verificado, pusheado)
   │    ├─ heartbeat-activation (@1a0ca39)
   │    ├─ supervisor-timer (@9501b7e)
   │    └─ work-dispatch (@4eb2451)
-  └─ post-work-dispatch (COMPLETO + 3 slices archivados + 1 spec NEW synced)
+  └─ post-work-dispatch (COMPLETO + 4 slices archivados)
        ├─ daemon-lifecycle (@07eea12)
        ├─ heartbeat-decision-events (@a301d16)
-       └─ pro-escalation (@929daef)
+       ├─ pro-escalation (@929daef)
+       └─ fencing-tokens (@ea1dc59)
 
 siguiente
-  └─ fencing tokens (protección contra escritores zombies; deuda del Incremento 3)
+  └─ recovery dirigido por supervisor (Scope B — recoverInFlightWork para Work in_progress huérfano post-claim)
 ```
 
 ## Regla de oro
