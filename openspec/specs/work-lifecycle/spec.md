@@ -11,30 +11,21 @@ Delegation aggregate. [ADR-0002] [INF]
 
 ### Requirement: Work Execution Fields
 
-A Work MUST carry `companyId`, `workId`, `delegationId`, `proposer`,
-`description`, `state`, `version`, `evidenceRefs`, and optionally `deliverable`
-and `outcome`. The `companyId` MUST be a mandatory, non-empty neutral string
-identifying the tenant scope. The `delegationId` MUST be a neutral string ID
-identifying the authority under which execution is attempted. The `version` MUST
-be a numeric optimistic-concurrency counter initialized to `1` on creation.
-[ADR-0002] [INF]
-(Previously: Work carried no `companyId` and no `version`; it was tenant-unscoped and last-write-wins.)
+A Work MUST carry `companyId`, `workId`, `delegationId`, `proposer`, `description`, `state`, `version`, `fencingToken`, `evidenceRefs`, and optional `deliverable` and `outcome`. `companyId` and `delegationId` MUST be non-empty neutral string IDs. `version` MUST initialize to `1`; `fencingToken` MUST initialize to `0`, the valid pre-fencing epoch. The business-domain package MUST retain zero `@io/*` imports. [ADR-0002] [INF]
+(Previously: Work had no claim-scoped fencing token.)
 
 #### Scenario: Valid proposed work
-
-- GIVEN a work with a non-empty `companyId`, `workId`, `delegationId`, `proposer`, `description`, `state` set to `proposed`, and `version` set to `1`
+- GIVEN proposed Work with every mandatory field, `version` 1, and `fencingToken` 0
 - WHEN validated
 - THEN it MUST be accepted as valid
 
 #### Scenario: Missing delegation reference rejected
-
-- GIVEN a work with an empty `delegationId`
+- GIVEN Work with an empty `delegationId`
 - WHEN validated
 - THEN it MUST be rejected as invalid
 
 #### Scenario: Empty companyId rejected
-
-- GIVEN a work with an empty or missing `companyId`
+- GIVEN Work with an empty or missing `companyId`
 - WHEN validated
 - THEN it MUST be rejected as invalid
 
@@ -85,32 +76,38 @@ aggregate. [ADR-0002] [INF]
 
 ### Requirement: Optimistic Concurrency via Compare-And-Swap
 
-The Work repository MUST provide a compare-and-swap update (`updateIfVersion`)
-that writes ONLY when the supplied `expectedVersion` matches the stored `version`,
-and on success MUST increment `version` by one (`version = version + 1`). A write
-whose `expectedVersion` does not match MUST NOT overwrite the stored work and MUST
-return `{ ok: false, reason: 'version-conflict', current? }`, carrying the current
-work when available. Under concurrent writes, exactly one writer MUST win and
-every losing writer MUST receive an explicit `version-conflict`. Last-write-wins
-overwrite MUST NOT occur. [ADR-0002] [INF]
+`updateIfVersion` MUST write only when `expectedVersion` matches and MUST increment `version`; mismatch MUST return `{ ok: false, reason: 'version-conflict', current? }` without overwrite. Concurrent ordinary transitions MUST have one winner. A claim transition MUST additionally mint its token server-side within that same CAS by incrementing stored `fencingToken` and returning it. A terminal-close CAS MUST match both version and fencing token; token mismatch MUST leave Work unchanged and return a typed conflict. Fakes and PostgreSQL MUST expose identical results. [ADR-0002] [INF]
+(Previously: CAS checked only version and did not mint or validate claim ownership.)
 
 #### Scenario: Successful CAS bumps the version
-
-- GIVEN a stored work at `version` N
-- WHEN `updateIfVersion` is called with `expectedVersion` N
-- THEN the update MUST succeed, return `{ ok: true, value }`, and the stored `version` MUST become N + 1
+- GIVEN stored Work at version N
+- WHEN `updateIfVersion` receives N
+- THEN it MUST succeed and store version N + 1
 
 #### Scenario: Stale expectedVersion yields version-conflict
-
-- GIVEN a stored work at `version` N
-- WHEN `updateIfVersion` is called with `expectedVersion` N - 1
-- THEN the update MUST fail with `{ ok: false, reason: 'version-conflict', current? }` and the stored work MUST remain unchanged
+- GIVEN stored Work at version N
+- WHEN `updateIfVersion` receives N - 1
+- THEN it MUST return `version-conflict` and leave Work unchanged
 
 #### Scenario: Concurrent writers, single winner
-
-- GIVEN two writers issuing `updateIfVersion` against the same work and version
+- GIVEN two writers target the same Work version
 - WHEN both writes are applied
-- THEN exactly one MUST succeed and the other MUST receive `{ ok: false, reason: 'version-conflict' }`
+- THEN exactly one MUST succeed
+
+#### Scenario: Claim mints from the pre-fencing epoch
+- GIVEN accepted Work with `fencingToken` 0
+- WHEN a fresh claim wins
+- THEN it MUST atomically return and store token 1
+
+#### Scenario: Stale token cannot close Work
+- GIVEN in-progress Work owned by token N
+- WHEN terminal close supplies a token other than N
+- THEN it MUST return a typed conflict and persist no terminal mutation
+
+#### Scenario: Fake and PostgreSQL parity
+- GIVEN equivalent fake and PostgreSQL Work states
+- WHEN claim and stale-close cases run
+- THEN outcomes, versions, tokens, and stored states MUST match
 
 ### Requirement: Transition Use Cases Replace Raw Save
 

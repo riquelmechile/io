@@ -21,22 +21,23 @@ single receipt, and atomic close against that live database. [INF]
 
 ### Requirement: Single-Winner Claim via Compare-And-Swap
 
-The worker MUST claim Work through the CAS `startWork` use case using the work's
-current `expectedVersion`. Among concurrent claimants exactly one MUST win; every
-loser MUST receive an explicit `{ ok: false, reason: 'version-conflict' }` and
-MUST NOT proceed to an effect. A claim MUST NOT fail silently. [REQ]
+The worker MUST claim through `startWork` with `expectedVersion`. The winner MUST mint and return the next server-side fencing token; losers MUST receive `version-conflict` and MUST NOT execute an effect. Resume without a fresh claim MUST retain the token. The token MUST NOT enter compiled context bytes. Business-domain MUST retain zero `@io/*` imports, and no runtime dependency MAY be added. [REQ]
+(Previously: Claim selected one winner but produced no fencing token.)
 
 #### Scenario: Exactly one winner among concurrent workers
-
-- GIVEN two workers claiming the same work at the same `expectedVersion`
+- GIVEN two workers claim the same version
 - WHEN both invoke `startWork`
-- THEN exactly one MUST return `{ ok: true }` and the other MUST return `{ ok: false, reason: 'version-conflict' }`
+- THEN exactly one MUST receive token N + 1 and the other `version-conflict`
 
 #### Scenario: Losing claimant does not proceed
-
-- GIVEN a worker whose claim returned `version-conflict`
+- GIVEN claim returned `version-conflict`
 - WHEN the cycle continues
-- THEN it MUST stop with no effect executed and no receipt issued
+- THEN no effect or receipt MUST occur
+
+#### Scenario: Same-token resume preserves context bytes
+- GIVEN a claimed cycle resumes without re-claim
+- WHEN intent is compiled again
+- THEN its token MUST be unchanged and compiled bytes MUST equal the token-free baseline
 
 ### Requirement: Authority Verified at Action Time
 
@@ -113,71 +114,63 @@ effect and the durable bookkeeping MUST NOT share one transaction (§9.8). [INF]
 
 ### Requirement: Atomic Terminal Close
 
-The worker MUST close via `completeWorkAtomically`: journal lookup → replay (same
-key + same hash → return the recorded result) | DENY (same key + different hash) |
-continue → in_flight → CAS → a single business receipt → complete, all in ONE
-transaction. Exactly one receipt MUST be issued per `(work_id, terminal_event_id)`
-(`UNIQUE(work_id, terminal_event_id)`). [REQ] [INF]
+The worker MUST close via `completeWorkAtomically`: journal decision → replay, DENY, or continue → token-checked Work CAS → one receipt → status-guarded journal completion, in one transaction. Replay MUST be token-free. Continue MUST supply the claim token; a stale token MUST roll back every terminal mutation. Exactly one receipt MUST exist per `(work_id, terminal_event_id)`. [REQ] [INF]
+(Previously: Terminal close checked version but not claim token.)
 
 #### Scenario: Replay returns the recorded result
-
-- GIVEN a journal entry for a key whose input hash matches the current attempt
-- WHEN the terminal close is attempted again with the same key and same hash
-- THEN the recorded result MUST be returned and no new effect or receipt MUST occur
+- GIVEN completed matching journal data
+- WHEN replay runs without a fencing token
+- THEN result MUST return without effect, receipt, or event
 
 #### Scenario: Hash mismatch under the same key is denied
-
-- GIVEN a journal entry for a key whose input hash differs from the current attempt
-- WHEN the terminal close is attempted with the same key but a different hash
-- THEN the attempt MUST be DENIED
+- GIVEN completed journal data with a different hash
+- WHEN close is attempted
+- THEN it MUST be DENIED
 
 #### Scenario: One receipt per terminal event
-
-- GIVEN a work already closed for a terminal event
-- WHEN the close is re-attempted for the same `(work_id, terminal_event_id)`
-- THEN no second business receipt MUST be issued
+- GIVEN a terminal event was already closed
+- WHEN close is repeated
+- THEN no second receipt MUST be issued
 
 #### Scenario: End-to-end happy path against live PostgreSQL
+- GIVEN adapters, `FakeLlmClient`, and PostgreSQL
+- WHEN the full cycle runs
+- THEN terminal Work and exactly one receipt MUST persist
 
-- GIVEN the worker wired with `FakeLlmClient`, the real adapters, and the reversible sandbox adapter against live PostgreSQL 18.4 (`io_pg`)
-- WHEN the full cycle runs `claim → authority → intent → effect → reconcile → verify → terminal`
-- THEN the work MUST reach a terminal state with exactly one business receipt persisted in the live database
+#### Scenario: Stale-token close rolls back atomically
+- GIVEN token N + 1 owns Work and a holder supplies N
+- WHEN terminal close runs
+- THEN Work, journal, receipt, and event stores MUST remain unchanged
 
 ### Requirement: Journal-Anchored Reconciliation
 
-After a post-effect failure the worker MUST reconcile by consulting the
-idempotency journal AND the sandbox undo log. If the effect was applied, the worker
-MUST `undo()` it and then close the attempt; if no effect was applied, the worker
-MUST retry cleanly via the replay path. When a finalize attempt loses the CAS race
-with an applied effect while the Work is still `in_progress`, the worker MUST set
-the journal's retryable marker (`aborted_retryable`, see the `idempotency-journal`
-capability) rather than failure-completing the key, so a future same-key attempt is
-allowed a controlled retry (foundation parity). An unresolvable state MUST yield the
-typed `UNRESOLVED_REQUIRES_HUMAN` (§9.8) and MUST NOT fabricate a resolution. [REQ]
+After post-effect failure the worker MUST reconcile from journal and undo log. Applied effects MUST be undone before close; unapplied effects MUST retry via token-free replay. CAS loss while Work remains `in_progress` MUST call token-gated `markRetryable` with the retained token. Irreconcilable state MUST status-guardedly complete as `UNRESOLVED_REQUIRES_HUMAN` without requiring token ownership, preserving honest T2(ii) close. [REQ]
+(Previously: Reconciliation carried no claim token and journal writes were unfenced.)
 
 #### Scenario: Applied effect reversed then attempt closed
-
-- GIVEN the effect was applied and the terminal transaction then failed
-- WHEN the worker reconciles
-- THEN it MUST call `undo()` on the effect and then close the journal attempt
+- GIVEN effect applied and terminal transaction failed
+- WHEN reconciliation runs
+- THEN it MUST undo and then close the attempt
 
 #### Scenario: No effect applied leads to clean replay
-
-- GIVEN the undo log shows no effect was applied
-- WHEN the worker reconciles
-- THEN it MUST retry via the replay path and MUST NOT call `undo()`
+- GIVEN undo log shows no applied effect
+- WHEN reconciliation runs
+- THEN it MUST use token-free replay and MUST NOT undo
 
 #### Scenario: Unresolvable state reported honestly
-
-- GIVEN the journal and the undo log disagree irreconcilably
-- WHEN the worker reconciles
-- THEN it MUST return typed `UNRESOLVED_REQUIRES_HUMAN` and MUST NOT fabricate a resolution
+- GIVEN journal and undo log disagree irreconcilably after Work became terminal
+- WHEN stale-holder reconciliation closes an `in_flight` row
+- THEN `UNRESOLVED_REQUIRES_HUMAN` MUST persist despite stale token
 
 #### Scenario: CAS loss with applied effect and in-progress work sets the retryable marker
+- GIVEN applied effect, in-progress Work, retained token N, and CAS loss
+- WHEN reconciliation calls `markRetryable` with N
+- THEN `aborted_retryable` MUST persist and same-token retry MUST remain possible
 
-- GIVEN the effect was applied, the Work is still `in_progress`, and the finalize CAS lost a race
-- WHEN the worker reconciles the attempt
-- THEN it MUST set the journal retryable marker (`aborted_retryable`), MUST NOT failure-complete the key, and a future same-key attempt MUST be allowed a controlled retry
+#### Scenario: Stale reconciliation token is rejected
+- GIVEN journal ownership advanced from N to N + 1
+- WHEN `markRetryable` supplies N
+- THEN it MUST reject the write and leave the row unchanged
 
 ### Requirement: Durable Restart Recovery
 

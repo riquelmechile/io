@@ -1,23 +1,6 @@
-# idempotency-journal Specification
+# Delta for idempotency-journal
 
-## Purpose
-
-The idempotency journal (D6) records business-operation attempts keyed by
-`(companyId, idempotencyKey)` so a retried request is handled deterministically:
-same key + same hash REPLAYS the stored result, same key + different hash is
-DENIED, and a fresh key records an attempt (`in_flight`) before the effect and is
-closed (`completed`) afterwards. The journal is the source of truth for attempt
-state; the atomic terminal close (`completeWorkAtomically`) and the single-receipt
-invariant depend on it. The journal port is pure (zero `@io/*` imports); a
-PostgreSQL adapter over the `idempotency_journal` table (004) and an in-memory fake
-implement it, and the fake MUST mirror the PG status domain and durability. This
-capability speccs the concrete journal port behavior — the status domain and
-pre-effect lookup decision table (the archived foundation behavior) — and ADDS the
-durable retryable marker for finalize CAS-loss recovery (foundation parity). The
-marker is consistent with the persistence-recovery contract: it is neither a
-completed marker nor an orphan pending state. [ADR-0002] [ADR-0003] [INF]
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Journal Status Domain and Pre-Effect Lookup Decision Table
 
@@ -98,45 +81,3 @@ After an applied effect and finalize CAS loss while Work remains `in_progress`, 
 - GIVEN `aborted_retryable` row with token N
 - WHEN a same-key retry resumes
 - THEN it MUST use N without a fresh claim or increment
-
-### Requirement: Retryable Lookup Permits a Controlled Retry (No-Zombie)
-
-On a pre-effect lookup, a row marked `aborted_retryable` for a key MUST allow a
-controlled retry: the caller MUST proceed with a fresh attempt rather than replaying
-a failure or being permanently blocked. A retryable row MUST NOT replay a failure
-result and MUST NOT poison future retries — foundation parity with the rollback in
-`complete-work.ts:103-108`, which lets a future retry succeed. This MUST NOT weaken
-replay/DENY for genuinely completed attempts: `completed` + same hash still REPLAYS
-and `completed` + different hash still DENIES. The single-receipt invariant
-(`UNIQUE(work_id, terminal_event_id)`) and the atomic terminal close MUST still hold
-for the retry that wins. [REQ] [INF]
-
-#### Scenario: Retry after a retryable marker can succeed
-
-- GIVEN a retryable row for a key and a Work still `in_progress`
-- WHEN a fresh same-key attempt runs and wins the CAS
-- THEN it MUST complete and the journal MUST record `completed` with the stored result
-
-#### Scenario: Retryable row does not replay a failure
-
-- GIVEN a retryable row for a key
-- WHEN the journal is looked up for that key
-- THEN the caller MUST NOT receive a replayed failure result and MUST proceed with a fresh attempt
-
-#### Scenario: Completed attempt still replays correctly
-
-- GIVEN a `completed` row with a matching request hash
-- WHEN the journal is looked up for that key
-- THEN the stored result MUST be replayed (the retryable path MUST NOT regress this)
-
-#### Scenario: Completed attempt still denies on hash mismatch
-
-- GIVEN a `completed` row with a differing request hash
-- WHEN the journal is looked up for that key
-- THEN the lookup MUST DENY as idempotency-conflict (the retryable path MUST NOT regress this)
-
-#### Scenario: Single receipt holds across the retry
-
-- GIVEN a retryable-marked attempt whose receipt did not survive the CAS loss
-- WHEN the retry wins and issues its receipt for `(work_id, terminal_event_id)`
-- THEN exactly one receipt MUST exist and a duplicate close MUST be rejected by `UNIQUE(work_id, terminal_event_id)`
