@@ -212,9 +212,16 @@ describe('dispatchCompanyActivation — replay safety (R4) and orphan non-guaran
     expect(entry[0]?.attemptId).toBe(attemptId);
   });
 
-  it('excludes post-claim in_progress Work — never auto-resumed (R6)', async () => {
+  it('Normal dispatch never auto-resumes an orphan — R6 "Crash-Recovery Non-Guarantee" (supervisor recovery is a separate path)', async () => {
     const h = harness();
-    // A post-claim orphan: claimed (in_progress, v2) but never completed.
+    // R6 (reframed, work-dispatch spec "Crash-Recovery Non-Guarantee"): this
+    // test pins the NORMAL-dispatch half — actionable selection MUST keep
+    // excluding `in_progress` Work, and normal dispatch MUST NOT invoke
+    // recovery (scenario "Normal dispatch never auto-resumes an orphan").
+    // Resuming an orphan is NOT normal dispatch's job: the separate
+    // supervisor-owned recovery path (scenario "Supervisor recovery is a
+    // separate path") resumes ONLY explicitly designated orphans after safe
+    // reconciliation. Assertion body UNCHANGED — the behavior is preserved.
     await h.work.save(acceptedWork({ state: 'in_progress', version: 2 }));
     await h.delegation.save(activeDelegation());
 

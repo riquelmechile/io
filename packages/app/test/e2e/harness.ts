@@ -145,6 +145,7 @@ const MIGRATIONS = [
   '008_heartbeat_cursor.sql',
   '009_work_company_state_index.sql',
   '010_fencing_tokens.sql',
+  '011_recovery_designation.sql',
 ];
 
 /** Boot the harness: probe PG, recreate the scratch DB, migrate, wire the stack. */

@@ -10,7 +10,8 @@ import type { LlmClient } from '@io/llm-client/src/index.js';
 import type { DaemonConfig } from '../../src/daemon/config.js';
 import type { DrainableSchedule } from '../../src/daemon/schedule.js';
 import { runDaemon, type DaemonHooks } from '../../src/daemon/daemon.js';
-import type { SupervisorDeps } from '../../src/supervisor/types.js';
+import { startSupervisor } from '../../src/supervisor/supervisor.js';
+import type { StartSupervisorOptions, SupervisorDeps } from '../../src/supervisor/types.js';
 
 /**
  * Daemon lifecycle suite (task 2.1): `runDaemon(config, hooks?)` is exercised
@@ -249,6 +250,43 @@ describe('runDaemon — process signal handling (R4)', () => {
     releaseDrain(); // settle the abandoned graceful path
     await daemonPromise;
     expect(h.exit).toHaveBeenLastCalledWith(0);
+  });
+});
+
+describe('runDaemon — supervisor recovery seam wiring (supervisor-recovery slice 5, deferred from slice 4)', () => {
+  it('threads the composition onRecovery into startSupervisor options — the daemon wires the recovery seam so designated orphans are recovered in production', async () => {
+    const h = makeHarness();
+    // Capture the options the REAL startSupervisor receives (the fake schedule
+    // never fires a tick, so the recovery pass itself stays dormant here — the
+    // wiring is what this test pins).
+    let capturedOptions: StartSupervisorOptions | undefined;
+    const hooks: DaemonHooks = {
+      ...h.hooks,
+      startSupervisor: (deps, options) => {
+        capturedOptions = options;
+        return startSupervisor(deps, options);
+      },
+    };
+
+    const daemonPromise = runDaemon(makeConfig(), hooks);
+    await flushMicrotasks();
+
+    // The composition seam (buildDispatch mock — the shape buildSupervisorDispatch
+    // returns: { deps, onActivate, onRecovery, requestRecovery }) reached
+    // startSupervisor: the recovery callback is threaded through.
+    const composed = h.buildDispatch.mock.results[0]?.value as {
+      onRecovery: unknown;
+      onActivate: unknown;
+    };
+    expect(capturedOptions).toBeDefined();
+    expect(capturedOptions?.onRecovery).toBeDefined();
+    expect(capturedOptions?.onRecovery).toBe(composed.onRecovery);
+    expect(capturedOptions?.onActivate).toBeDefined();
+    expect(capturedOptions?.intervalMs).toBe(makeConfig().intervalMs);
+
+    getSignal(h.signals, 'SIGTERM')();
+    await daemonPromise;
+    expect(h.exit).toHaveBeenCalledWith(0);
   });
 });
 

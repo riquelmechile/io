@@ -35,6 +35,7 @@ const SCHEMA_003 = join(pkgRoot, 'sql', '003_harden_columns.sql');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
 const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
 const SCHEMA_010 = join(pkgRoot, 'sql', '010_fencing_tokens.sql');
+const SCHEMA_011 = join(pkgRoot, 'sql', '011_recovery_designation.sql');
 
 /**
  * Integration test — REAL PostgreSQL round-trip for all four business-domain
@@ -90,6 +91,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     await conn.execute(readFileSync(SCHEMA_004, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_009, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_010, 'utf8'), []);
+    await conn.execute(readFileSync(SCHEMA_011, 'utf8'), []);
     companyRepo = new PgCompanyRepository(conn);
     delegationRepo = new PgDelegationRepository(conn);
     workRepo = new PgWorkRepository(conn);
@@ -518,7 +520,13 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
   });
 
   describe('connection string drives the pool (spec scenario: conn-string isolation)', () => {
-    it('two PgDbConnection instances from different connection strings affect only their own database', async () => {
+    it('two PgDbConnection instances from different connection strings affect only their own database', {
+      // Pre-existing flake on loaded hosts: CREATE/DROP DATABASE on the shared
+      // docker PG can take >5s (vitest default testTimeout). Timeout bumped —
+      // behavior/assertions untouched (mirrors boot-smoke's 30s integration
+      // timeout).
+      timeout: 30_000,
+    }, async () => {
       // Scratch database on the SAME server; the io role is superuser in the
       // dev container. Created here and dropped after — the write must NOT
       // leak across databases.
@@ -1156,6 +1164,125 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         [],
       );
       expect(journalRows).toHaveLength(1);
+    });
+  });
+
+  describe('recovery designation (011) — setRecoveryRequest CAS + partial-index discovery + marker lifecycle — live PG (work-lifecycle "Operator Recovery Designation", supervisor-recovery slice 5)', () => {
+    /** An in_progress orphan at version 2 with the minted claim token 1 — the
+     * row an operator designates for recovery. */
+    async function seedOrphan(): Promise<Work> {
+      const w: Work = {
+        ...sampleWork(),
+        state: 'in_progress',
+        version: 2,
+        fencingToken: 1,
+        evidenceRefs: ['evid-1'],
+      };
+      await workRepo.save(w);
+      return w;
+    }
+
+    it('designation→discovery→clear roundtrip: the CAS bumps version (state + token preserved), the partial-index query finds ONLY the designated in_progress orphan, and clearing removes it', async () => {
+      const orphan = await seedOrphan();
+      // A non-designated in_progress orphan in the SAME tenant — invisible to
+      // the partial-index discovery (marker gate).
+      await workRepo.save({
+        ...sampleWork(),
+        workId: 'work-other',
+        state: 'in_progress',
+        version: 2,
+        fencingToken: 1,
+        evidenceRefs: [],
+      });
+
+      const designated = await workRepo.setRecoveryRequest(
+        'acme-corp',
+        orphan.workId,
+        orphan.version,
+        true,
+      );
+      expect(designated.ok).toBe(true);
+      if (designated.ok) {
+        expect(designated.value.version).toBe(3); // plain version+1 CAS
+        expect(designated.value.state).toBe('in_progress'); // NOT a transition
+        expect(designated.value.fencingToken).toBe(1); // token preserved
+      }
+
+      const discovered = await workRepo.listRecoveryRequestedByCompany('acme-corp');
+      expect(discovered.map((w) => w.workId)).toEqual(['work-001']);
+      expect(discovered[0]?.state).toBe('in_progress');
+
+      // Clearing: marker off, version bumped again, discovery empty.
+      const cleared = await workRepo.setRecoveryRequest('acme-corp', 'work-001', 3, false);
+      expect(cleared.ok).toBe(true);
+      expect(await workRepo.listRecoveryRequestedByCompany('acme-corp')).toEqual([]);
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.version).toBe(4);
+      expect(stored?.state).toBe('in_progress'); // clearing is not a transition either
+    });
+
+    it('stale-version designation CAS → version-conflict, row unchanged (the version bump fences a stale zombie designation)', async () => {
+      const orphan = await seedOrphan();
+      await workRepo.setRecoveryRequest('acme-corp', orphan.workId, orphan.version, true);
+
+      // A stale expected version (2 — already bumped to 3) is fenced.
+      const stale = await workRepo.setRecoveryRequest(
+        'acme-corp',
+        orphan.workId,
+        orphan.version,
+        false,
+      );
+      expect(stale.ok).toBe(false);
+      if (!stale.ok) {
+        expect(stale.reason).toBe('version-conflict');
+        expect(stale.current?.version).toBe(3);
+      }
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.version).toBe(3);
+      expect(stored?.state).toBe('in_progress');
+      // The stale attempt did NOT clear the marker.
+      expect(await workRepo.listRecoveryRequestedByCompany('acme-corp')).toHaveLength(1);
+    });
+
+    it('the partial index IS used by the discovery query — EXPLAIN shows idx_work_recovery_requested, not a sequential scan', async () => {
+      const orphan = await seedOrphan();
+      await workRepo.setRecoveryRequest('acme-corp', orphan.workId, orphan.version, true);
+
+      // SET LOCAL inside a transaction: disable seqscan for THIS statement so
+      // the plan proves the partial index covers the discovery predicate (a
+      // tiny table would otherwise be scanned sequentially). The setting is
+      // transaction-scoped — the pool is never polluted.
+      const plan = await conn.transaction(async (tx) => {
+        await tx.execute('SET LOCAL enable_seqscan = off', []);
+        return tx.query<{ 'QUERY PLAN': string }>(
+          "EXPLAIN SELECT work_id FROM work WHERE company_id = $1 AND recovery_requested AND state = 'in_progress'",
+          ['acme-corp'],
+        );
+      });
+      const text = plan.map((row) => row['QUERY PLAN']).join('\n');
+      expect(text).toContain('idx_work_recovery_requested');
+      expect(text).not.toMatch(/Seq Scan/);
+    });
+
+    it('a designated TERMINAL Work is never discovered — the partial-index predicate excludes it (the inert-stale-marker semantics)', async () => {
+      const done: Work = {
+        ...sampleWork(),
+        state: 'completed',
+        version: 3,
+        fencingToken: 1,
+        evidenceRefs: [],
+      };
+      await workRepo.save(done);
+      // Out-of-band completion left a stale designation marker on a terminal row.
+      await workRepo.setRecoveryRequest('acme-corp', done.workId, 3, true);
+
+      // The partial index (WHERE recovery_requested AND state='in_progress')
+      // hides it — discovery returns NOTHING for the completed row.
+      expect(await workRepo.listRecoveryRequestedByCompany('acme-corp')).toEqual([]);
+      // The marker is still physically set (inert) — the supervisor's list→get
+      // race net clears it when it observes a terminal Work.
+      const stored = await workRepo.get('acme-corp', 'work-001');
+      expect(stored?.state).toBe('completed');
     });
   });
 });

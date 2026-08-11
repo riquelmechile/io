@@ -90,7 +90,7 @@ export async function runDaemon(config: DaemonConfig, hooks: DaemonHooks = {}): 
 
   const llm = createLlm(config.deepseekApiKey);
   const schedule = createSchedule();
-  const { deps, onActivate } = buildDispatch({
+  const { deps, onActivate, onRecovery } = buildDispatch({
     connection,
     llm,
     sandboxRoot: config.sandboxRoot,
@@ -99,6 +99,13 @@ export async function runDaemon(config: DaemonConfig, hooks: DaemonHooks = {}): 
   const supervisor = start(deps, {
     intervalMs: config.intervalMs,
     onActivate,
+    // The recovery seam (supervisor-recovery design D4): the composition root
+    // closes over work/journal/sandbox and resumes operator-designated
+    // orphaned `in_progress` Work AFTER activation, BEFORE the cursor
+    // checkpoint, on both decision branches. Threading it here is what makes
+    // recovery actually run in production — the daemon boot fails fast on a
+    // probe failure BEFORE any of this is constructed (R2).
+    onRecovery,
     schedule: schedule.schedule,
   });
 
