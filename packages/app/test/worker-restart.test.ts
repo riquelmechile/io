@@ -26,11 +26,12 @@ import { acceptedWork } from './worker-helpers.js';
  *   - in-flight row + applied effect → reconcile to a terminal state: undo the
  *     effect (persisted) + mark the attempt retryable (aborted_retryable, own
  *     durable write — NEVER a failure-complete), → `cas-lost-retryable`.
- *   - in-flight row, no effect (crash before the effect) → clean replay:
- *     NO undo, NO marker → `recovery-required` (design "continue
- *     effect→verify→terminal" row).
+ *   - in-flight row, no effect (crash before the effect) → W2: durable proof of
+ *     no applied effect converts the attempt to the retryable marker WITHOUT
+ *     undo → `cas-lost-retryable` (the row is never left `in_flight` forever).
  *   - completed row → the recorded result replays; aborted_retryable row →
- *     already reconciled; no row → nothing durable to recover (never fabricate).
+ *     already reconciled; no row → W1 resume signal (the supervisor inserts
+ *     fresh), never a fabricated resolution.
  */
 
 const COMPANY = 'acme';
@@ -168,7 +169,43 @@ describe('durable restart recovery (WC durable-restart)', () => {
     }
   });
 
-  it('crash after insertInFlight but BEFORE the effect → clean replay: recovery-required, NO undo, NO marker', async () => {
+  it('W1: NO journal row (entry===undefined) → NEW typed outcome { ok:false, reason:"resume" } — the supervisor inserts fresh; token retained, NO journal write (spec "W1 resumes with no journal row")', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'io-restart-'));
+    try {
+      const sandboxPath = join(dir, 'sandbox.json');
+      const work = new InMemoryWorkRepository();
+      await work.save(acceptedWork());
+      const current = await work.get(COMPANY, WORK_ID);
+      if (current === undefined) throw new Error('test setup: work not seeded');
+      // The claim mints token 1; the worker crashed BEFORE the pre-effect
+      // insertInFlight — no journal row exists and the undo log is empty.
+      const claimed = await work.updateIfVersion(
+        { ...current, state: 'in_progress' },
+        current.version,
+        { kind: 'claim' },
+      );
+      if (!claimed.ok) throw new Error('test setup: claim failed');
+      const journal = new DurableJournalFake(jsonFilePersistence(join(dir, 'journal.json')));
+      const sandbox = new DurableSandboxFake(sandboxPath);
+
+      const result = await recoverInFlightWork({ work, journal, sandbox }, recoverInput());
+
+      // W1 (design D7): a RESUMABLE disposition — NOT UNRESOLVED_REQUIRES_HUMAN.
+      // The caller (supervisor recovery) inserts a fresh attempt at the
+      // pre-effect reconcile; recovery never fabricates a journal row/effect.
+      expect(result).toEqual({ ok: false, reason: 'resume' });
+      // NO journal write: the key still has NO row (nothing fabricated).
+      expect(await journal.lookup(COMPANY, KEY)).toBeUndefined();
+      // Token retained: the minted claim token was never re-minted by recovery.
+      const after = await work.get(COMPANY, WORK_ID);
+      expect(after?.state).toBe('in_progress');
+      expect(after?.fencingToken).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('crash after insertInFlight but BEFORE the effect → W2 retryable: cas-lost-retryable with the aborted_retryable marker, NO undo (previously dead-ended at recovery-required with the row stuck in_flight)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'io-restart-'));
     try {
       const journalPath = join(dir, 'journal.json');
@@ -195,9 +232,17 @@ describe('durable restart recovery (WC durable-restart)', () => {
 
       const result = await recoverInFlightWork({ work, journal, sandbox }, recoverInput());
 
-      expect(result).toMatchObject({ ok: false, reason: 'recovery-required' });
-      // No marker was set (the row stays in_flight) and nothing was undone.
-      expect((await journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
+      // W2 un-sticks (design D3): durable proof of no applied effect converts
+      // the in_flight row to the retryable marker WITHOUT undo — the row is
+      // NEVER left in_flight forever (the pre-slice dead-end).
+      expect(result).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
+      // The marker PERSISTED durably: a fresh journal over the same file sees it.
+      const row = await journal.lookup(COMPANY, KEY);
+      expect(row?.status).toBe('aborted_retryable');
+      expect(row?.attemptId).toBe(ATTEMPT);
+      const restarted = new DurableJournalFake(jsonFilePersistence(journalPath));
+      expect((await restarted.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
+      // NO undo was called (nothing to reverse — W2 abort requires no undo).
       expect(await sandbox.wasApplied('undo-never')).toBe(false);
       expect((await work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
     } finally {

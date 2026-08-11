@@ -138,10 +138,6 @@ export type FinalizeResult =
   /** T2(i): CAS lost while the work is still in_progress — effect undone +
    * retryable marker (own commit). A controlled retry is allowed. */
   | { ok: false; reason: 'cas-lost-retryable'; current: Work }
-  /** Post-effect failure with NO effect applied (clean replay): the attempt
-   * has no durable side effect; the caller retries via the replay path. No
-   * undo, no marker. */
-  | { ok: false; reason: 'recovery-required'; current: Work }
   /** T2(ii) / unresolvable: the work is already terminal (or the state
    * disagrees) — no undo, no marker; only the typed honest close. */
   | { ok: false; reason: 'UNRESOLVED_REQUIRES_HUMAN'; current?: Work };
@@ -162,9 +158,6 @@ export type PostEffectReconcileResult =
   /** T2(i): in_progress + applied → effect undone + retryable marker (own
    * commit). A controlled retry is allowed. */
   | { ok: false; reason: 'cas-lost-retryable'; current: Work }
-  /** Clean replay: in_progress + NO effect applied → nothing to undo, nothing
-   * to mark; the caller retries via the replay path. */
-  | { ok: false; reason: 'recovery-required'; current: Work }
   /** T2(ii) / unresolvable: the work is already terminal (or gone) — no undo,
    * no marker; only the typed honest close. Never fabricate a resolution. */
   | { ok: false; reason: 'UNRESOLVED_REQUIRES_HUMAN'; current?: Work };
@@ -190,12 +183,15 @@ class FinalizeCasLostError extends Error {
  *   - work already terminal (+ effect applied) → T2(ii): NO undo, NO marker;
  *     only `journal.complete(UNRESOLVED_REQUIRES_HUMAN)`.
  *   - work still in_progress + effect applied → T2(i): `sandbox.undo(handle)`
- *     FIRST, then `journal.markRetryable(attemptId)` in its OWN committed write
- *     → `cas-lost-retryable` (the marker is aborted_retryable, NEVER a
- *     failure-complete that bricks the key — a controlled retry stays allowed).
- *   - work still in_progress + NO effect applied → clean replay: NO undo, NO
- *     marker → `recovery-required` (the design table's "continue
- *     effect→verify→terminal" row).
+ *     FIRST, then `journal.markRetryable(attemptId, retainedToken)` in its OWN
+ *     committed write → `cas-lost-retryable` (the marker is aborted_retryable,
+ *     NEVER a failure-complete that bricks the key — a controlled retry stays
+ *     allowed).
+ *   - work still in_progress + NO effect applied → W2 (design D3): durable
+ *     evidence proves no effect ran — `journal.markRetryable(attemptId,
+ *     retainedToken)` with NO preceding undo → `cas-lost-retryable`. The marker
+ *     un-sticks the W2 window (the row would otherwise stay `in_flight` forever)
+ *     and the claim-gated marker write refuses a stale holder.
  */
 export async function reconcilePostEffectFailure(
   deps: PostEffectReconcileDeps,
@@ -224,13 +220,27 @@ export async function reconcilePostEffectFailure(
     // change): markRetryable(attemptId, token) succeeds only when the supplied
     // token still owns the journal row — a stale holder (zombie) cannot mark a
     // row it no longer owns.
-    await deps.sandbox.undo(input.effect.undo);
+    try {
+      await deps.sandbox.undo(input.effect.undo);
+    } catch {
+      // The required undo FAILED (missing/contradictory evidence — the effect
+      // may still be live). NEVER re-execute the effect: close the attempt
+      // honestly with the typed UNRESOLVED result (spec "Missing evidence or
+      // undo failure escalates") — no marker (a marker would invite a retry of
+      // an effect we could not reverse).
+      await deps.journal.complete(input.attemptId, UNRESOLVED_RESULT);
+      return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current };
+    }
     await deps.journal.markRetryable(input.attemptId, input.fencingToken);
     return { ok: false, reason: 'cas-lost-retryable', current };
   }
-  // in_progress + NO effect applied: the attempt has no durable side effect —
-  // clean replay, no undo, no marker.
-  return { ok: false, reason: 'recovery-required', current };
+  // in_progress + NO effect applied (W2, design D3): durable evidence proves
+  // the effect never ran — mark the attempt retryable WITHOUT undo (nothing to
+  // reverse). The marker is claim-gated by the retained token (a stale holder
+  // cannot convert the row) and is NEVER a failure-complete; the controlled
+  // retry reopens the key with the same token.
+  await deps.journal.markRetryable(input.attemptId, input.fencingToken);
+  return { ok: false, reason: 'cas-lost-retryable', current };
 }
 
 export async function finalizeInFlightWorkAtomically(

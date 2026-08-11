@@ -26,9 +26,9 @@ import { harness, principals, seed, type WorkerHarness, workerInput } from './wo
  * worker reconciles EXACTLY like the finalize CAS-loss path (design "Other
  * post-effect failures … same as CAS-loss (i)") via the SHARED
  * `reconcilePostEffectFailure`:
- *   - in_progress + applied  → undo + markRetryable → `cas-lost-retryable`
- *   - in_progress + NO effect → clean replay: NO undo, NO marker → `recovery-required`
- *   - already terminal       → typed `UNRESOLVED_REQUIRES_HUMAN` (never fabricate)
+ *  - in_progress + applied  → undo + markRetryable → `cas-lost-retryable`
+ *  - in_progress + NO effect → W2: markRetryable WITHOUT undo → `cas-lost-retryable`
+ *  - already terminal       → typed `UNRESOLVED_REQUIRES_HUMAN` (never fabricate)
  * The verify step runs BETWEEN the effect and the finalize twin.
  */
 
@@ -227,7 +227,7 @@ describe('reconcilePostEffectFailure — post-effect/verify-fail reconciliation 
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
   });
 
-  it('in_progress + NO effect applied → clean replay: NO undo, NO marker → recovery-required', async () => {
+  it('in_progress + NO effect applied → W2 retryable: markRetryable WITHOUT undo → cas-lost-retryable (marker set, row never stuck in_flight)', async () => {
     const h = harness();
     await closeReady(h);
     const notApplied: EffectRecord = {
@@ -235,7 +235,7 @@ describe('reconcilePostEffectFailure — post-effect/verify-fail reconciliation 
       action: docAction,
       absolutePath: '/io/mem/docs/quarterly-close.md',
       applied: false,
-      // Synthetic handle: never dereferenced on the clean-replay branch (no undo).
+      // Synthetic handle: never dereferenced (the W2 branch never undoes).
       undo: { handleId: 'undo-none', action: docAction, applied: true },
     };
 
@@ -246,14 +246,14 @@ describe('reconcilePostEffectFailure — post-effect/verify-fail reconciliation 
 
     expect(result).toEqual({
       ok: false,
-      reason: 'recovery-required',
+      reason: 'cas-lost-retryable',
       current: expect.objectContaining({ state: 'in_progress' }),
     });
-    // Nothing to reverse; nothing to mark — the attempt retries via the replay path.
+    // W2: nothing to reverse; the durable marker converts the row (no undo).
     expect(h.sandbox.undos).toHaveLength(0);
-    expect(h.journal.log.some((logged) => logged.startsWith('markRetryable:'))).toBe(false);
+    expect(h.journal.log.some((logged) => logged.startsWith('markRetryable:'))).toBe(true);
     expect(h.journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
-    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
+    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
   });
 
   it('work already terminal + applied → typed UNRESOLVED_REQUIRES_HUMAN: no undo, no marker (never fabricate)', async () => {
@@ -338,7 +338,7 @@ describe('cycle wiring (B8) — verify runs BETWEEN the effect and the finalize 
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
   });
 
-  it('verify fail with NO effect applied → clean replay: recovery-required, NO undo, NO marker, no finalize', async () => {
+  it('verify fail with NO effect applied → W2 retryable: markRetryable WITHOUT undo → cas-lost-retryable, no finalize (row never stuck in_flight)', async () => {
     const h = harness();
     await seed(h);
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
@@ -348,10 +348,12 @@ describe('cycle wiring (B8) — verify runs BETWEEN the effect and the finalize 
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.reason).toBe('recovery-required');
+    expect(result.reason).toBe('cas-lost-retryable');
     expect(sandbox.undos).toHaveLength(0);
-    expect(h.journal.log.some((logged) => logged.startsWith('markRetryable:'))).toBe(false);
-    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('in_flight');
+    // Durable proof of no applied effect converts the row to the retryable
+    // marker (design D3) — NEVER a failure-complete, NEVER stuck in_flight.
+    expect(h.journal.log.some((logged) => logged.startsWith('markRetryable:'))).toBe(true);
+    expect((await h.journal.lookup(COMPANY, KEY))?.status).toBe('aborted_retryable');
     expect(h.receipts.saves).toHaveLength(0);
     expect(conn.commits).toBe(0);
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');

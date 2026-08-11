@@ -26,6 +26,7 @@ import { FileDocumentSandbox } from '../src/sandbox/file-document-sandbox.js';
 import { InMemorySandbox } from '../src/sandbox/in-memory-sandbox.js';
 import type { EffectRecord, SandboxAction, SandboxPort } from '../src/sandbox/sandbox-port.js';
 import { decidePreEffect } from '../src/worker/reconcile.js';
+import { reconcilePostEffectFailure, type FinalizeInput } from '../src/worker/finalize.js';
 import { runWorker } from '../src/worker/worker.js';
 import { harness, principals, seed, workerInput } from './worker-helpers.js';
 
@@ -850,5 +851,115 @@ describe('B11 parity 6 — recovery designation: InMemoryWorkRepository ≡ PgWo
     expect((await pg.listRecoveryRequestedByCompany(COMPANY)).map((w) => w.workId)).toEqual([
       DESIGNATED_ID,
     ]);
+  });
+});
+
+describe('B11 parity 7 — journal no-effect reconcile: InMemory fake ≡ Pg adapter (reconcilePostEffectFailure W2 branch: markRetryable matching/stale)', () => {
+  /** Synthetic no-effect record (W2): durable evidence proves no effect ran.
+   * The undo handle is never dereferenced (the W2 branch never undoes). */
+  const notApplied: EffectRecord = {
+    effectId: 'effect-none',
+    action: { type: 'create-document', relativePath: 'docs/quarterly-close.md', content: '' },
+    absolutePath: '/io/mem/docs/quarterly-close.md',
+    applied: false,
+    undo: {
+      handleId: 'undo-none',
+      action: { type: 'create-document', relativePath: '', content: '' },
+      applied: true,
+    },
+  };
+
+  /** The SAME claimed orphan + in_flight journal row in both worlds: an
+   * in_progress Work (token 5) and an in_flight attempt owned by token 5. */
+  async function seedBoth(): Promise<{
+    fake: InMemoryIdempotencyJournalRepository;
+    pg: PgIdempotencyJournalRepository;
+    work: InMemoryWorkRepository;
+  }> {
+    const work = new InMemoryWorkRepository();
+    await work.save({
+      workId: WORK_ID,
+      companyId: COMPANY,
+      delegationId: 'del-1',
+      proposer: principals.proposer,
+      description: 'execute the quarterly close',
+      state: 'in_progress',
+      version: 2,
+      fencingToken: 5,
+      evidenceRefs: [],
+    });
+    const fake = new InMemoryIdempotencyJournalRepository();
+    const pg = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
+    for (const repo of [fake, pg]) {
+      await repo.insertInFlight({
+        companyId: COMPANY,
+        idempotencyKey: KEY,
+        requestHash: HASH,
+        attemptId: ATTEMPT,
+        fencingToken: 5,
+      });
+    }
+    return { fake, pg, work };
+  }
+
+  function reconcileInput(fencingToken: number): FinalizeInput {
+    return {
+      companyId: COMPANY,
+      workId: WORK_ID,
+      idempotencyKey: KEY,
+      requestHash: HASH,
+      attemptId: ATTEMPT,
+      fencingToken,
+      effect: notApplied,
+    };
+  }
+
+  it('matching-token W2 reconcile: BOTH markRetryable WITHOUT undo → cas-lost-retryable; rows aborted_retryable with the retained token (spec "Fake and PostgreSQL parity")', async () => {
+    const { fake, pg, work } = await seedBoth();
+    const sandbox = new InMemorySandbox();
+
+    const fakeResult = await reconcilePostEffectFailure(
+      { work, journal: fake, sandbox },
+      reconcileInput(5),
+    );
+    const pgResult = await reconcilePostEffectFailure(
+      { work, journal: pg, sandbox },
+      reconcileInput(5),
+    );
+
+    // IDENTICAL outcomes: the widened W2 trigger marks retryable in both.
+    expect(fakeResult).toEqual(pgResult);
+    expect(fakeResult).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
+    const f = await fake.lookup(COMPANY, KEY);
+    const p = await pg.lookup(COMPANY, KEY);
+    expect(f?.status).toBe('aborted_retryable');
+    expect(p?.status).toBe('aborted_retryable');
+    expect(f?.fencingToken).toBe(5); // retained token N
+    expect(p?.fencingToken).toBe(5);
+  });
+
+  it('stale-token W2 reconcile: BOTH reject WITHOUT mutation — status and token unchanged (spec "Fake and PostgreSQL parity" / "Stale token cannot mark retryable")', async () => {
+    const { fake, pg, work } = await seedBoth();
+    const sandbox = new InMemorySandbox();
+
+    const fErr = await reconcilePostEffectFailure(
+      { work, journal: fake, sandbox },
+      reconcileInput(3),
+    )
+      .then(() => undefined)
+      .catch((error: Error) => error);
+    const pErr = await reconcilePostEffectFailure({ work, journal: pg, sandbox }, reconcileInput(3))
+      .then(() => undefined)
+      .catch((error: Error) => error);
+
+    // Both reject (fail loud, R4-001) and neither mutates the row.
+    expect(fErr).toBeInstanceOf(Error);
+    expect(pErr).toBeInstanceOf(Error);
+    const f = await fake.lookup(COMPANY, KEY);
+    const p = await pg.lookup(COMPANY, KEY);
+    expect(f?.status).toBe('in_flight');
+    expect(p?.status).toBe('in_flight');
+    expect(f?.fencingToken).toBe(5);
+    expect(p?.fencingToken).toBe(5);
   });
 });

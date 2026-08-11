@@ -11,6 +11,7 @@ import {
   type FinalizeDeps,
   type FinalizeInput,
   finalizeInFlightWorkAtomically,
+  reconcilePostEffectFailure,
   WORKER_ARTIFACT_HASH,
   WORKER_POLICY_HASH,
 } from '../src/worker/finalize.js';
@@ -574,5 +575,69 @@ describe('cycle wiring (B7) — finalize runs after the effect, INSIDE the termi
     expect(await h.sandbox.wasApplied(h.sandbox.undos[0]?.handleId ?? '')).toBe(false);
     // The failed finalize never moved the work.
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
+  });
+});
+
+describe('reconcilePostEffectFailure — widened no-effect branch (idempotency-journal "Retryable Marker on Finalize CAS Loss")', () => {
+  /** Synthetic no-effect record: the cycle crashed BEFORE the effect ran, so
+   * durable evidence proves nothing was applied. The undo handle is never
+   * dereferenced (the branch never undoes). */
+  const notApplied: EffectRecord = {
+    effectId: 'effect-none',
+    action: { type: 'create-document', relativePath: 'docs/quarterly-close.md', content: '' },
+    absolutePath: '/io/mem/docs/quarterly-close.md',
+    applied: false,
+    undo: {
+      handleId: 'undo-none',
+      action: { type: 'create-document', relativePath: '', content: '' },
+      applied: true,
+    },
+  };
+
+  it('in_progress + NO effect applied → markRetryable(retainedToken) → cas-lost-retryable (W2 abort requires NO preceding undo)', async () => {
+    const h = harness();
+    await closeReady(h); // work in_progress (token 1), journal row in_flight (token 1)
+
+    const result = await reconcilePostEffectFailure(
+      { work: h.work, journal: h.journal, sandbox: h.sandbox },
+      finalizeInput(notApplied),
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'cas-lost-retryable',
+      current: expect.objectContaining({ state: 'in_progress' }),
+    });
+    // W2 abort requires NO preceding undo — nothing to reverse.
+    expect(h.sandbox.undos).toHaveLength(0);
+    // The marker IS set, in its own committed write — never a failure-complete.
+    expect(h.journal.log.some((logged) => logged.startsWith('markRetryable:'))).toBe(true);
+    expect(h.journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
+    const row = await h.journal.lookup(COMPANY, KEY);
+    // "Marker is distinct from in-flight and completed": durable aborted_retryable.
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.attemptId).toBe(ATTEMPT);
+    // Retained token N (1, the claim token) — never re-minted (D6 token rule).
+    expect(row?.fencingToken).toBe(1);
+    // The work is untouched by the reconcile.
+    expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
+  });
+
+  it('no-effect branch is still CLAIM-GATED: a stale token cannot mark the row retryable — rejected without mutation (spec "Stale token cannot mark retryable")', async () => {
+    const h = harness();
+    await closeReady(h); // row owned by token 1
+
+    const reconcile = reconcilePostEffectFailure(
+      { work: h.work, journal: h.journal, sandbox: h.sandbox },
+      finalizeInput(notApplied, { fencingToken: 0 }), // stale holder presents token 0
+    );
+
+    // The widened trigger does NOT weaken the claim-ownership gate: a stale
+    // holder cannot convert the row to retryable (fail loud, R4-001).
+    await expect(reconcile).rejects.toThrow(/fencing token mismatch/i);
+    expect(h.sandbox.undos).toHaveLength(0);
+    const row = await h.journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('in_flight');
+    expect(row?.fencingToken).toBe(1);
   });
 });
