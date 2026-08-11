@@ -144,33 +144,48 @@ The worker MUST close via `completeWorkAtomically`: journal decision → replay,
 
 ### Requirement: Journal-Anchored Reconciliation
 
-After post-effect failure the worker MUST reconcile from journal and undo log. Applied effects MUST be undone before close; unapplied effects MUST retry via token-free replay. CAS loss while Work remains `in_progress` MUST call token-gated `markRetryable` with the retained token. Irreconcilable state MUST status-guardedly complete as `UNRESOLVED_REQUIRES_HUMAN` without requiring token ownership, preserving honest T2(ii) close. [REQ]
-(Previously: Reconciliation carried no claim token and journal writes were unfenced.)
+Recovery of designated `in_progress` Work MUST reconcile from the journal and durable undo evidence using the retained fencing token. W1 (no journal row and no effect evidence) MUST resume at pre-effect reconciliation. W2 (`in_flight`, no applied effect) MUST become `aborted_retryable` without undo. W3 (`in_flight`, applied effect) MUST undo before becoming `aborted_retryable`. Retryable outcomes MUST resume without re-claiming. Missing or contradictory evidence, failed undo, and other unsafe states MUST return a typed `UNRESOLVED_REQUIRES_HUMAN` disposition and MUST NOT re-execute the effect. Recovery MUST be idempotent when repeated. [REQ]
+(Previously: Reconciliation treated no-effect recovery as token-free replay and did not define supervisor recovery for W1/W2/W3.)
 
-#### Scenario: Applied effect reversed then attempt closed
-- GIVEN effect applied and terminal transaction failed
-- WHEN reconciliation runs
-- THEN it MUST undo and then close the attempt
+#### Scenario: W1 resumes with no journal row
+- GIVEN designated `in_progress` Work with no journal row and no effect evidence
+- WHEN recovery runs
+- THEN it MUST return a resumable disposition without undo or token minting
 
-#### Scenario: No effect applied leads to clean replay
-- GIVEN undo log shows no applied effect
-- WHEN reconciliation runs
-- THEN it MUST use token-free replay and MUST NOT undo
+#### Scenario: W2 becomes retryable without undo
+- GIVEN matching-token `in_flight` attempt and durable proof of no applied effect
+- WHEN recovery runs
+- THEN it MUST mark `aborted_retryable` without undo and permit same-token resume
 
-#### Scenario: Unresolvable state reported honestly
-- GIVEN journal and undo log disagree irreconcilably after Work became terminal
-- WHEN stale-holder reconciliation closes an `in_flight` row
+#### Scenario: W3 undoes before retry
+- GIVEN matching-token `in_flight` attempt with an applied effect
+- WHEN recovery runs
+- THEN it MUST undo first, mark `aborted_retryable`, and permit same-token resume
+
+#### Scenario: Unresolvable terminal state is reported honestly
+- GIVEN journal and undo evidence disagree after Work became terminal
+- WHEN stale-holder reconciliation closes the `in_flight` row
 - THEN `UNRESOLVED_REQUIRES_HUMAN` MUST persist despite stale token
 
-#### Scenario: CAS loss with applied effect and in-progress work sets the retryable marker
+#### Scenario: Applied-effect CAS loss sets the retryable marker
 - GIVEN applied effect, in-progress Work, retained token N, and CAS loss
-- WHEN reconciliation calls `markRetryable` with N
+- WHEN reconciliation undoes and marks retryable with N
 - THEN `aborted_retryable` MUST persist and same-token retry MUST remain possible
 
 #### Scenario: Stale reconciliation token is rejected
 - GIVEN journal ownership advanced from N to N + 1
-- WHEN `markRetryable` supplies N
-- THEN it MUST reject the write and leave the row unchanged
+- WHEN recovery supplies N
+- THEN it MUST return a typed failure and leave the row unchanged
+
+#### Scenario: Missing evidence or undo failure escalates
+- GIVEN recovery evidence is unavailable or required undo fails
+- WHEN recovery evaluates the attempt
+- THEN it MUST return `UNRESOLVED_REQUIRES_HUMAN` and MUST NOT resume the effect
+
+#### Scenario: Recovery is idempotent on re-tick
+- GIVEN recovery already produced a retryable, terminal, or unresolved disposition
+- WHEN the same designation is evaluated again
+- THEN no second undo, effect, or terminal mutation MUST occur
 
 ### Requirement: Durable Restart Recovery
 

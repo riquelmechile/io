@@ -14,7 +14,8 @@
 
 | Rev | Fecha | `main` | Qué cambió en este doc | Por qué cambió |
 |-----|-------|--------|------------------------|----------------|
-| **7** (vigente) | 2026-08-08 | `ea1dc59` | Se completa **fencing-tokens** (1er ítem post-work-dispatch): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS. Se agrega trazabilidad por slice. Conteo de tests **1243 → 1243** (post-archive). Specs synced **24 → 24** (3 MODIFIED: `work-lifecycle`, `worker-cycle`, `idempotency-journal`). Hito: el journal idempotency queda cercado — `markRetryable` con claim-ownership gate, `complete` con status guard, y el flake pre-existente de race de PG corregido (no-target ON CONFLICT). El snapshot de Rev 6 se conserva marcado como superado. | El ciclo SDD fencing-tokens se completó en limpio: 5 commits stacked-to-main (b83b5ec→ea1dc59), verify PASS 7/7 reqs / 36/36 escenarios, live-PG e2e 50/50 sequential, race hammer 25/25 (0 throws). Review adversarial cazó y refutó R4-001 (BIGINT string false positive) con read-only refuter; defense-in-depth guard añadido al borde RETURNING. |
+| **8** (vigente) | 2026-08-11 | `79537f2` | Se completa **supervisor-recovery** (2º ítem post-work-dispatch): recovery dirigido por supervisor (Scope B) — el Work `in_progress` huérfano post-claim se reconcilia y reanuda por designación explícita del operador, con evidencia durable y sin re-ejecutar efectos no probados. Undo log durable (`snapshotUndoLog` + persistencia FS), designation CAS (migración 011, token preservado), matriz W1/W2/W3 (resume / abort-retryable / undo+retry), escalada tipada `UNRESOLVED_REQUIRES_HUMAN`, `dispatchRecovery` sin re-claim y seam `onRecovery` en el tick secuencial. Conteo de tests **1243 → 1350** (post-archive). Specs synced **24 → 24** (6 MODIFIED: `sandbox-port`, `idempotency-journal`, `worker-cycle`, `work-dispatch`, `supervisor-timer`, `io-persistence-recovery-contract`; 1 ADDED req en `work-lifecycle`). Hito: la no-garantía de crash se vuelve recovery seguro y auditado — 3 CRITICALs cerrados. El snapshot de Rev 7 se conserva marcado como superado. | El ciclo SDD supervisor-recovery se completó: 6 commits stacked-to-main (b6ada93→79537f2), verify PASS 8/8 reqs / 44/44 escenarios, 1350 tests (live-PG sequential), 0 blockers / 0 critical. Review por slice 0 BLOCKER / 0 CRITICAL (slice 2: 3 WARNING); sdd-verify cazó 2 CRITICALs cross-cutting que los reviews por slice no vieron, y el review de remediation cazó R4-002 (CRITICAL); los 3 quedaron cerrados en `79537f2`. |
+| **7** (superada) | 2026-08-08 | `ea1dc59` | Se completa **fencing-tokens** (1er ítem post-work-dispatch): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS. Se agrega trazabilidad por slice. Conteo de tests **1243 → 1243** (post-archive). Specs synced **24 → 24** (3 MODIFIED: `work-lifecycle`, `worker-cycle`, `idempotency-journal`). Hito: el journal idempotency queda cercado — `markRetryable` con claim-ownership gate, `complete` con status guard, y el flake pre-existente de race de PG corregido (no-target ON CONFLICT). El snapshot de Rev 6 se conserva marcado como superado. | El ciclo SDD fencing-tokens se completó en limpio: 5 commits stacked-to-main (b83b5ec→ea1dc59), verify PASS 7/7 reqs / 36/36 escenarios, live-PG e2e 50/50 sequential, race hammer 25/25 (0 throws). Review adversarial cazó y refutó R4-001 (BIGINT string false positive) con read-only refuter; defense-in-depth guard añadido al borde RETURNING. |
 | **6** (superada) | 2026-08-08 | `929daef` | Paso 3 y Post-Paso 3 siguen **COMPLETOS** y se completan **3 slices post-work-dispatch** (daemon-lifecycle, heartbeat-decision-events, pro-escalation) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-work-dispatch. Conteo de tests **1071 → 1169**. Specs synced **23 → 24** (1 NEW: `daemon-lifecycle`; MODIFIED: `heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`). Hito acumulado: el runtime ya corre en producción (daemon zero-dep, schedule sin solapamiento, shutdown gracioso), la decisión del pre-gate se vuelve hecho de negocio auditable (eventos `heartbeat.decision`), y §13.2 completa su escalada Flash→Pro determinística por `riskClass`. El flake PG concurrente de Paso 3 queda resuelto de facto (`152768d`, paralelismo de archivos off). El snapshot de Rev 5 se conserva marcado como superado. | Los 3 primeros ítems del roadmap posterior a work-dispatch se completaron en limpio: ciclos SDD con verify **PASS** (7/7+12/12, 6/6+21/21, 7/7+19/19), live E2E DeepSeek/PG 3/3 en pro-escalation, archivados y pusheados. |
 | **5** (superada) | 2026-08-02 | `4eb2451` | Paso 3 sigue **COMPLETO** y se completan **3 slices post-Paso 3** (heartbeat-activation, supervisor-timer, work-dispatch) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-Paso 3. Conteo de tests **968 → 1071**. Specs synced **21 → 23** (2 NEW: `supervisor-timer`, `work-dispatch`; MODIFIED: `worker-cycle`, `heartbeat`, `business-event`, `work-lifecycle`). Hito acumulado: el ahorro de costo §2 se vuelve **REAL** — `activate` dispara un ciclo de worker que despacha trabajo accionable; `no-llm-heartbeat` no gasta LLM. Supervisor durable (wake-ups sin trabajo + cursor per-company) + dispatch desde `onActivate`. El snapshot de Rev 4 se conserva marcado como superado. | Los 3 slices que siguen al roadmap de Paso 3 se completaron en limpio (heartbeat-activation, supervisor-timer, work-dispatch): ciclos SDD con verify **PASS**, archivados y pusheados. `work-dispatch` hace real el ahorro de costo del pre-gate §13.2 construido en Paso 3. |
 | **4** (superada) | 2026-08-01 | `d5b42e9` | Paso 3 pasa de "🔄 SIGUIENTE" a **"✅ COMPLETO"** (6 slices verificados + archivados + pusheados). Se agrega trazabilidad por slice (archive, spec canónica, commits). Conteo de tests **757 → 968**. Specs synced **17 → 21** (4 NEW: `context-compiler`, `business-event`, `skill`, `heartbeat`). Hito acumulado: worker end-to-end vs DeepSeek V4 real + PG vivo, contexto compilado (KV-cache, skills en segmento 7), log append-only BusinessEvent y pre-gate determinístico §13.2 (heartbeats). El snapshot de Rev 3 se conserva marcado como superado. | Los 6 slices del roadmap de Paso 3 se completaron en limpio (context-compiler, deepseek-live-e2e, businessevent, first-skill, skill-segment7, heartbeats): ciclos SDD con verify **PASS** —o PASS WITH WARNINGS por el flake PG preexistente—, archivados y pusheados. |
@@ -22,11 +23,35 @@
 | **2** (superada) | 2026-07-31 | `4cc0b15` | Paso 1 `harden` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 2 `first-enterprise-vertical` pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **411 → 604**. Se agrega evidencia de verify por slice y el snapshot de Rev 1 se conserva marcado como superado. | El ciclo limpio `harden-first-enterprise-vertical-foundation` se completó: **18/18 requisitos, 61/61 escenarios, 0 blockers, 0 critical**, review adversarial CLEAN en cada slice (A/B/C). Se cumplió la *regla de oro* (no abrir la vertical sin harden limpio) → la vertical queda desbloqueada. |
 | **1** (superada) | 2026-07-31 | `4ea1653` | Versión inicial. Baseline `deepseek-client` cerrada; `harden` como Paso 1 pendiente; `first-enterprise-vertical` como Paso 2. | Reset a una baseline limpia tras el ciclo harden **contaminado** (hacks de gate: findings vacíos inyectados y gap-fixes post-verify). Se documentó el punto de partida estable para rehacer el harden en limpio. |
 
-**Estado actual (Rev 7):** `main @ ea1dc59` = `origin/main`. fencing-tokens **COMPLETO Y ARCHIVADO**. Siguiente: recovery dirigido por supervisor (Scope B).
+**Estado actual (Rev 8):** `main @ 79537f2` = `origin/main`. supervisor-recovery **COMPLETO Y ARCHIVADO**. Siguiente: Skill outcome BusinessEvents (más allá de `work.completed`).
 
 ---
 
-## Estado actual (Rev 7 — vigente)
+## Estado actual (Rev 8 — vigente)
+
+| Check | Resultado |
+|-------|-----------|
+| Commit | `79537f2` — impl HEAD supervisor-recovery; archive `chore(openspec): archive supervisor-recovery` (Rev 8) |
+| GitHub `main` | = local (pusheado con los 7 commits + el archive) |
+| `pnpm check` | GREEN (format, tsc, build, lint, test) |
+| Tests | **1350 passed / 6 skipped** |
+| E2E DeepSeek/PG | GREEN (supervisor recovery E2E live-PG; suite secuencial, 6 skips = guards live/provider esperados) |
+| Post-work-dispatch | **✅ COMPLETO** — 5/5 (daemon-lifecycle, heartbeat-decision-events, pro-escalation, fencing-tokens, supervisor-recovery) |
+| Specs synced | 6 MODIFIED + 1 ADDED req (`work-lifecycle`) (total 24) |
+| Archive (último) | `openspec/changes/archive/2026-08-11-supervisor-recovery/` |
+
+### Evolución del conteo de tests (durante Rev 8)
+
+| Momento | Tests | Delta / motivo |
+|---------|-------|----------------|
+| Baseline (Rev 7, `ea1dc59`) | 1243 passed / 6 skipped | Post-work-dispatch completo (fencing-tokens) |
+| supervisor-recovery (undo log durable + designation CAS + W1/W2/W3 matrix + dispatch/supervisor wiring + E2E live-PG + remediation attempt-correlación / stale-token tipado / no-seal) | **1350 passed / 6 skipped** | +107 (migración 011, `snapshotUndoLog` + persistencia FS, `requestRecovery` CAS, `recoverDesignatedWork`, `dispatchRecovery`, `onRecovery` tick seam, daemon threading, E2E recovery, remediación de los 3 CRITICALs) |
+
+---
+
+## Snapshot histórico (Rev 7 — superada, se conserva para trazabilidad)
+
+> ⚠️ **Este bloque refleja el estado a `ea1dc59` y YA NO es el punto de partida vigente.**
 
 | Check | Resultado |
 |-------|-----------|
@@ -397,13 +422,13 @@ explore → propose → design → spec → tasks
 
 ### Próximos pasos (después de work-dispatch)
 
-> **Actualizado en Rev 6:** los 3 primeros ítems (daemon lifecycle, heartbeat-decision events, escalamiento a Pro) **YA se completaron** en los slices post-work-dispatch — ver sección "Post-work-dispatch". Los próximos pasos vigentes están ahí.
+> **Actualizado en Rev 8:** los 5 primeros ítems (daemon lifecycle, heartbeat-decision events, escalamiento a Pro, fencing tokens y recovery dirigido por supervisor) **YA se completaron** en los slices post-work-dispatch — ver sección "Post-work-dispatch". El próximo paso vigente es **Skill outcome BusinessEvents**.
 
 - [x] **Daemon / process lifecycle wiring** → hecho en `daemon-lifecycle` (Rev 6): daemon de producción zero-dep, schedule sin solapamiento, shutdown gracioso.
 - [x] **heartbeat-decision BusinessEvents** → hecho en `heartbeat-decision-events` (Rev 6): la decisión del pre-gate se registra como hecho de negocio.
 - [x] **Escalamiento a Pro** → hecho en `pro-escalation` (Rev 6): tier / escalation determinístico por `riskClass`.
 - [x] **Fencing tokens** → hecho en `fencing-tokens` (Rev 7): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS; markRetryable con claim-ownership gate; complete con status guard; flake pre-existente de PG race corregido.
-- [ ] **Recovery dirigido por supervisor (Scope B)** (`recoverInFlightWork` para Work `in_progress` huérfano post-claim).
+- [x] **Recovery dirigido por supervisor (Scope B)** → hecho en `supervisor-recovery` (Rev 8): Work `in_progress` huérfano post-claim se reconcilia y reanuda por designación del operador (undo log durable, matriz W1/W2/W3, dispatch directo sin re-claim, seam `onRecovery` en el tick). Verify PASS 8/8 reqs / 44/44 escenarios, 1350 tests.
 - [ ] **Skill outcome BusinessEvents** (más allá de `work.completed`).
 - [ ] **Learning / promotion (Increment 8)**: ciclo candidate → active.
 - [ ] **Memory OS**.
@@ -450,10 +475,10 @@ explore → propose → design → spec → tasks
 
 ---
 
-## Resumen (actualizado en Rev 6)
+## Resumen (actualizado en Rev 8)
 
 ```text
-main @ 929daef  ← AQUÍ ESTAMOS (Rev 6, verificado, pusheado)
+main @ 79537f2  ← AQUÍ ESTAMOS (Rev 8, verificado, pusheado)
   ├─ domain-foundation (código + specs)
   ├─ deepseek-client (código + archive PASS)
   ├─ harden-first-enterprise-vertical-foundation (CERRADO + archivado + specs synced)
@@ -469,14 +494,15 @@ main @ 929daef  ← AQUÍ ESTAMOS (Rev 6, verificado, pusheado)
   │    ├─ heartbeat-activation (@1a0ca39)
   │    ├─ supervisor-timer (@9501b7e)
   │    └─ work-dispatch (@4eb2451)
-  └─ post-work-dispatch (COMPLETO + 4 slices archivados)
+  └─ post-work-dispatch (COMPLETO + 5 slices archivados)
        ├─ daemon-lifecycle (@07eea12)
        ├─ heartbeat-decision-events (@a301d16)
        ├─ pro-escalation (@929daef)
-       └─ fencing-tokens (@ea1dc59)
+       ├─ fencing-tokens (@ea1dc59)
+       └─ supervisor-recovery (@79537f2)
 
 siguiente
-  └─ recovery dirigido por supervisor (Scope B — recoverInFlightWork para Work in_progress huérfano post-claim)
+  └─ Skill outcome BusinessEvents (más allá de work.completed)
 ```
 
 ## Regla de oro
@@ -486,3 +512,4 @@ DeepSeek se conserva. Harden se rehace. *(Hecho: harden reconstruido limpio y ar
 **Apply termina escenarios; verify solo confirma; review no se fabrica.** *(Rev 3: el review adversarial cazó 3 defectos reales — claim brick, doble recibo, atomicidad — y se corrigieron con tests, no se taparon.)*
 **El costo es parte del razonamiento — ahora REAL: `activate` dispara un ciclo de worker; `no-llm-heartbeat` no gasta LLM.** *(Rev 5: el pre-gate §13.2 ya no solo decide — al ACTUAR, la rama `activate` ejecuta un ciclo de worker real que despacha trabajo accionable contra DeepSeek + PG; el ahorro es real, no potencial.)*
 **La decisión se audita y el tier escala solo por riesgo.** *(Rev 6: cada evaluación del pre-gate —incluso la ociosa sin LLM— queda como hecho de negocio `heartbeat.decision`, y la activación con `riskClass ≥ high` corre en Pro con el mismo prefijo estable. El runtime ya tiene proceso de producción durable (daemon) y la economía §13.2 completa su escalada Flash→Pro, dormida y cost-safe hasta que exista productor de `riskClass`.)*
+**El crash deja de ser una no-garantía silenciosa: el recovery es designado, reconciliado y con evidencia durable.** *(Rev 8: el Work `in_progress` huérfano post-claim se reanuda solo por designación explícita del operador y solo con prueba durable de no-ejecución o compensación exitosa — undo log persistente, matriz W1/W2/W3, dispatch sin re-claim, escalada tipada `UNRESOLVED_REQUIRES_HUMAN` sin re-ejecutar. Nunca auto-recovery; nunca doble efecto.)*

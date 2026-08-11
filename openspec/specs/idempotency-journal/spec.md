@@ -66,13 +66,18 @@ Journal status MUST be exactly `in_flight | aborted_retryable | completed`. `ins
 
 ### Requirement: Retryable Marker on Finalize CAS Loss
 
-After an applied effect and finalize CAS loss while Work remains `in_progress`, `markRetryable` MUST change `in_flight` to durable `aborted_retryable` only when the supplied token equals the stored token. A stale token MUST be rejected without mutation. Controlled retry MUST retain that same token without re-claim or increment. PostgreSQL and fake MUST behave identically. [REQ] [INF]
-(Previously: `markRetryable` checked status but not claim ownership or same-token retry.)
+For `in_flight` Work that remains `in_progress`, `markRetryable` MUST change the attempt to durable `aborted_retryable` when either an applied effect has been undone or durable evidence proves no effect was applied. The supplied token MUST equal the stored token; a stale token MUST return a typed failure without mutation. Abort MUST NOT call `complete`, store a completed result, or seal the key. Controlled retry MUST retain the same token without re-claim or increment. PostgreSQL and fake MUST behave identically. [REQ] [INF]
+(Previously: `markRetryable` was specified only after an applied effect and finalize CAS loss.)
 
-#### Scenario: Marker set on CAS loss with applied effect and in-progress work
+#### Scenario: Marker set after applied effect is undone
 - GIVEN applied effect, in-progress Work, and matching token N
-- WHEN `markRetryable` runs
+- WHEN undo succeeds and `markRetryable` runs
 - THEN `aborted_retryable` MUST persist
+
+#### Scenario: W2 abort requires no preceding undo
+- GIVEN an `in_flight` attempt and durable evidence that no effect was applied
+- WHEN `markRetryable` runs with matching token N
+- THEN `aborted_retryable` MUST persist without invoking undo
 
 #### Scenario: Marker is distinct from in-flight and completed
 - GIVEN a retryable row
@@ -81,13 +86,13 @@ After an applied effect and finalize CAS loss while Work remains `in_progress`, 
 
 #### Scenario: Marker survives a restart
 - GIVEN marker stored in PostgreSQL 18.4
-- WHEN process restarts
+- WHEN the process restarts
 - THEN `aborted_retryable` MUST remain
 
 #### Scenario: Stale token cannot mark retryable
 - GIVEN stored token N + 1
 - WHEN `markRetryable` supplies N
-- THEN it MUST reject and preserve status and result
+- THEN it MUST return a typed failure and preserve status and result
 
 #### Scenario: Fake and PostgreSQL parity
 - GIVEN equivalent journal rows in fake and PostgreSQL
