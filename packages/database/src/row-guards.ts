@@ -81,6 +81,14 @@ export function parseWorkRow(input: unknown): RowGuardResult<Work> {
   if (!isNonNegativeInteger(row.fencingToken)) {
     return fail('work row fencingToken must be a non-negative integer');
   }
+  // Recovery designation marker (011): MUST be a boolean when present. Queries
+  // that do not project it (get / listActionableByCompany) carry undefined —
+  // the DEFAULT false — so an absent marker is valid (pre-011 legacy rows /
+  // non-discovery reads). The marker is repository metadata: it NEVER becomes
+  // a Work field (the domain `Work` type stays pure).
+  if (row.recoveryRequested !== undefined && typeof row.recoveryRequested !== 'boolean') {
+    return fail('work row recoveryRequested must be a boolean');
+  }
   if (!isStringArray(row.evidenceRefs)) {
     return fail('work row evidenceRefs must be an array of strings');
   }

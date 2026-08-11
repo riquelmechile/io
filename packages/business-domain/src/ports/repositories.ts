@@ -89,6 +89,33 @@ export interface WorkRepository {
    * result MUST never include another company's Work.
    */
   listActionableByCompany(companyId: string): Promise<readonly Work[]>;
+  /**
+   * Plain CAS designation marker (supervisor-recovery design D2): sets/clears
+   * the `recovery_requested` marker with expected-version CAS — `version` bumps
+   * N → N + 1 while `state` and `fencing_token` stay UNCHANGED (no
+   * {@link FencingDirective}, no token mint). The version bump is the fencing:
+   * a zombie worker holding the stale version fails its terminal CAS once the
+   * stored version advances. A stale `expectedVersion` returns
+   * `{ ok: false, reason: 'version-conflict', current? }` and NEVER overwrites.
+   * The marker is repository metadata: the returned `Work` never carries it
+   * (the domain `Work` type stays pure).
+   */
+  setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult>;
+  /**
+   * Operator recovery designation discovery (supervisor-recovery design D2,
+   * migration 011): tenant-scoped list of the company's DESIGNATED `in_progress`
+   * Work — exactly the partial-index predicate
+   * `idx_work_recovery_requested` (`WHERE recovery_requested AND
+   * state='in_progress'`) covers. A designated Work that leaves `in_progress`
+   * (terminal close) drops out of discovery by construction. An empty
+   * `companyId` MUST be rejected BEFORE any storage read (ADR-0002/R8).
+   */
+  listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]>;
 }
 
 export interface BusinessReceiptRepository {

@@ -80,12 +80,21 @@ export class InMemoryDbConnection implements DbConnection {
 
     let rows = this.table(select.table);
     for (const condition of select.where) {
-      const wanted = params[condition.param - 1];
-      rows = rows.filter((row) =>
-        condition.any
-          ? Array.isArray(wanted) && wanted.includes(row[condition.column])
-          : row[condition.column] === wanted,
-      );
+      if ('bare' in condition) {
+        // Bare boolean column: truthiness — `WHERE recovery_requested`
+        // (supervisor-recovery partial-index predicate).
+        rows = rows.filter((row) => row[condition.column] === true);
+      } else if ('literal' in condition) {
+        // Literal comparison: `state = 'in_progress'` / `col = true|false`.
+        rows = rows.filter((row) => row[condition.column] === condition.literal);
+      } else {
+        const wanted = params[condition.param - 1];
+        rows = rows.filter((row) =>
+          condition.any
+            ? Array.isArray(wanted) && wanted.includes(row[condition.column])
+            : row[condition.column] === wanted,
+        );
+      }
     }
     if (select.orderBy) {
       const order = select.orderBy;
@@ -242,15 +251,18 @@ interface SelectItem {
   readonly alias: string;
 }
 
+/** One WHERE condition of a parsed SELECT: a bound-param comparison, a bare
+ * boolean column (truthiness — the recovery designation predicate), or a
+ * string/boolean literal comparison. */
+type WhereCondition =
+  | { readonly column: string; readonly param: number; readonly any?: boolean }
+  | { readonly column: string; readonly literal: string | boolean }
+  | { readonly column: string; readonly bare: true };
+
 interface ParsedSelect {
   readonly items: readonly SelectItem[];
   readonly table: string;
-  readonly where: readonly {
-    readonly column: string;
-    readonly param: number;
-    /** True when the condition is `col = ANY($N)` (array membership). */
-    readonly any?: boolean;
-  }[];
+  readonly where: readonly WhereCondition[];
   readonly orderBy?: { readonly column: string; readonly dir: 'ASC' | 'DESC' };
 }
 
@@ -312,16 +324,21 @@ function parseUpdate(sql: string): ParsedUpdate | undefined {
 }
 
 /**
- * Parse `SELECT <list> FROM <table> [WHERE col = $N (AND col = $M | AND col =
- * ANY($M))?] [ORDER BY col ASC|DESC]`. Supports up to two WHERE conditions so
- * scoped reads (`WHERE company_id = $1 AND <id> = $2`, ADR-0002) and the
- * actionable read (`WHERE company_id = $1 AND state = ANY($2)`, work-dispatch)
- * round-trip. An `ANY($N)` condition filters by array membership — the param is
- * the JS array the adapter binds for `state = ANY($2)`.
+ * Parse `SELECT <list> FROM <table> [WHERE <cond> (AND <cond>)*] [ORDER BY col
+ * ASC|DESC]`. The WHERE conditions are split on `AND` and each parsed as one
+ * of: a bound-param comparison (`col = $N`), an array membership (`col =
+ * ANY($N)` — the actionable read binds the declarative state set), a bare
+ * boolean column (`recovery_requested` — truthiness, the recovery designation
+ * predicate), or a literal comparison (`state = 'in_progress'`, `col =
+ * true|false`). Scoped reads (`WHERE company_id = $1 AND <id> = $2`,
+ * ADR-0002) and the designation read (`WHERE company_id = $1 AND
+ * recovery_requested AND state='in_progress' ORDER BY id ASC`) therefore
+ * round-trip. An unrecognized condition makes the whole SELECT unparseable
+ * (query() resolves []).
  */
 function parseSelect(sql: string): ParsedSelect | undefined {
   const match =
-    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(\w+)\s*=\s*\$(\d+)(?:\s+AND\s+(\w+)\s*=\s*(?:ANY\(\$(\d+)\)|\$(\d+)))?)?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
+    /^SELECT\s+(.*?)\s+FROM\s+(\w+)(?:\s+WHERE\s+(.+?))?(?:\s+ORDER\s+BY\s+(\w+)\s+(ASC|DESC))?\s*$/i.exec(
       sql,
     );
   const list = match?.[1];
@@ -339,26 +356,46 @@ function parseSelect(sql: string): ParsedSelect | undefined {
     return { column, alias: column };
   });
 
-  const where: Array<{
-    readonly column: string;
-    readonly param: number;
-    readonly any?: boolean;
-  }> = [];
-  const firstColumn = match?.[3];
-  const firstParam = match?.[4];
-  if (firstColumn && firstParam) where.push({ column: firstColumn, param: Number(firstParam) });
-  const secondColumn = match?.[5];
-  const secondAnyParam = match?.[6];
-  const secondPlainParam = match?.[7];
-  if (secondColumn) {
-    if (secondAnyParam)
-      where.push({ column: secondColumn, param: Number(secondAnyParam), any: true });
-    else if (secondPlainParam)
-      where.push({ column: secondColumn, param: Number(secondPlainParam) });
+  const where: WhereCondition[] = [];
+  const whereBody = match?.[3];
+  if (whereBody) {
+    for (const part of whereBody.split(/\s+AND\s+/i)) {
+      const condition = part.trim();
+      const any = /^(\w+)\s*=\s*ANY\(\$(\d+)\)$/i.exec(condition);
+      if (any) {
+        where.push({ column: any[1] ?? '', param: Number(any[2]), any: true });
+        continue;
+      }
+      const plain = /^(\w+)\s*=\s*\$(\d+)$/i.exec(condition);
+      if (plain) {
+        where.push({ column: plain[1] ?? '', param: Number(plain[2]) });
+        continue;
+      }
+      const literal = /^(\w+)\s*=\s*'([^']*)'$/i.exec(condition);
+      if (literal) {
+        where.push({ column: literal[1] ?? '', literal: literal[2] ?? '' });
+        continue;
+      }
+      const booleanLiteral = /^(\w+)\s*=\s*(true|false)$/i.exec(condition);
+      if (booleanLiteral) {
+        where.push({
+          column: booleanLiteral[1] ?? '',
+          literal: (booleanLiteral[2] ?? '').toLowerCase() === 'true',
+        });
+        continue;
+      }
+      const bare = /^(\w+)$/i.exec(condition);
+      if (bare) {
+        where.push({ column: bare[1] ?? '', bare: true });
+        continue;
+      }
+      // An unrecognized WHERE condition: not parseable (query() resolves []).
+      return undefined;
+    }
   }
 
-  const orderColumn = match?.[8];
-  const orderDir = match?.[9];
+  const orderColumn = match?.[4];
+  const orderDir = match?.[5];
   const orderBy =
     orderColumn && orderDir
       ? { column: orderColumn, dir: orderDir.toUpperCase() as 'ASC' | 'DESC' }

@@ -187,6 +187,19 @@ class RacingWorkRepository implements WorkRepository {
   async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
     return this.inner.listActionableByCompany(companyId);
   }
+
+  async listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listRecoveryRequestedByCompany(companyId);
+  }
+
+  setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult> {
+    return this.inner.setRecoveryRequest(companyId, workId, expectedVersion, requested);
+  }
 }
 
 describe('B11 parity 1 — app pre-effect replay/DENY ≡ completeWork lookup', () => {
@@ -665,5 +678,177 @@ describe('B11 parity 5 — sandbox undo-log snapshot: FileDocumentSandbox ≡ Du
     } finally {
       cleanup();
     }
+  });
+});
+
+describe('B11 parity 6 — recovery designation: InMemoryWorkRepository ≡ PgWorkRepository (listRecoveryRequestedByCompany + setRecoveryRequest CAS)', () => {
+  const DESIGNATED_ID = 'work-design';
+
+  /** A claimed (in_progress) orphan at version 2, token 5 — identical in both
+   * worlds. The marker CAS must bump version while preserving state+token. */
+  function inProgress(id: string, companyId: string = COMPANY): Work {
+    return {
+      workId: id,
+      companyId,
+      delegationId: 'del-1',
+      proposer: principals.proposer,
+      description: 'execute the quarterly close',
+      state: 'in_progress',
+      version: 2,
+      fencingToken: 5,
+      evidenceRefs: [],
+    };
+  }
+
+  /** Seed the SAME in_progress orphan into the fake and the PG adapter. */
+  async function seedBoth(): Promise<{ fake: InMemoryWorkRepository; pg: PgWorkRepository }> {
+    const fake = new InMemoryWorkRepository();
+    const pg = new PgWorkRepository(new InMemoryDbConnection());
+    for (const repo of [fake, pg]) {
+      await repo.save(inProgress(DESIGNATED_ID));
+    }
+    return { fake, pg };
+  }
+
+  it('matching-version designation: BOTH ok — version N → N + 1, state/token unchanged, marker discovered', async () => {
+    const { fake, pg } = await seedBoth();
+
+    const fakeResult = (await fake.setRecoveryRequest(COMPANY, DESIGNATED_ID, 2, true)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+    const pgResult = (await pg.setRecoveryRequest(COMPANY, DESIGNATED_ID, 2, true)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+
+    // OUTCOMES match: both ok, same version bump, same preserved state+token.
+    expect(fakeResult.ok).toBe(true);
+    expect(pgResult.ok).toBe(true);
+    expect(pgResult.value.version).toBe(fakeResult.value.version);
+    expect(pgResult.value.state).toBe(fakeResult.value.state);
+    expect(pgResult.value.fencingToken).toBe(fakeResult.value.fencingToken);
+    expect(fakeResult.value.version).toBe(3);
+    expect(fakeResult.value.state).toBe('in_progress');
+    expect(fakeResult.value.fencingToken).toBe(5);
+
+    // DISCOVERY matches: the designated orphan is listed in BOTH.
+    const fakeList = await fake.listRecoveryRequestedByCompany(COMPANY);
+    const pgList = await pg.listRecoveryRequestedByCompany(COMPANY);
+    expect(pgList.map((w) => w.workId)).toEqual(fakeList.map((w) => w.workId));
+    expect(fakeList.map((w) => w.workId)).toEqual([DESIGNATED_ID]);
+  });
+
+  it('stale-version designation: BOTH typed version-conflict, marker NOT set, stored version unchanged', async () => {
+    const { fake, pg } = await seedBoth();
+
+    const fakeResult = (await fake.setRecoveryRequest(COMPANY, DESIGNATED_ID, 1, true)) as Extract<
+      CasResult,
+      { ok: false }
+    >;
+    const pgResult = (await pg.setRecoveryRequest(COMPANY, DESIGNATED_ID, 1, true)) as Extract<
+      CasResult,
+      { ok: false }
+    >;
+
+    expect(fakeResult.ok).toBe(false);
+    expect(pgResult.ok).toBe(false);
+    expect(pgResult.reason).toBe(fakeResult.reason);
+    expect(fakeResult.reason).toBe('version-conflict');
+    expect(pgResult.current?.version).toBe(fakeResult.current?.version);
+    expect(fakeResult.current?.version).toBe(2);
+
+    // No marker landed in BOTH: discovery stays empty.
+    expect(await fake.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+    expect(await pg.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+    expect((await fake.get(COMPANY, DESIGNATED_ID))?.version).toBe(2);
+    expect((await pg.get(COMPANY, DESIGNATED_ID))?.version).toBe(2);
+  });
+
+  it('absent work: BOTH typed version-conflict (never fabricate)', async () => {
+    const { fake, pg } = await seedBoth();
+
+    expect((await fake.setRecoveryRequest(COMPANY, 'ghost', 2, true)).ok).toBe(false);
+    expect((await pg.setRecoveryRequest(COMPANY, 'ghost', 2, true)).ok).toBe(false);
+  });
+
+  it('cross-tenant designation: BOTH version-conflict with NO current; discovery empty under the wrong tenant', async () => {
+    const { fake, pg } = await seedBoth();
+
+    const fakeResult = (await fake.setRecoveryRequest('other', DESIGNATED_ID, 2, true)) as Extract<
+      CasResult,
+      { ok: false }
+    >;
+    const pgResult = (await pg.setRecoveryRequest('other', DESIGNATED_ID, 2, true)) as Extract<
+      CasResult,
+      { ok: false }
+    >;
+
+    expect(fakeResult.ok).toBe(false);
+    expect(pgResult.ok).toBe(false);
+    expect(pgResult.reason).toBe(fakeResult.reason);
+    expect(fakeResult.current).toBeUndefined();
+    expect(pgResult.current).toBeUndefined();
+
+    expect(await fake.listRecoveryRequestedByCompany('other')).toEqual([]);
+    expect(await pg.listRecoveryRequestedByCompany('other')).toEqual([]);
+  });
+
+  it('designated NON-in_progress Work is never discovered in BOTH (partial-index predicate); version bump matches', async () => {
+    const fake = new InMemoryWorkRepository();
+    const pg = new PgWorkRepository(new InMemoryDbConnection());
+    const accepted: Work = { ...inProgress(DESIGNATED_ID), state: 'accepted' };
+    for (const repo of [fake, pg]) {
+      await repo.save(accepted);
+      const cas = await repo.setRecoveryRequest(COMPANY, DESIGNATED_ID, 2, true);
+      expect(cas.ok).toBe(true);
+      if (cas.ok) expect(cas.value.version).toBe(3);
+    }
+
+    // The marker CAS landed (version bumped) but the partial-index predicate
+    // excludes non-in_progress rows in BOTH worlds.
+    expect(await fake.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+    expect(await pg.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+  });
+
+  it('clear + explicit re-designation: BOTH remove the marker (list empty), version bumps each time (S4)', async () => {
+    const { fake, pg } = await seedBoth();
+    await fake.setRecoveryRequest(COMPANY, DESIGNATED_ID, 2, true);
+    await pg.setRecoveryRequest(COMPANY, DESIGNATED_ID, 2, true);
+
+    // Clear (recovery completed / UNRESOLVED escalation recorded).
+    const fakeClear = (await fake.setRecoveryRequest(COMPANY, DESIGNATED_ID, 3, false)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+    const pgClear = (await pg.setRecoveryRequest(COMPANY, DESIGNATED_ID, 3, false)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+    expect(fakeClear.ok).toBe(true);
+    expect(pgClear.ok).toBe(true);
+    expect(pgClear.value.version).toBe(fakeClear.value.version);
+    expect(await fake.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+    expect(await pg.listRecoveryRequestedByCompany(COMPANY)).toEqual([]);
+
+    // Explicit re-designation is a fresh operator action in BOTH.
+    const fakeRe = (await fake.setRecoveryRequest(COMPANY, DESIGNATED_ID, 4, true)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+    const pgRe = (await pg.setRecoveryRequest(COMPANY, DESIGNATED_ID, 4, true)) as Extract<
+      CasResult,
+      { ok: true }
+    >;
+    expect(fakeRe.ok).toBe(true);
+    expect(pgRe.ok).toBe(true);
+    expect(pgRe.value.version).toBe(fakeRe.value.version);
+    expect(fakeRe.value.version).toBe(5);
+    expect((await fake.listRecoveryRequestedByCompany(COMPANY)).map((w) => w.workId)).toEqual([
+      DESIGNATED_ID,
+    ]);
+    expect((await pg.listRecoveryRequestedByCompany(COMPANY)).map((w) => w.workId)).toEqual([
+      DESIGNATED_ID,
+    ]);
   });
 });

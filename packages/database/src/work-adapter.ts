@@ -265,4 +265,81 @@ export class PgWorkRepository {
       return parsed.value;
     });
   }
+
+  /**
+   * Recovery designation discovery (supervisor-recovery design D2, migration
+   * 011): the company's designated `in_progress` Work — the EXACT predicate
+   * the partial index `idx_work_recovery_requested` (`WHERE recovery_requested
+   * AND state='in_progress'`) covers, oldest first (`ORDER BY id ASC`) like the
+   * actionable read. A designated Work that leaves `in_progress` (terminal
+   * close) drops out of discovery by construction. An empty `companyId` is
+   * rejected BEFORE SQL (fake parity). Rows read from PG are UNTRUSTED bytes:
+   * every row passes {@link parseWorkRow} (D7) — the projected
+   * `recovery_requested` marker is validated (boolean, default false) but never
+   * becomes a `Work` field.
+   */
+  async listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]> {
+    if (!companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
+    const rows = await this.conn.query<
+      Work & { deliverable: Deliverable | null; outcome: WorkOutcome | null }
+    >(
+      'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
+        'state, version, fencing_token AS "fencingToken", deliverable, evidence_refs AS "evidenceRefs", outcome, ' +
+        'recovery_requested AS "recoveryRequested" ' +
+        "FROM work WHERE company_id = $1 AND recovery_requested AND state = 'in_progress' ORDER BY id ASC",
+      [companyId],
+    );
+    return rows.map((row) => {
+      const parsed = parseWorkRow(row);
+      if (!parsed.ok) {
+        throw new Error(`corrupt work row: ${parsed.reason}`);
+      }
+      return parsed.value;
+    });
+  }
+
+  /**
+   * Recovery designation CAS (supervisor-recovery design D2): sets/clears the
+   * `recovery_requested` marker with expected-version CAS — one atomic UPDATE
+   * that bumps `version=version+1` and touches NOTHING else (`state` and
+   * `fencing_token` stay UNCHANGED; no FencingDirective, no token mint). The
+   * version bump is the fencing: a zombie worker holding the stale version
+   * fails its terminal CAS once the stored version advances. `rowCount === 0`
+   * ⇒ stale version, absent work, or wrong tenant ⇒ typed `version-conflict`
+   * with the current work attached when the scoped read finds it — never an
+   * overwrite. The marker is repository metadata: the returned `Work` never
+   * carries it.
+   */
+  async setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult> {
+    if (!companyId) {
+      throw new Error('a non-empty companyId is required');
+    }
+    const result = (await this.conn.execute(
+      'UPDATE work SET recovery_requested=$4, version=version+1 ' +
+        'WHERE work_id=$1 AND company_id=$2 AND version=$3',
+      [workId, companyId, expectedVersion, requested],
+    )) as { rowCount?: number };
+    if ((result.rowCount ?? 0) === 0) {
+      const current = await this.get(companyId, workId);
+      return current === undefined
+        ? { ok: false, reason: 'version-conflict' }
+        : { ok: false, reason: 'version-conflict', current };
+    }
+    // The CAS matched, so the row exists; re-read it to return the fresh Work
+    // (the marker CAS carries no Work object of its own). A vanishing row is a
+    // connection-layer integrity violation — fail loudly (claim-mint precedent,
+    // R4-001 boundary guard) rather than fabricate a value.
+    const current = await this.get(companyId, workId);
+    if (current === undefined) {
+      throw new Error(`work row vanished after designation CAS: ${companyId}/${workId}`);
+    }
+    return { ok: true, value: { ...current, version: expectedVersion + 1 } };
+  }
 }

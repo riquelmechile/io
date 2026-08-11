@@ -17,6 +17,7 @@ import { PgWorkRepository } from '../src/work-adapter.js';
 
 import type { DbConnection } from '../src/connection.js';
 import { InMemoryDbConnection } from './connection-fake.js';
+import { parseWorkRow } from '../src/row-guards.js';
 
 /**
  * PG adapter unit tests for the four business-domain repositories (design §PG
@@ -577,6 +578,215 @@ describe('PgWorkRepository', () => {
       const stored = await repo.get('acme', 'work-1');
       expect(stored?.state).toBe('proposed');
       expect(stored?.fencingToken).toBe(0);
+    });
+  });
+});
+
+describe('PgWorkRepository — recovery designation (supervisor-recovery design D2, migration 011)', () => {
+  describe('listRecoveryRequestedByCompany — partial-index discovery', () => {
+    it("emits the partial-index discovery SQL: WHERE company_id = $1 AND recovery_requested AND state = 'in_progress' ORDER BY id ASC", async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+
+      await repo.listRecoveryRequestedByCompany('acme');
+
+      const selects = db.operations.filter((op) => op.sql.startsWith('SELECT'));
+      expect(selects).toHaveLength(1);
+      expect(selects[0]?.sql).toBe(
+        'SELECT work_id AS "workId", company_id AS "companyId", delegation_id AS "delegationId", proposer, description, ' +
+          'state, version, fencing_token AS "fencingToken", deliverable, evidence_refs AS "evidenceRefs", outcome, ' +
+          'recovery_requested AS "recoveryRequested" ' +
+          "FROM work WHERE company_id = $1 AND recovery_requested AND state = 'in_progress' ORDER BY id ASC",
+      );
+      expect(selects[0]?.params).toEqual(['acme']);
+    });
+
+    it('round-trips designation: ONLY designated in_progress Work is discovered (designated non-in_progress and un-designated in_progress are excluded)', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+      await repo.save({ ...work('work-2'), workId: 'work-2', state: 'accepted' });
+      await repo.save({ ...work('work-3'), workId: 'work-3', state: 'in_progress' });
+      // Designate work-1 (in_progress) AND work-2 (accepted).
+      expect((await repo.setRecoveryRequest('acme', 'work-1', 1, true)).ok).toBe(true);
+      expect((await repo.setRecoveryRequest('acme', 'work-2', 1, true)).ok).toBe(true);
+
+      const listed = await repo.listRecoveryRequestedByCompany('acme');
+      expect(listed.map((w) => w.workId)).toEqual(['work-1']);
+      for (const item of listed) {
+        expect(item.state).toBe('in_progress');
+        expect(Object.keys(item)).not.toContain('recoveryRequested');
+      }
+    });
+
+    it('no designated in_progress Work for the tenant resolves to an EMPTY list (with data present elsewhere)', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+      await repo.save({ ...work('work-2'), workId: 'work-2', state: 'accepted' });
+      await repo.setRecoveryRequest('acme', 'work-2', 1, true);
+
+      expect(await repo.listRecoveryRequestedByCompany('acme')).toEqual([]);
+    });
+
+    it("cross-tenant: another company's designated work is never listed (scoped WHERE)", async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress', companyId: 'other' });
+      await repo.setRecoveryRequest('other', 'work-1', 1, true);
+
+      expect(await repo.listRecoveryRequestedByCompany('acme')).toEqual([]);
+      expect((await repo.listRecoveryRequestedByCompany('other')).map((w) => w.workId)).toEqual([
+        'work-1',
+      ]);
+    });
+
+    it('rejects an empty companyId BEFORE issuing any SQL', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+
+      await expect(repo.listRecoveryRequestedByCompany('')).rejects.toThrow(/companyId/i);
+      expect(db.operations).toHaveLength(0);
+    });
+  });
+
+  describe('setRecoveryRequest — plain marker CAS', () => {
+    it('emits the marker CAS SQL: UPDATE work SET recovery_requested=$4, version=version+1 WHERE work_id=$1 AND company_id=$2 AND version=$3', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+
+      await repo.setRecoveryRequest('acme', 'work-1', 1, true);
+
+      const updates = db.operations.filter((op) => op.sql.startsWith('UPDATE'));
+      expect(updates).toHaveLength(1);
+      expect(updates[0]?.sql).toBe(
+        'UPDATE work SET recovery_requested=$4, version=version+1 ' +
+          'WHERE work_id=$1 AND company_id=$2 AND version=$3',
+      );
+      const params = updates[0]?.params ?? [];
+      expect(params[0]).toBe('work-1');
+      expect(params[1]).toBe('acme');
+      expect(params[2]).toBe(1); // expectedVersion in the WHERE clause
+      expect(params[3]).toBe(true); // $4 = the requested marker
+    });
+
+    it('successful CAS: version N → N + 1, state UNCHANGED, fencing token PRESERVED, marker discoverable', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      const w: Work = { ...work('work-1'), state: 'in_progress', fencingToken: 3 };
+      await repo.save(w);
+
+      const result = (await repo.setRecoveryRequest('acme', 'work-1', 1, true)) as Extract<
+        CasResult,
+        { ok: true }
+      >;
+
+      expect(result.ok).toBe(true);
+      expect(result.value.version).toBe(2);
+      expect(result.value.state).toBe('in_progress');
+      expect(result.value.fencingToken).toBe(3); // NO new token minted
+      expect(result.value.workId).toBe('work-1');
+
+      const stored = await repo.get('acme', 'work-1');
+      expect(stored?.version).toBe(2);
+      expect(stored?.state).toBe('in_progress');
+      expect(stored?.fencingToken).toBe(3);
+
+      // The marker round-trips into the discovery query.
+      expect((await repo.listRecoveryRequestedByCompany('acme')).map((x) => x.workId)).toEqual([
+        'work-1',
+      ]);
+    });
+
+    it('clearing (requested=false) removes the marker while version still bumps', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+      await repo.setRecoveryRequest('acme', 'work-1', 1, true);
+
+      const cleared = (await repo.setRecoveryRequest('acme', 'work-1', 2, false)) as Extract<
+        CasResult,
+        { ok: true }
+      >;
+
+      expect(cleared.ok).toBe(true);
+      expect(cleared.value.version).toBe(3);
+      expect(cleared.value.state).toBe('in_progress');
+      expect(await repo.listRecoveryRequestedByCompany('acme')).toEqual([]);
+    });
+
+    it('stale expectedVersion yields typed version-conflict with current; marker NOT set; stored work unchanged', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+
+      const result = (await repo.setRecoveryRequest('acme', 'work-1', 0, true)) as Extract<
+        CasResult,
+        { ok: false }
+      >;
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('version-conflict');
+      expect(result.current?.version).toBe(1);
+      expect(result.current?.state).toBe('in_progress');
+      expect(await repo.listRecoveryRequestedByCompany('acme')).toEqual([]);
+      expect((await repo.get('acme', 'work-1'))?.version).toBe(1);
+    });
+
+    it('absent work and wrong-tenant CAS both yield typed version-conflict (never fabricate, never overwrite)', async () => {
+      const repo = new PgWorkRepository(new InMemoryDbConnection());
+      await repo.save({ ...work('work-1'), state: 'in_progress' });
+
+      const absent = (await repo.setRecoveryRequest('acme', 'ghost', 1, true)) as Extract<
+        CasResult,
+        { ok: false }
+      >;
+      expect(absent.ok).toBe(false);
+      expect(absent.reason).toBe('version-conflict');
+
+      // Wrong tenant: version-conflict WITHOUT a current (the scoped re-read
+      // resolves to not-found — same shape as the fake).
+      const crossTenant = (await repo.setRecoveryRequest('other', 'work-1', 1, true)) as Extract<
+        CasResult,
+        { ok: false }
+      >;
+      expect(crossTenant.ok).toBe(false);
+      expect(crossTenant.reason).toBe('version-conflict');
+      expect(crossTenant.current).toBeUndefined();
+
+      // The OWNING tenant is untouched and can still be designated.
+      expect((await repo.setRecoveryRequest('acme', 'work-1', 1, true)).ok).toBe(true);
+      expect((await repo.get('acme', 'work-1'))?.version).toBe(2);
+    });
+
+    it('rejects an empty companyId BEFORE issuing any SQL', async () => {
+      const db = new InMemoryDbConnection();
+      const repo = new PgWorkRepository(db);
+
+      await expect(repo.setRecoveryRequest('', 'work-1', 1, true)).rejects.toThrow(/companyId/i);
+      expect(db.operations).toHaveLength(0);
+    });
+  });
+
+  describe('parseWorkRow — recovery_requested (boolean, default false)', () => {
+    it('accepts a boolean recoveryRequested when present and a row WITHOUT it (default false)', () => {
+      const withMarker = parseWorkRow({ ...work('work-1'), recoveryRequested: true });
+      expect(withMarker.ok).toBe(true);
+
+      const withMarkerFalse = parseWorkRow({ ...work('work-1'), recoveryRequested: false });
+      expect(withMarkerFalse.ok).toBe(true);
+
+      // Queries that do not project the marker (get/listActionable) carry
+      // undefined — the DEFAULT false — and must still parse.
+      const absent = parseWorkRow(work('work-1'));
+      expect(absent.ok).toBe(true);
+    });
+
+    it('rejects a corrupt (non-boolean) recoveryRequested with a reason naming the field', () => {
+      for (const bad of ['yes', 1, 0, null, {}, []]) {
+        const result = parseWorkRow({ ...work('work-1'), recoveryRequested: bad });
+        expect(result.ok).toBe(false);
+        if (result.ok === false) {
+          expect(result.reason).toMatch(/recoveryRequested/i);
+          expect(result.reason).not.toBe('');
+        }
+      }
     });
   });
 });

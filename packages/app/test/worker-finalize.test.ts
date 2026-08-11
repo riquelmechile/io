@@ -105,6 +105,19 @@ class RacingWorkRepository implements WorkRepository {
   async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
     return this.inner.listActionableByCompany(companyId);
   }
+
+  async listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listRecoveryRequestedByCompany(companyId);
+  }
+
+  setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult> {
+    return this.inner.setRecoveryRequest(companyId, workId, expectedVersion, requested);
+  }
 }
 
 /** Claimed (in_progress) work + committed in_flight journal row + applied effect.

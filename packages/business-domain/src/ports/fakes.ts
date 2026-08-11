@@ -77,6 +77,10 @@ export class InMemoryDelegationRepository implements DelegationRepository {
 
 export class InMemoryWorkRepository implements WorkRepository {
   private readonly entries = new Map<string, Work>();
+  /** Recovery designation markers (workId → requested). Side store mirroring
+   * `work.recovery_requested` (migration 011): the domain `Work` type stays
+   * pure, so the marker lives here, not on the entity. */
+  private readonly recoveryRequested = new Map<string, boolean>();
 
   async save(work: Work): Promise<Readonly<Work>> {
     requireCompanyId(work.companyId);
@@ -137,6 +141,65 @@ export class InMemoryWorkRepository implements WorkRepository {
     const result: Work[] = [];
     for (const work of this.entries.values()) {
       if (work.companyId === companyId && actionable.includes(work.state)) {
+        result.push(work);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Recovery designation CAS (supervisor-recovery design D2): plain
+   * expected-version CAS on the `recoveryRequested` MARKER (a side map — the
+   * domain `Work` type stays pure). Bumps `version` N → N + 1 while `state`
+   * and `fencingToken` stay UNCHANGED (no FencingDirective, no token mint) —
+   * the version bump fences a stale-version zombie's terminal close. A stale
+   * `expectedVersion` (or absent / wrong-tenant work) returns
+   * `version-conflict` with the current work attached when available and NEVER
+   * mutates the marker.
+   */
+  async setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult> {
+    requireCompanyId(companyId);
+    const current = this.entries.get(workId);
+    if (current === undefined || current.companyId !== companyId) {
+      // No stored work (or wrong tenant) to compare against: nothing to CAS.
+      return { ok: false, reason: 'version-conflict' };
+    }
+    if (current.version !== expectedVersion) {
+      // Stale writer: never overwrite; report the current work when available.
+      return { ok: false, reason: 'version-conflict', current };
+    }
+    const updated: Work = { ...current, version: expectedVersion + 1 };
+    this.entries.set(workId, updated);
+    if (requested) {
+      this.recoveryRequested.set(workId, true);
+    } else {
+      this.recoveryRequested.delete(workId);
+    }
+    return { ok: true, value: updated };
+  }
+
+  /**
+   * Recovery designation discovery (supervisor-recovery design D2, migration
+   * 011): partial-index semantics — ONLY `in_progress` Work whose marker is
+   * set is returned, in insertion order (the oldest designated orphan first,
+   * mirroring the PG `ORDER BY id ASC`). Tenant-scoped by companyId
+   * (ADR-0002): another company's Work is never returned, and a designated
+   * Work that left `in_progress` (terminal close) is invisible here.
+   */
+  async listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]> {
+    requireCompanyId(companyId);
+    const result: Work[] = [];
+    for (const work of this.entries.values()) {
+      if (
+        work.companyId === companyId &&
+        work.state === 'in_progress' &&
+        this.recoveryRequested.get(work.workId) === true
+      ) {
         result.push(work);
       }
     }

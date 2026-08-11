@@ -13,6 +13,7 @@ const SCHEMA_007 = join(pkgRoot, 'sql', '007_skills.sql');
 const SCHEMA_008 = join(pkgRoot, 'sql', '008_heartbeat_cursor.sql');
 const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
 const SCHEMA_010 = join(pkgRoot, 'sql', '010_fencing_tokens.sql');
+const SCHEMA_011 = join(pkgRoot, 'sql', '011_recovery_designation.sql');
 
 /**
  * 004_harden_constraints.sql (Slice B, design §Data Model): the constraints
@@ -334,6 +335,43 @@ describe('sql/010_fencing_tokens.sql (zombie-writer protection — fencing token
 
   it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
     const sql = read010()
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    const statements = sql
+      .split(';')
+      .map((statement) => statement.trim())
+      .filter((statement) => statement.length > 0);
+    expect(statements.length).toBeGreaterThanOrEqual(2);
+    for (const statement of statements) {
+      expect(statement).toMatch(/IF\s+NOT\s+EXISTS/i);
+    }
+  });
+});
+
+describe('sql/011_recovery_designation.sql (operator recovery designation — supervisor-recovery)', () => {
+  function read011(): string {
+    return existsSync(SCHEMA_011) ? readFileSync(SCHEMA_011, 'utf8') : '';
+  }
+
+  it('ships sql/011_recovery_designation.sql', () => {
+    expect(existsSync(SCHEMA_011)).toBe(true);
+  });
+
+  it('adds recovery_requested to work: BOOLEAN NOT NULL DEFAULT false with IF NOT EXISTS', () => {
+    expect(read011()).toMatch(
+      /ALTER\s+TABLE\s+work\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+recovery_requested\s+BOOLEAN\s+NOT\s+NULL\s+DEFAULT\s+false/i,
+    );
+  });
+
+  it("creates the partial index WHERE recovery_requested AND state = 'in_progress' with IF NOT EXISTS (discovery predicate)", () => {
+    expect(read011()).toMatch(
+      /CREATE\s+INDEX\s+IF\s+NOT\s+EXISTS\s+idx_work_recovery_requested\s+ON\s+work\s*\(\s*company_id\s*\)\s+WHERE\s+recovery_requested\s+AND\s+state\s*=\s*'in_progress'/i,
+    );
+  });
+
+  it('uses IF NOT EXISTS on every statement (idempotent, re-apply safe)', () => {
+    const sql = read011()
       .split('\n')
       .filter((line) => !line.trim().startsWith('--'))
       .join('\n');

@@ -16,9 +16,11 @@ export type {
   WorkCommandBase,
 } from './result.js';
 export { IdempotentFlowAbortError, applyWorkTransition, dedupe } from './result.js';
+export type { RequestRecoveryCommand, RequestRecoveryResult } from './request-recovery.js';
 export { proposeWork } from './propose-work.js';
 export { acceptWork } from './accept-work.js';
 export { startWork } from './start-work.js';
 export { completeWork } from './complete-work.js';
 export { verifyWork } from './verify-work.js';
 export { rejectWork } from './reject-work.js';
+export { requestRecovery } from './request-recovery.js';

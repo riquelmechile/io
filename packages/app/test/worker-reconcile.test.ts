@@ -456,6 +456,19 @@ class RacingWorkRepository implements WorkRepository {
   async listActionableByCompany(companyId: string): Promise<readonly Work[]> {
     return this.inner.listActionableByCompany(companyId);
   }
+
+  async listRecoveryRequestedByCompany(companyId: string): Promise<readonly Work[]> {
+    return this.inner.listRecoveryRequestedByCompany(companyId);
+  }
+
+  setRecoveryRequest(
+    companyId: string,
+    workId: string,
+    expectedVersion: number,
+    requested: boolean,
+  ): Promise<CasResult> {
+    return this.inner.setRecoveryRequest(companyId, workId, expectedVersion, requested);
+  }
 }
 
 describe('cycle reconciliation (WC reconciliation pre-effect)', () => {

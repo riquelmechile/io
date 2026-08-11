@@ -81,6 +81,8 @@ export type {
   CompleteWorkCommand,
   CompleteWorkDeps,
   ProposeWorkCommand,
+  RequestRecoveryCommand,
+  RequestRecoveryResult,
   TransitionWorkCommand,
   UseCaseReason,
   UseCaseResult,
@@ -91,6 +93,7 @@ export {
   completeWork,
   proposeWork,
   rejectWork,
+  requestRecovery,
   startWork,
   verifyWork,
 } from './use-cases/index.js';
