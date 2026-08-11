@@ -82,6 +82,7 @@ describe('UndoLog module (one entry per effect)', () => {
       action: docA,
       absolutePath,
       applied: true,
+      idempotencyKey: 'wk:acme:work-1',
       undo: { handleId, action: docA, applied: true },
     };
   }

@@ -28,8 +28,11 @@ export class DurableSandboxFake implements SandboxPort {
     this.restore();
   }
 
-  async execute(action: SandboxAction): Promise<EffectRecord> {
-    const record = await this.delegate.execute(action);
+  async execute(
+    action: SandboxAction,
+    correlation?: { idempotencyKey: string },
+  ): Promise<EffectRecord> {
+    const record = await this.delegate.execute(action, correlation);
     this.persist();
     return record;
   }

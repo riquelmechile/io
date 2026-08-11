@@ -499,20 +499,24 @@ describe('B11 parity 4 — journal fencing: InMemory fake ≡ Pg adapter (store 
     expect(p?.fencingToken).toBe(5);
   });
 
-  it('stale-token markRetryable: BOTH reject WITHOUT mutation — status and token unchanged', async () => {
+  it('stale-token markRetryable: BOTH return the TYPED stale-token failure WITHOUT mutation — status and token unchanged (spec "Stale token cannot mark retryable" + "Fake and PostgreSQL parity")', async () => {
     const { fake, pg } = await seedBoth(5);
 
-    const fErr = await fake
-      .markRetryable(ATTEMPT, 3)
-      .then(() => undefined)
-      .catch((error: Error) => error);
-    const pErr = await pg
-      .markRetryable(ATTEMPT, 3)
-      .then(() => undefined)
-      .catch((error: Error) => error);
+    const fResult = await fake.markRetryable(ATTEMPT, 3);
+    const pResult = await pg.markRetryable(ATTEMPT, 3);
 
-    expect(fErr).toBeInstanceOf(Error);
-    expect(pErr).toBeInstanceOf(Error);
+    // IDENTICAL typed outcomes — a typed failure value, never a thrown rejection.
+    expect(fResult.ok).toBe(false);
+    expect(pResult.ok).toBe(false);
+    if (!fResult.ok && !pResult.ok) {
+      expect(pResult.reason).toBe(fResult.reason);
+      expect(fResult.reason).toBe('stale-token');
+      // The informative current read matches in BOTH (parity on the read).
+      expect(pResult.current?.status).toBe(fResult.current?.status);
+      expect(pResult.current?.fencingToken).toBe(fResult.current?.fencingToken);
+      expect(fResult.current?.status).toBe('in_flight');
+      expect(fResult.current?.fencingToken).toBe(5);
+    }
     const f = await fake.lookup(COMPANY, KEY);
     const p = await pg.lookup(COMPANY, KEY);
     expect(f?.status).toBe('in_flight');
@@ -577,12 +581,15 @@ describe('B11 parity 5 — sandbox undo-log snapshot: FileDocumentSandbox ≡ Du
   /** The undo-log SNAPSHOT shape — identical across the three implementations.
    * `absolutePath` is intentionally excluded: FileDocumentSandbox resolves real
    * tmp paths while the fakes use a virtual FS — the parity is on undo-log
-   * SNAPSHOT behavior, not the storage medium. */
+   * SNAPSHOT behavior, not the storage medium. `idempotencyKey` (the attempt
+   * correlation stamped by execute) IS part of the parity: all three must stamp
+   * the SAME correlation onto the durable record (verification CRITICAL #1). */
   function snapshotShape(records: readonly EffectRecord[]) {
     return records.map((record) => ({
       effectId: record.effectId,
       action: record.action,
       applied: record.applied,
+      idempotencyKey: record.idempotencyKey,
       undo: {
         handleId: record.undo.handleId,
         action: record.undo.action,
@@ -633,12 +640,12 @@ describe('B11 parity 5 — sandbox undo-log snapshot: FileDocumentSandbox ≡ Du
     }
   });
 
-  it('applied: ALL THREE record one entry per executed effect with IDENTICAL snapshot shapes', async () => {
+  it('applied: ALL THREE record one entry per executed effect with IDENTICAL snapshot shapes — INCLUDING the stamped attempt correlation', async () => {
     const { subjects, cleanup } = newSubjects();
     try {
       for (const { sandbox } of subjects) {
-        await sandbox.execute(docA);
-        await sandbox.execute(docB);
+        await sandbox.execute(docA, { idempotencyKey: KEY });
+        await sandbox.execute(docB, { idempotencyKey: KEY });
       }
       const shapes = subjects.map(({ name, sandbox }) => ({
         name,
@@ -660,8 +667,8 @@ describe('B11 parity 5 — sandbox undo-log snapshot: FileDocumentSandbox ≡ Du
     const { subjects, cleanup } = newSubjects();
     try {
       for (const { sandbox } of subjects) {
-        const a = await sandbox.execute(docA);
-        await sandbox.execute(docB);
+        const a = await sandbox.execute(docA, { idempotencyKey: KEY });
+        await sandbox.execute(docB, { idempotencyKey: KEY });
         await sandbox.undo(a.undo);
       }
       const shapes = subjects.map(({ name, sandbox }) => ({
@@ -862,6 +869,7 @@ describe('B11 parity 7 — journal no-effect reconcile: InMemory fake ≡ Pg ada
     action: { type: 'create-document', relativePath: 'docs/quarterly-close.md', content: '' },
     absolutePath: '/io/mem/docs/quarterly-close.md',
     applied: false,
+    idempotencyKey: KEY,
     undo: {
       handleId: 'undo-none',
       action: { type: 'create-document', relativePath: '', content: '' },
@@ -938,23 +946,23 @@ describe('B11 parity 7 — journal no-effect reconcile: InMemory fake ≡ Pg ada
     expect(p?.fencingToken).toBe(5);
   });
 
-  it('stale-token W2 reconcile: BOTH reject WITHOUT mutation — status and token unchanged (spec "Fake and PostgreSQL parity" / "Stale token cannot mark retryable")', async () => {
+  it('stale-token W2 reconcile: BOTH return the TYPED UNRESOLVED escalation WITHOUT mutation — status and token unchanged (spec "Fake and PostgreSQL parity" / "Stale token cannot mark retryable" / "Stale reconciliation token is rejected")', async () => {
     const { fake, pg, work } = await seedBoth();
     const sandbox = new InMemorySandbox();
 
-    const fErr = await reconcilePostEffectFailure(
+    const fResult = await reconcilePostEffectFailure(
       { work, journal: fake, sandbox },
       reconcileInput(3),
-    )
-      .then(() => undefined)
-      .catch((error: Error) => error);
-    const pErr = await reconcilePostEffectFailure({ work, journal: pg, sandbox }, reconcileInput(3))
-      .then(() => undefined)
-      .catch((error: Error) => error);
+    );
+    const pResult = await reconcilePostEffectFailure(
+      { work, journal: pg, sandbox },
+      reconcileInput(3),
+    );
 
-    // Both reject (fail loud, R4-001) and neither mutates the row.
-    expect(fErr).toBeInstanceOf(Error);
-    expect(pErr).toBeInstanceOf(Error);
+    // IDENTICAL typed outcomes: a typed UNRESOLVED escalation, never a throw.
+    expect(fResult).toEqual(pResult);
+    expect(fResult).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    expect(fResult.current?.state).toBe('in_progress');
     const f = await fake.lookup(COMPANY, KEY);
     const p = await pg.lookup(COMPANY, KEY);
     expect(f?.status).toBe('in_flight');

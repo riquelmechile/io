@@ -24,6 +24,7 @@ export type {
   JournalClaimResult,
   JournalEntry,
   JournalStatus,
+  MarkRetryableResult,
   NewJournalEntry,
 } from './ports/idempotency.js';
 export { isUnresolvedJournalResult } from './ports/idempotency.js';

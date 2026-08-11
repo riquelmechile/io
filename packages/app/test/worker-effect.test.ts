@@ -124,7 +124,7 @@ describe('effect outside the terminal transaction (WC effect-outside-tx)', () =>
     expect(h.receipts.saves).toHaveLength(0);
   });
 
-  it('executeEffect is the single effect seam: receives only sandbox + action and applies it', async () => {
+  it('executeEffect is the single effect seam: receives only sandbox + action + the attempt key, applies it, and stamps the correlation on the record', async () => {
     const sandbox = new InMemorySandbox();
     const action: SandboxAction = {
       type: 'create-document',
@@ -132,9 +132,12 @@ describe('effect outside the terminal transaction (WC effect-outside-tx)', () =>
       content: 'beta',
     };
 
-    const record = await executeEffect(sandbox, action);
+    const record = await executeEffect(sandbox, action, 'close-2026-q3');
 
     expect(record.applied).toBe(true);
+    // The durable record carries the attempt correlation (spec "Undo evidence
+    // is attempt-correlated"): recovery filters the undo log BY this key.
+    expect(record.idempotencyKey).toBe('close-2026-q3');
     expect(await sandbox.wasApplied(record.undo.handleId)).toBe(true);
   });
 });

@@ -218,8 +218,9 @@ export async function reconcilePostEffectFailure(
     // it, then set the retryable marker in its OWN committed write (never a
     // failure-complete). The marker write is CLAIM-GATED (fencing-tokens
     // change): markRetryable(attemptId, token) succeeds only when the supplied
-    // token still owns the journal row — a stale holder (zombie) cannot mark a
-    // row it no longer owns.
+    // token still owns the journal row — a stale holder (zombie) gets a TYPED
+    // refusal (spec "Stale token cannot mark retryable"; worker-cycle "Stale
+    // reconciliation token is rejected").
     try {
       await deps.sandbox.undo(input.effect.undo);
     } catch {
@@ -231,15 +232,27 @@ export async function reconcilePostEffectFailure(
       await deps.journal.complete(input.attemptId, UNRESOLVED_RESULT);
       return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current };
     }
-    await deps.journal.markRetryable(input.attemptId, input.fencingToken);
+    const marked = await deps.journal.markRetryable(input.attemptId, input.fencingToken);
+    if (!marked.ok) {
+      // The claim-gated marker write was REFUSED (stale holder — ownership
+      // advanced past the retained token). Typed escalation (never a thrown
+      // rejection): the journal row stays UNCHANGED under the real claim and
+      // the attempt closes honestly — no zombie-issued marker, no
+      // failure-complete.
+      return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current };
+    }
     return { ok: false, reason: 'cas-lost-retryable', current };
   }
   // in_progress + NO effect applied (W2, design D3): durable evidence proves
   // the effect never ran — mark the attempt retryable WITHOUT undo (nothing to
   // reverse). The marker is claim-gated by the retained token (a stale holder
   // cannot convert the row) and is NEVER a failure-complete; the controlled
-  // retry reopens the key with the same token.
-  await deps.journal.markRetryable(input.attemptId, input.fencingToken);
+  // retry reopens the key with the same token. A stale-token refusal is the
+  // same typed UNRESOLVED escalation (row unchanged).
+  const marked = await deps.journal.markRetryable(input.attemptId, input.fencingToken);
+  if (!marked.ok) {
+    return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current };
+  }
   return { ok: false, reason: 'cas-lost-retryable', current };
 }
 

@@ -21,10 +21,18 @@ import { acceptedWork, RecordingJournal, RecordingSandbox } from './worker-helpe
  *   W3 (in_flight, applied effect)     → undo FIRST → markRetryable → cas-lost-retryable
  *   missing evidence / undo failure    → UNRESOLVED_REQUIRES_HUMAN (never re-run)
  *   idempotent re-tick                 → no second undo/effect/terminal mutation
- *   stale token                        → rejected (fail loud), row unchanged
+ *   stale token                        → typed UNRESOLVED_REQUIRES_HUMAN, row unchanged
  *   terminal Work                      → UNRESOLVED_REQUIRES_HUMAN (never fabricate)
  *   already aborted_retryable          → recovery-required (no-op)
  *   already completed                  → replay the recorded result
+ *
+ * ATTEMPT CORRELATION (spec "Journal-Anchored Reconciliation"; verification
+ * CRITICAL #1): recovery may consider ONLY undo evidence PROVABLY from THIS
+ * attempt — the execute call site stamps the attempt's idempotencyKey on the
+ * durable effect record. A PRIOR UNRELATED applied effect (normal multi-attempt
+ * history in the same sandbox root) must NEVER be undone by a W2/W3 recovery;
+ * evidence that CANNOT be attributed (a pre-fix legacy entry without a key) or
+ * that is contradictory escalates — recovery never guesses.
  */
 
 const COMPANY = 'acme';
@@ -119,7 +127,10 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
       fencingToken: current.fencingToken,
     });
     const sandbox = new RecordingSandbox();
-    const effect = await sandbox.execute(docAction);
+    // The execute call site stamps the attempt correlation: the durable
+    // undo-log entry carries THIS attempt's idempotencyKey (spec "Undo
+    // evidence is attempt-correlated").
+    const effect = await sandbox.execute(docAction, { idempotencyKey: KEY });
     expect(await sandbox.wasApplied(effect.undo.handleId)).toBe(true);
 
     const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
@@ -127,10 +138,142 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
     expect(result).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
     // The applied effect was reversed BEFORE the marker (W3 ordering).
     expect(sandbox.undos).toHaveLength(1);
+    expect(sandbox.undos[0]?.handleId).toBe(effect.undo.handleId);
     expect(await sandbox.wasApplied(effect.undo.handleId)).toBe(false);
     const row = await journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('aborted_retryable');
     expect(row?.fencingToken).toBe(current.fencingToken);
+  });
+
+  it('W2 with a PRIOR UNRELATED applied effect: recovery does NOT undo the unrelated effect — empty attempt-correlated evidence → markRetryable WITHOUT undo (spec "W2 becomes retryable without undo")', async () => {
+    const { work, current } = await claimedWork();
+    const { requestHash } = identityFor(current);
+    const journal = new RecordingJournal();
+    await journal.insertInFlight({
+      companyId: COMPANY,
+      idempotencyKey: KEY,
+      requestHash,
+      attemptId: ATTEMPT,
+      fencingToken: current.fencingToken,
+    });
+    const sandbox = new RecordingSandbox();
+    // NORMAL multi-attempt history: a PRIOR unrelated attempt's applied effect
+    // remains in the durable undo log under a DIFFERENT idempotencyKey. The
+    // pre-fix recovery picked this GLOBAL last applied entry and undid it —
+    // corrupting an unrelated completed effect.
+    const unrelated = await sandbox.execute(docAction, {
+      idempotencyKey: 'wk:acme:unrelated-work',
+    });
+
+    const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
+
+    // W2: NO attempt-correlated evidence → markRetryable WITHOUT undo. The
+    // unrelated effect is NOT undone and stays applied.
+    expect(result).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
+    expect(sandbox.undos).toHaveLength(0);
+    expect(await sandbox.wasApplied(unrelated.undo.handleId)).toBe(true);
+    const row = await journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.fencingToken).toBe(current.fencingToken);
+  });
+
+  it('W3 with a PRIOR UNRELATED applied effect: recovery undoes ONLY this attempt\'s effect — never the globally-last unrelated entry (spec "W3 undoes before retry")', async () => {
+    const { work, current } = await claimedWork();
+    const { requestHash } = identityFor(current);
+    const journal = new RecordingJournal();
+    await journal.insertInFlight({
+      companyId: COMPANY,
+      idempotencyKey: KEY,
+      requestHash,
+      attemptId: ATTEMPT,
+      fencingToken: current.fencingToken,
+    });
+    const sandbox = new RecordingSandbox();
+    // THIS attempt's effect (stamped with the attempt key)…
+    const mine = await sandbox.execute(docAction, { idempotencyKey: KEY });
+    // …followed by a LATER UNRELATED applied effect — the GLOBAL LAST entry.
+    // The pre-fix recovery would have undone THIS unrelated one instead.
+    const unrelated = await sandbox.execute(
+      { ...docAction, relativePath: 'docs/unrelated.md' },
+      { idempotencyKey: 'wk:acme:unrelated-work' },
+    );
+
+    const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
+
+    // W3: exactly ONE undo, of THIS attempt's effect ONLY.
+    expect(result).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
+    expect(sandbox.undos).toHaveLength(1);
+    expect(sandbox.undos[0]?.handleId).toBe(mine.undo.handleId);
+    expect(await sandbox.wasApplied(mine.undo.handleId)).toBe(false);
+    expect(await sandbox.wasApplied(unrelated.undo.handleId)).toBe(true);
+    const row = await journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('aborted_retryable');
+    expect(row?.fencingToken).toBe(current.fencingToken);
+  });
+
+  it('legacy applied evidence WITHOUT a correlation key cannot be attributed → UNRESOLVED_REQUIRES_HUMAN, no undo, no marker, row NOT sealed (spec "Missing evidence or undo failure escalates" — never guess)', async () => {
+    const { work, current } = await claimedWork();
+    const { requestHash } = identityFor(current);
+    const journal = new RecordingJournal();
+    await journal.insertInFlight({
+      companyId: COMPANY,
+      idempotencyKey: KEY,
+      requestHash,
+      attemptId: ATTEMPT,
+      fencingToken: current.fencingToken,
+    });
+    const sandbox = new RecordingSandbox();
+    // A PRE-FIX durable entry: an applied effect whose record carries NO
+    // attempt correlation — it CANNOT be excluded from "this attempt ran an
+    // effect", so recovery must escalate instead of guessing W2 vs W3.
+    await sandbox.execute(docAction);
+
+    const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
+
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    // NEVER guess which effect to undo; never re-execute; never set a marker.
+    expect(sandbox.undos).toHaveLength(0);
+    expect(sandbox.executes).toHaveLength(1);
+    // The escalation does NOT seal the key: `journal.complete` is TOKEN-FREE,
+    // and a recovery escalation must never permanently close a row its
+    // legitimate owner could still finish (R4-002). The row STAYS in_flight.
+    expect(journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
+    const row = await journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('in_flight');
+    expect(row?.resultJson).toBeUndefined();
+  });
+
+  it('stale-holder recovery with unattributable evidence does NOT seal a newer-token journal row (R4-002: the token-free complete must not close a row owned by a newer token)', async () => {
+    // The Work row carries token 3 (recovery presents it fresh); the journal
+    // row is owned by token 5 — ownership advanced. The durable undo log holds
+    // a LEGACY applied entry WITHOUT a correlation key, which lands recovery
+    // in the unattributable escalation. The pre-fix branch called
+    // `journal.complete` — TOKEN-FREE — which permanently sealed the token-5
+    // row as `completed`, bricking the legitimate owner. The escalation MUST
+    // return the typed disposition WITHOUT closing the key.
+    const { work, current } = await claimedWork({ version: 2, fencingToken: 3 });
+    const journal = new RecordingJournal();
+    await journal.insertInFlight({
+      companyId: COMPANY,
+      idempotencyKey: KEY,
+      requestHash: identityFor(current).requestHash,
+      attemptId: ATTEMPT,
+      fencingToken: 5, // ownership advanced past the retained token
+    });
+    const sandbox = new RecordingSandbox();
+    // A PRE-FIX legacy applied entry: no correlation key → unattributable.
+    await sandbox.execute(docAction);
+
+    const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
+
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    expect(sandbox.undos).toHaveLength(0);
+    // NO token-free `complete`: the stale holder must not seal the row.
+    expect(journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
+    const row = await journal.lookup(COMPANY, KEY);
+    expect(row?.status).toBe('in_flight'); // NOT sealed / completed
+    expect(row?.fencingToken).toBe(5); // the legitimate owner retains the row
+    expect(row?.resultJson).toBeUndefined();
   });
 
   it('missing evidence: required undo FAILS → UNRESOLVED_REQUIRES_HUMAN, never re-executes (spec "Missing evidence or undo failure escalates")', async () => {
@@ -145,7 +288,7 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
       fencingToken: current.fencingToken,
     });
     const sandbox = new FailingUndoSandbox();
-    await sandbox.execute(docAction); // undo log proves the effect applied
+    await sandbox.execute(docAction, { idempotencyKey: KEY }); // undo log proves the effect applied
 
     const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
 
@@ -172,7 +315,7 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
     });
     const sandbox = new RecordingSandbox();
     // Apply the effect so the durable undo log holds an applied entry (W3).
-    await sandbox.execute(docAction);
+    await sandbox.execute(docAction, { idempotencyKey: KEY });
 
     const first = await recoverDesignatedWork({ work, journal, sandbox }, current);
     expect(first).toMatchObject({ ok: false, reason: 'cas-lost-retryable' });
@@ -188,12 +331,11 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
     expect(row?.fencingToken).toBe(current.fencingToken);
   });
 
-  it('stale token: journal ownership advanced past the retained token → REJECTED, row unchanged (spec "Stale reconciliation token is rejected")', async () => {
+  it('stale token: journal ownership advanced past the retained token → typed UNRESOLVED_REQUIRES_HUMAN, row unchanged (spec "Stale reconciliation token is rejected")', async () => {
     // The Work row carries token 3 (the recovery presents it fresh); the
     // journal row is owned by token 5 — ownership advanced. The claim-gated
-    // marker write MUST refuse the stale holder (fail loud, R4-001 — the same
-    // typed rejection the pinned finalize stale-holder contract uses) and
-    // leave the row unchanged.
+    // marker write MUST refuse the stale holder as a TYPED failure (never a
+    // thrown rejection) and leave the row unchanged.
     const { work, current } = await claimedWork({ version: 2, fencingToken: 3 });
     const journal = new RecordingJournal();
     await journal.insertInFlight({
@@ -205,13 +347,17 @@ describe('supervisor recovery matrix — recoverDesignatedWork dispatches per wi
     });
     const sandbox = new RecordingSandbox();
 
-    const reconcile = recoverDesignatedWork({ work, journal, sandbox }, current);
+    const result = await recoverDesignatedWork({ work, journal, sandbox }, current);
 
-    await expect(reconcile).rejects.toThrow(/fencing token mismatch/i);
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
+    // The typed escalation leaves the journal row UNCHANGED (the marker write
+    // was refused as a typed result — no marker landed, no complete sealed the
+    // key: the stale holder cannot close AND cannot mutate).
+    expect(sandbox.undos).toHaveLength(0);
+    expect(journal.log.some((logged) => logged.startsWith('complete:'))).toBe(false);
     const row = await journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('in_flight');
     expect(row?.fencingToken).toBe(5);
-    expect(sandbox.undos).toHaveLength(0);
   });
 
   it('terminal Work + in_flight row → UNRESOLVED_REQUIRES_HUMAN, no undo, no marker (spec "Unresolvable terminal state is reported honestly")', async () => {

@@ -185,19 +185,24 @@ describe('PgIdempotencyJournalRepository', () => {
       expect(marked?.resultJson).toBeUndefined();
     });
 
-    it('throws when the attempt is missing (0 rows updated)', async () => {
+    it('returns the TYPED stale-token failure when the attempt is missing (0 rows updated)', async () => {
       const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
-      await expect(repo.markRetryable('att:never-recorded', 0)).rejects.toThrow(
-        /in_flight|attempt/i,
-      );
+      expect(await repo.markRetryable('att:never-recorded', 0)).toEqual({
+        ok: false,
+        reason: 'stale-token',
+      });
     });
 
-    it('throws when the attempt is completed (0 rows updated — never regresses completed)', async () => {
+    it('returns the TYPED stale-token failure when the attempt is completed (0 rows updated — never regresses completed)', async () => {
       const repo = new PgIdempotencyJournalRepository(new InMemoryDbConnection());
       await repo.insertInFlight(entry());
       await repo.complete('att:acme:key-1', storedWork());
 
-      await expect(repo.markRetryable('att:acme:key-1', 0)).rejects.toThrow(/in_flight|attempt/i);
+      expect(await repo.markRetryable('att:acme:key-1', 0)).toEqual({
+        ok: false,
+        reason: 'stale-token',
+        current: expect.objectContaining({ status: 'completed' }),
+      });
       const done = await repo.lookup('acme', 'key-1');
       expect(done?.status).toBe('completed');
     });
@@ -324,12 +329,16 @@ describe('PgIdempotencyJournalRepository', () => {
       expect(params[4]).toBe(7); // the claim token gate
     });
 
-    it('a STALE token cannot mark retryable in PG: 0 rows updated → rejected, status and token unchanged', async () => {
+    it('a STALE token cannot mark retryable in PG: TYPED stale-token failure, status and token unchanged (spec "Stale token cannot mark retryable")', async () => {
       const db = new InMemoryDbConnection();
       const repo = new PgIdempotencyJournalRepository(db);
       await repo.insertInFlight({ ...entry(), fencingToken: 7 });
 
-      await expect(repo.markRetryable('att:acme:key-1', 3)).rejects.toThrow(/in_flight|attempt/i);
+      expect(await repo.markRetryable('att:acme:key-1', 3)).toEqual({
+        ok: false,
+        reason: 'stale-token',
+        current: expect.objectContaining({ status: 'in_flight', fencingToken: 7 }),
+      });
 
       const row = await repo.lookup('acme', 'key-1');
       expect(row?.status).toBe('in_flight');

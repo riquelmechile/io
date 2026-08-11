@@ -63,18 +63,21 @@ export type RecoveryResult =
   | { ok: false; reason: 'UNRESOLVED_REQUIRES_HUMAN'; current?: Work };
 
 /** The synthetic "no effect" record for the W2 branch: the recovery
- * reconstructs the effect state from the durable undo log, and an empty log
- * means the crashed worker's effect never ran. The record's `applied: false`
- * is what the shared reconcile reads; the undo handle is synthetic and NEVER
- * dereferenced on the W2 branch (which never undoes), so it stays inert under
- * the port's handle shape. */
-function noAppliedEffect(): EffectRecord {
+ * reconstructs the effect state from the durable undo log, and an empty
+ * attempt-correlated log means the crashed worker's effect never ran. The
+ * record's `applied: false` is what the shared reconcile reads; the undo
+ * handle is synthetic and NEVER dereferenced on the W2 branch (which never
+ * undoes), so it stays inert under the port's handle shape. The correlation
+ * is the designated attempt's own key (the record never enters the durable
+ * log — it is only ever the W2 "nothing was applied" evidence). */
+function noAppliedEffect(idempotencyKey: string): EffectRecord {
   const action = { type: 'create-document' as const, relativePath: '', content: '' };
   return {
     effectId: 'recovered-none',
     action,
     absolutePath: '',
     applied: false,
+    idempotencyKey,
     undo: { handleId: '', action, applied: true },
   };
 }
@@ -104,19 +107,59 @@ export async function recoverInFlightWork(
   }
 
   // in_flight — the recovery anchor. Reconstruct the effect state from the
-  // DURABLE undo log: an applied entry survived the crash, or the effect never
-  // ran. The shared post-effect reconcile closes the attempt honestly.
+  // DURABLE undo log — ATTEMPT-CORRELATED (spec "Journal-Anchored
+  // Reconciliation" + "W2 becomes retryable without undo" / "W3 undoes before
+  // retry"; verification CRITICAL #1): recovery may consider ONLY evidence
+  // PROVABLY from THIS attempt. The worker's execute call site stamps each
+  // durable entry with the executing attempt's idempotencyKey; the pre-fix
+  // code picked the LAST GLOBAL applied entry, which an ordinary prior
+  // unrelated applied effect would make recovery undo — corrupting an
+  // unrelated completed effect.
+  const retained = await deps.work.get(input.companyId, input.workId);
+  const fencingToken = retained?.fencingToken ?? 0;
+
   const appliedEntries = deps.sandbox.snapshotUndoLog().filter((record) => record.applied);
-  const lastApplied = appliedEntries[appliedEntries.length - 1];
-  const effect: EffectRecord = lastApplied !== undefined ? lastApplied : noAppliedEffect();
+  // An applied entry WITHOUT a correlation (a pre-fix legacy record — no key
+  // or the `''` sentinel) CANNOT be excluded from "this attempt ran an effect":
+  // if the crashed attempt's own effect is among them, treating it as W2 would
+  // leave the effect live while the key reopens. NEVER guess — escalate.
+  const unattributable = appliedEntries.filter(
+    (record) => typeof record.idempotencyKey !== 'string' || record.idempotencyKey === '',
+  );
+  if (unattributable.length > 0) {
+    // Unattributable evidence (a pre-fix legacy applied entry): escalate the
+    // typed disposition WITHOUT sealing the key. `journal.complete` is
+    // TOKEN-FREE — a stale recovery holder reaching this branch must NOT
+    // permanently close a row owned by a NEWER fencing token (R4-002). The
+    // row stays `in_flight` under the real claim owner (who can still finish
+    // or retry); the composition's `onRecovery` clears the marker on this
+    // outcome, so the escalation is stable (no hot-retry loop) and
+    // re-designation is a fresh operator action.
+    return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current: retained };
+  }
+  // ONLY the designated attempt's own applied entries may drive the W2/W3
+  // decision — a prior UNRELATED applied effect (normal multi-attempt history
+  // in the same sandbox root) is filtered out and NEVER undone.
+  const attemptEntries = appliedEntries.filter(
+    (record) => record.idempotencyKey === input.idempotencyKey,
+  );
+  if (attemptEntries.length > 1) {
+    // Contradictory: more than one applied entry claims this attempt's key
+    // (one entry per executed effect — the log cannot prove which is THIS
+    // attempt's single effect). Escalate; never guess which to undo. As in
+    // the unattributable branch, do NOT call `journal.complete` here: it is
+    // TOKEN-FREE, and a stale holder must never seal a row owned by a newer
+    // fencing token (R4-002) — the row stays `in_flight` for its owner.
+    return { ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN', current: retained };
+  }
+  // Empty attempt-correlated result → W2 (durable proof of no effect); one
+  // result → W3 (undo THAT specific effect — never a global-last pick).
+  const effect: EffectRecord = attemptEntries[0] ?? noAppliedEffect(input.idempotencyKey);
 
   // The claim-scoped fencing token (fencing-tokens change): retained on the
   // Work row — recovery resumes WITHOUT a fresh claim, so it presents the
   // stored token (never re-mints). Read here so the shared reconcile's
   // FinalizeInput contract is satisfied with the honest retained token.
-  const retained = await deps.work.get(input.companyId, input.workId);
-  const fencingToken = retained?.fencingToken ?? 0;
-
   return reconcilePostEffectFailure(
     { work: deps.work, journal: deps.journal, sandbox: deps.sandbox },
     {

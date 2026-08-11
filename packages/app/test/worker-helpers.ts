@@ -10,6 +10,7 @@ import type {
   IdempotencyJournalPort,
   JournalClaimResult,
   JournalEntry,
+  MarkRetryableResult,
   NewJournalEntry,
 } from '@io/business-domain/src/ports/idempotency.js';
 import type {
@@ -134,10 +135,13 @@ export class RecordingSandbox implements SandboxPort {
 
   constructor(private readonly trace?: string[]) {}
 
-  async execute(action: SandboxAction): Promise<EffectRecord> {
+  async execute(
+    action: SandboxAction,
+    correlation?: { idempotencyKey: string },
+  ): Promise<EffectRecord> {
     this.executes.push(action);
     this.trace?.push(`sandbox:execute:${action.relativePath}`);
-    return this.inner.execute(action);
+    return this.inner.execute(action, correlation);
   }
 
   async undo(handle: UndoHandle): Promise<void> {
@@ -178,7 +182,7 @@ export class RecordingJournal implements IdempotencyJournalPort {
     return this.inner.complete(attemptId, resultJson);
   }
 
-  async markRetryable(attemptId: string, fencingToken: number): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken: number): Promise<MarkRetryableResult> {
     this.log.push(`markRetryable:${attemptId}`);
     return this.inner.markRetryable(attemptId, fencingToken);
   }

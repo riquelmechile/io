@@ -6,6 +6,7 @@ import type {
   IdempotencyJournalPort,
   JournalClaimResult,
   JournalEntry,
+  MarkRetryableResult,
 } from '@io/business-domain/src/ports/idempotency.js';
 import type { CasResult, WorkRepository } from '@io/business-domain/src/ports/repositories.js';
 import type { Work } from '@io/business-domain/src/types.js';
@@ -308,7 +309,9 @@ class LostClaimThenWinnerJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<MarkRetryableResult> {
+    return { ok: true };
+  }
 }
 
 /** Models a same-key race loser whose fresh re-decide WOULD be `proceed` (F2):
@@ -337,7 +340,9 @@ class LostClaimThenRetryableJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<MarkRetryableResult> {
+    return { ok: true };
+  }
 }
 
 /** Models a same-key race loser whose fresh re-decide WOULD be `proceed` because
@@ -352,7 +357,9 @@ class LostClaimThenVanishedJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<MarkRetryableResult> {
+    return { ok: true };
+  }
 }
 
 /** Models a same-key race loser whose fresh re-decide sees the winner's
@@ -385,7 +392,9 @@ class LostClaimThenCompletedJournal implements IdempotencyJournalPort {
   }
 
   async complete(): Promise<void> {}
-  async markRetryable(_attemptId: string, _fencingToken: number): Promise<void> {}
+  async markRetryable(_attemptId: string, _fencingToken: number): Promise<MarkRetryableResult> {
+    return { ok: true };
+  }
 }
 
 /** DbConnection double that counts committed vs rolled-back transactions. */
@@ -824,7 +833,7 @@ describe('journal fencing token threading through the worker cycle (task 2.4)', 
     expect(reopened?.fencingToken).toBe(1);
   });
 
-  it('a STALE token at the worker reconcile boundary cannot mark retryable: the marker write is refused (fail loud), the row stays in_flight under the REAL claim', async () => {
+  it('a STALE token at the worker reconcile boundary cannot mark retryable: the marker write is refused as a TYPED escalation, the row stays in_flight under the REAL claim', async () => {
     const h = harness();
     await seed(h);
     const current = await h.work.get('acme', 'work-1');
@@ -851,22 +860,23 @@ describe('journal fencing token threading through the worker cycle (task 2.4)', 
 
     // A ZOMBIE holder (token 0) reconciles a post-effect failure: the effect is
     // undone (the zombie's own effect), then the claim-gated marker write is
-    // REFUSED — fail loud (R4-001), never a zombie-issued marker.
-    await expect(
-      reconcilePostEffectFailure(
-        { work: h.work, journal: h.journal, sandbox: h.sandbox },
-        {
-          companyId: 'acme',
-          workId: 'work-1',
-          idempotencyKey: 'close-2026-q3',
-          requestHash: 'hash-1',
-          attemptId: ATTEMPT,
-          fencingToken: 0, // STALE — not the claim owner
-          effect,
-        },
-      ),
-    ).rejects.toThrow(/fencing token mismatch/i);
+    // REFUSED as a TYPED failure (spec "Stale token cannot mark retryable") —
+    // the reconcile returns the typed UNRESOLVED escalation, never a thrown
+    // rejection and never a zombie-issued marker.
+    const result = await reconcilePostEffectFailure(
+      { work: h.work, journal: h.journal, sandbox: h.sandbox },
+      {
+        companyId: 'acme',
+        workId: 'work-1',
+        idempotencyKey: 'close-2026-q3',
+        requestHash: 'hash-1',
+        attemptId: ATTEMPT,
+        fencingToken: 0, // STALE — not the claim owner
+        effect,
+      },
+    );
 
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
     expect(h.sandbox.undos).toHaveLength(1);
     const row = await h.journal.lookup('acme', 'close-2026-q3');
     expect(row?.status).toBe('in_flight'); // untouched by the zombie

@@ -42,7 +42,10 @@ export class FileDocumentSandbox implements SandboxPort {
     this.restore();
   }
 
-  async execute(action: SandboxAction): Promise<EffectRecord> {
+  async execute(
+    action: SandboxAction,
+    correlation?: { idempotencyKey: string },
+  ): Promise<EffectRecord> {
     const absolutePath = resolveSandboxPath(this.rootDir, action.relativePath);
     mkdirSync(dirname(absolutePath), { recursive: true });
     try {
@@ -53,7 +56,11 @@ export class FileDocumentSandbox implements SandboxPort {
         `create-document failed: ${action.relativePath} (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    const record = this.makeRecord(action, absolutePath);
+    // The attempt correlation (spec "Undo evidence is attempt-correlated"):
+    // the DURABLE record carries the executing attempt's idempotencyKey, so a
+    // restarted process can attribute each applied entry to its attempt.
+    // `''` = no correlation (legacy entry).
+    const record = this.makeRecord(action, absolutePath, correlation?.idempotencyKey ?? '');
     try {
       this.undoLog.record(record);
       // Persist the evidence BEFORE success is reported (spec scenario
@@ -96,7 +103,11 @@ export class FileDocumentSandbox implements SandboxPort {
     return this.undoLog.snapshot();
   }
 
-  private makeRecord(action: SandboxAction, absolutePath: string): EffectRecord {
+  private makeRecord(
+    action: SandboxAction,
+    absolutePath: string,
+    idempotencyKey: string,
+  ): EffectRecord {
     this.counter += 1;
     const effectId = `effect-${this.counter}`;
     const handleId = `undo-${this.counter}`;
@@ -105,6 +116,7 @@ export class FileDocumentSandbox implements SandboxPort {
       action,
       absolutePath,
       applied: true,
+      idempotencyKey,
       undo: { handleId, action, applied: true },
     };
   }

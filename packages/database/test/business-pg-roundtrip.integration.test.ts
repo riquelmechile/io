@@ -963,7 +963,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       expect(row?.resultJson).toBeUndefined();
     });
 
-    it('a STALE token cannot mark retryable in live PG: rejected WITHOUT mutation — status and token unchanged', async () => {
+    it('a STALE token cannot mark retryable in live PG: TYPED stale-token failure WITHOUT mutation — status and token unchanged (spec "Stale token cannot mark retryable")', async () => {
       const repo = poolJournal();
       await repo.insertInFlight({
         companyId: 'acme-corp',
@@ -973,9 +973,14 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         fencingToken: 7,
       });
 
-      await expect(repo.markRetryable('att:acme-corp:stale-key', 3)).rejects.toThrow(
-        /in_flight|attempt/i,
-      );
+      // A typed failure value (never a thrown rejection)…
+      const result = await repo.markRetryable('att:acme-corp:stale-key', 3);
+      expect(result).toMatchObject({ ok: false, reason: 'stale-token' });
+      if (!result.ok) {
+        expect(result.reason).toBe('stale-token');
+        expect(result.current?.status).toBe('in_flight');
+        expect(result.current?.fencingToken).toBe(7);
+      }
 
       const row = await repo.lookup('acme-corp', 'stale-key');
       expect(row?.status).toBe('in_flight');

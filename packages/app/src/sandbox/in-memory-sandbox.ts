@@ -20,14 +20,20 @@ export class InMemorySandbox implements SandboxPort {
     this.rootDir = rootDir;
   }
 
-  async execute(action: SandboxAction): Promise<EffectRecord> {
+  async execute(
+    action: SandboxAction,
+    correlation?: { idempotencyKey: string },
+  ): Promise<EffectRecord> {
     const absolutePath = resolveSandboxPath(this.rootDir, action.relativePath);
     if (this.effects.has(absolutePath)) {
       // Mirrors the adapter's exclusive create (wx): a second create of the
       // same document is rejected.
       throw new Error(`create-document failed: document already exists: ${action.relativePath}`);
     }
-    const record = this.makeRecord(action, absolutePath);
+    // The attempt correlation (spec "Undo evidence is attempt-correlated"):
+    // the record carries the executing attempt's idempotencyKey — recovery
+    // filters the durable log by it. `''` = no correlation (legacy/test).
+    const record = this.makeRecord(action, absolutePath, correlation?.idempotencyKey ?? '');
     this.effects.set(absolutePath, action.content);
     this.undoLog.record(record);
     return record;
@@ -46,7 +52,11 @@ export class InMemorySandbox implements SandboxPort {
     return this.undoLog.applied(handleId);
   }
 
-  private makeRecord(action: SandboxAction, absolutePath: string): EffectRecord {
+  private makeRecord(
+    action: SandboxAction,
+    absolutePath: string,
+    idempotencyKey: string,
+  ): EffectRecord {
     this.counter += 1;
     const effectId = `effect-${this.counter}`;
     const handleId = `undo-${this.counter}`;
@@ -55,6 +65,7 @@ export class InMemorySandbox implements SandboxPort {
       action,
       absolutePath,
       applied: true,
+      idempotencyKey,
       undo: { handleId, action, applied: true },
     };
   }

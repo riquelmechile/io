@@ -357,14 +357,14 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(await h.sandbox.wasApplied(effect.undo.handleId)).toBe(false);
   });
 
-  it('STALE-token close: a holder with the WRONG token cannot close — T1 rolls back Work+journal+receipt+event atomically, and the ZOMBIE cannot mark the row retryable (fencing "Stale-token close rolls back atomically" + "Stale token cannot mark retryable")', async () => {
+  it('STALE-token close: a holder with the WRONG token cannot close — T1 rolls back Work+journal+receipt+event atomically, and the ZOMBIE reconcile returns the typed UNRESOLVED escalation (fencing "Stale-token close rolls back atomically" + "Stale token cannot mark retryable")', async () => {
     const h = harness();
     const { effect } = await closeReady(h); // claim minted token 1, work in_progress
     const conn = new TxTrackingConnection(new InMemoryDbConnection());
 
     // The holder presents token 0 — NOT the minted claim token 1. The T1 CAS
     // (token-checked terminal directive) must NOT land.
-    const attempt = finalizeInFlightWorkAtomically(
+    const result = await finalizeInFlightWorkAtomically(
       finalizeDeps(h, conn),
       finalizeInput(effect, { fencingToken: 0 }),
     );
@@ -372,12 +372,11 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     // T1 aborted (fencing-conflict → FinalizeCasLostError → rollback). The T2
     // reconcile then hits the CLAIM-OWNERSHIP GATE: the effect is undone (the
     // zombie's own effect is reversed), but markRetryable(attemptId, 0) against
-    // the stored claim token 1 is REJECTED — a stale holder must never mark a
-    // row it does not own. The rejection FAILS LOUDLY (R4-001): the zombie
-    // cannot close AND cannot mutate the row. The row stays in_flight under the
-    // REAL claim (token 1); a later recovery pass sees in_flight + no applied
-    // effect → clean replay (self-healing, never a fabricated resolution).
-    await expect(attempt).rejects.toThrow(/fencing token mismatch/i);
+    // the stored claim token 1 is REFUSED as a TYPED failure — a stale holder
+    // must never mark a row it does not own (spec "Stale token cannot mark
+    // retryable"; worker-cycle "Stale reconciliation token is rejected"). The
+    // twin returns the TYPED UNRESOLVED escalation (never a thrown rejection).
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
     // Every terminal mutation rolled back atomically: no receipt, no event,
     // no journal.complete, no work terminal state.
     expect(h.receipts.saves).toHaveLength(0);
@@ -587,6 +586,7 @@ describe('reconcilePostEffectFailure — widened no-effect branch (idempotency-j
     action: { type: 'create-document', relativePath: 'docs/quarterly-close.md', content: '' },
     absolutePath: '/io/mem/docs/quarterly-close.md',
     applied: false,
+    idempotencyKey: KEY,
     undo: {
       handleId: 'undo-none',
       action: { type: 'create-document', relativePath: '', content: '' },
@@ -623,18 +623,19 @@ describe('reconcilePostEffectFailure — widened no-effect branch (idempotency-j
     expect((await h.work.get(COMPANY, WORK_ID))?.state).toBe('in_progress');
   });
 
-  it('no-effect branch is still CLAIM-GATED: a stale token cannot mark the row retryable — rejected without mutation (spec "Stale token cannot mark retryable")', async () => {
+  it('no-effect branch is still CLAIM-GATED: a stale token cannot mark the row retryable — typed UNRESOLVED escalation, row unchanged (spec "Stale token cannot mark retryable")', async () => {
     const h = harness();
     await closeReady(h); // row owned by token 1
 
-    const reconcile = reconcilePostEffectFailure(
+    const result = await reconcilePostEffectFailure(
       { work: h.work, journal: h.journal, sandbox: h.sandbox },
       finalizeInput(notApplied, { fencingToken: 0 }), // stale holder presents token 0
     );
 
     // The widened trigger does NOT weaken the claim-ownership gate: a stale
-    // holder cannot convert the row to retryable (fail loud, R4-001).
-    await expect(reconcile).rejects.toThrow(/fencing token mismatch/i);
+    // holder cannot convert the row to retryable — a TYPED escalation (never
+    // a thrown rejection), and the row stays unchanged under the REAL claim.
+    expect(result).toMatchObject({ ok: false, reason: 'UNRESOLVED_REQUIRES_HUMAN' });
     expect(h.sandbox.undos).toHaveLength(0);
     const row = await h.journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('in_flight');

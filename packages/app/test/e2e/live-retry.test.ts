@@ -29,6 +29,7 @@ function okResult(): WorkerResult {
       action,
       absolutePath: '/tmp/unit/a.md',
       applied: true,
+      idempotencyKey: 'wk:acme:work-1',
       undo: { handleId: 'und:unit', action, applied: true },
     },
     plan: cannedPlan(),

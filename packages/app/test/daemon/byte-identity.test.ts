@@ -31,7 +31,7 @@ const PROTECTED_SOURCES: Record<string, string> = {
   'supervisor/supervisor.ts': '9287e0add2c23ce91090cdef9e18f7f4fbb02afc8ae1817a3e20a5c0ee007b62',
   'supervisor/tick.ts': 'e8f9c81a7413a47196e74ff2ad34a67bff99e55fcc9eceaa386a1db9affa81ad',
   'supervisor/types.ts': '887648e0bb58b8e2345ac0da4b787a18f48486a2ec91f33859a3147c3bc85096',
-  'worker/worker.ts': '936ada78c244b949ba666e7c881ec583648b7e76ffff253204c3d5262f36306c',
+  'worker/worker.ts': '8fc1bc485048eff15a75eba477ee80e1752dd23726d2088dd7fadf78a615c384',
   'heartbeat/cycle.ts': '9808756b51a37907bfc0b070fbf364c15f028e0ff3e0777abf94af1c90a50e75',
   'heartbeat/evaluate.ts': '56984e32f758e1a17b02937b20658cb91452a016d33331f5b907d806540efbe0',
   'dispatch/dispatch.ts': '7e48fbd734fbd03db92c239354a46e9dde7a51166928800d7677d4efea76a091',
@@ -211,14 +211,23 @@ describe('PR2 model-threading identity (WD Wiring S2; ST Seam S2)', () => {
     // body back into runWorker, restoring the slice-3 module. Then normalize
     // away (1) the model-tier threading (the required 3rd arg — biome wraps
     // the long signature — its type-only import, and the `model` field fed to
-    // prepareIntent) and (2) ALL fencing-token threading — Slice 1 (the claim
+    // prepareIntent), (2) ALL fencing-token threading — Slice 1 (the claim
     // token threaded into the terminal close + the verify-fail reconcile, with
     // its explanatory comment) AND Slice 2 (the token arg on the pre-effect
     // reconcilePreEffect call, and the terminal-branch in_flight-only guard
-    // that the complete status guard requires). The result must be
-    // byte-identical to the PR1 single-line-signature baseline.
+    // that the complete status guard requires) — and (3) the remediation
+    // attempt-correlation threading (the `idempotencyKey` arg the execute call
+    // site now stamps on the durable undo-log record, verification CRITICAL
+    // #1). The result must be byte-identical to the PR1 single-line-signature
+    // baseline.
     const inlined = inlineRunClaimedWork(current);
     const normalized = inlined
+      // Remediation: the execute call site stamps the attempt correlation —
+      // stripping the key restores the pre-remediation call line.
+      .replace(
+        'const effect = await executeEffect(deps.sandbox, intent.action, idempotencyKey);',
+        'const effect = await executeEffect(deps.sandbox, intent.action);',
+      )
       .replace("import type { ModelTier } from '@io/business-domain/src/index.js';\n", '')
       .replace(
         'export async function runWorker(\n  input: unknown,\n  deps: WorkerDeps,\n  model: ModelTier,\n): Promise<WorkerResult> {',
@@ -285,8 +294,15 @@ describe('PR4 supervisor-recovery identity (work-dispatch "Designated Recovery D
     // reconcile → effect → verify → finalize) produces identical bytes before
     // and after extraction. The reverse-inline below reconstructs the
     // pre-extraction module; any behavioral edit to the moved body breaks it.
+    // The remediation's attempt-correlation threading (the `idempotencyKey`
+    // arg on the execute call site, verification CRITICAL #1) is the ONLY
+    // post-extraction drift — stripping it restores the slice-3 bytes.
     const current = readFileSync(resolve(SRC_ROOT, 'worker/worker.ts'), 'utf8');
-    expect(sha256Of(inlineRunClaimedWork(current))).toBe(SLICE3_WORKER_BASELINE);
+    const stripped = inlineRunClaimedWork(current).replace(
+      'const effect = await executeEffect(deps.sandbox, intent.action, idempotencyKey);',
+      'const effect = await executeEffect(deps.sandbox, intent.action);',
+    );
+    expect(sha256Of(stripped)).toBe(SLICE3_WORKER_BASELINE);
   });
 
   it('dispatch.ts differs ONLY by the ADDED dispatchRecovery: removing it restores the pre-recovery baseline bytes (design D5 recovery seam)', () => {

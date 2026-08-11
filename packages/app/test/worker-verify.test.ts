@@ -235,6 +235,7 @@ describe('reconcilePostEffectFailure — post-effect/verify-fail reconciliation 
       action: docAction,
       absolutePath: '/io/mem/docs/quarterly-close.md',
       applied: false,
+      idempotencyKey: KEY,
       // Synthetic handle: never dereferenced (the W2 branch never undoes).
       undo: { handleId: 'undo-none', action: docAction, applied: true },
     };

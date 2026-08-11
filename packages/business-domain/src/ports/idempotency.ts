@@ -71,6 +71,21 @@ export interface NewJournalEntry {
 export type JournalClaimResult = { ok: true } | { ok: false; reason: 'attempt-in-flight' };
 
 /**
+ * Result of marking an attempt retryable (finalize CAS-loss / W2 / W3
+ * recovery). `{ ok: true }` — the attempt became durable `aborted_retryable`.
+ * `{ ok: false; reason: 'stale-token' }` — the marker write was REFUSED
+ * WITHOUT mutation: the attempt is missing, its status is not `in_flight`, OR
+ * the supplied token does not equal the stored claim token (a stale holder
+ * cannot mark a row it no longer owns — fencing-tokens change). `current`
+ * reports the stored row when it exists (informative, like `CasResult.current`).
+ * A typed VALUE, never a thrown rejection (spec "Stale token cannot mark
+ * retryable"): the caller escalates honestly instead of failing loudly.
+ */
+export type MarkRetryableResult =
+  | { ok: true }
+  | { ok: false; reason: 'stale-token'; current?: JournalEntry };
+
+/**
  * Idempotency journal port (D6).
  *
  * ATOMICITY IS CALLER-ENFORCED: the port alone does NOT make the
@@ -98,11 +113,14 @@ export interface IdempotencyJournalPort {
    * Finalize CAS-loss recovery: in_flight → aborted_retryable (a durable
    * retryable marker distinct from in_flight and completed, so a controlled
    * retry can reopen the key instead of bricking it). Clears resultJson.
-   * Rejects when the attempt is missing, its status is not in_flight, OR the
-   * supplied token does not equal the stored claim token (a stale holder
-   * cannot mark a row it no longer owns — fencing-tokens change).
+   * Returns a TYPED {@link MarkRetryableResult}: `{ ok: true }` on success;
+   * `{ ok: false, reason: 'stale-token', current }` when the attempt is
+   * missing, its status is not in_flight, OR the supplied token does not equal
+   * the stored claim token (a stale holder cannot mark a row it no longer
+   * owns — fencing-tokens change). NEVER throws for a business rejection; the
+   * row is NEVER mutated on failure.
    * MUST be invoked in its OWN committed write (not inside a rolling-back
    * finalize tx).
    */
-  markRetryable(attemptId: string, fencingToken: number): Promise<void>;
+  markRetryable(attemptId: string, fencingToken: number): Promise<MarkRetryableResult>;
 }

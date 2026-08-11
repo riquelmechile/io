@@ -34,8 +34,8 @@ import { buildWorkerDeps } from './worker-deps.js';
  * RESUMABLE disposition (`resume` | `cas-lost-retryable` |
  * `recovery-required`) through the claim-gate-free `dispatchRecovery` (retained
  * token, deterministic `wk:` identity). The marker is cleared LAST with a fresh
- * version read; completed-replay, UNRESOLVED escalation, and fail-loud
- * stale-token reconciles all SETTLE (marker cleared — re-designation is a
+ * version read; completed-replay, UNRESOLVED escalation, and TYPED stale-token
+ * reconciles all SETTLE (marker cleared — re-designation is a
  * fresh operator action; no hot retry loop).
  *
  * Byte-identity guarantee (R3): `supervisor.ts`, `tick.ts`,
@@ -113,10 +113,13 @@ export function buildSupervisorDispatch(input: {
         try {
           outcome = await recoverDesignatedWork(recoverDeps, current);
         } catch {
-          // Fail-loud reconcile (stale fencing token — slice-3 flag): the
-          // journal ownership advanced past the retained token. Settle as an
-          // escalation so the tick cursor advances (NO hot retry); the marker
-          // clears and re-designation is a fresh operator action.
+          // DEFENSIVE net for UNEXPECTED throws only: since the stale-token
+          // fencing rejection became a TYPED `UNRESOLVED_REQUIRES_HUMAN`
+          // escalation (spec "Stale reconciliation token is rejected"),
+          // `recoverDesignatedWork` no longer throws for any business
+          // rejection — it returns a typed disposition the settlement path
+          // below handles. A real error here still settles as an escalation
+          // (marker cleared; re-designation is a fresh operator action).
           await workerDeps.work.setRecoveryRequest(companyId, row.workId, current.version, false);
           continue;
         }

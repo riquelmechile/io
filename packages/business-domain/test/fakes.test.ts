@@ -575,21 +575,32 @@ describe('InMemoryIdempotencyJournalRepository — markRetryable (IJ marker-dist
     expect(entry?.resultJson).toBeUndefined();
   });
 
-  it('rejects a missing attemptId', async () => {
+  it('returns a TYPED stale-token failure for a missing attemptId (never a throw)', async () => {
     const journal = await seedInFlight();
-    await expect(journal.markRetryable('att:missing', 0)).rejects.toThrow(/attempt/i);
+    expect(await journal.markRetryable('att:missing', 0)).toEqual({
+      ok: false,
+      reason: 'stale-token',
+    });
   });
 
-  it('rejects a completed attempt (the marker never overwrites completed)', async () => {
+  it('returns a TYPED stale-token failure for a completed attempt (the marker never overwrites completed)', async () => {
     const journal = await seedInFlight();
     await journal.complete('att:acme:key-1', { ok: true });
-    await expect(journal.markRetryable('att:acme:key-1', 0)).rejects.toThrow(/not in_flight/i);
+    expect(await journal.markRetryable('att:acme:key-1', 0)).toEqual({
+      ok: false,
+      reason: 'stale-token',
+      current: expect.objectContaining({ status: 'completed' }),
+    });
   });
 
-  it('rejects an already-retryable attempt (only in_flight can be marked)', async () => {
+  it('returns a TYPED stale-token failure for an already-retryable attempt (only in_flight can be marked)', async () => {
     const journal = await seedInFlight();
     await journal.markRetryable('att:acme:key-1', 0);
-    await expect(journal.markRetryable('att:acme:key-1', 0)).rejects.toThrow(/not in_flight/i);
+    expect(await journal.markRetryable('att:acme:key-1', 0)).toEqual({
+      ok: false,
+      reason: 'stale-token',
+      current: expect.objectContaining({ status: 'aborted_retryable' }),
+    });
   });
 });
 

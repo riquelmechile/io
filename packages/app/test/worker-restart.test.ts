@@ -97,7 +97,10 @@ async function crashAfterInsertInFlightAndEffect(
     fencingToken: 0,
   });
   const sandbox = new DurableSandboxFake(sandboxPath);
-  const effect = await sandbox.execute(docAction);
+  // The crashed worker's execute call site stamped the attempt correlation:
+  // the DURABLE undo-log entry carries THIS attempt's idempotencyKey so the
+  // recovering worker can prove ownership (verification CRITICAL #1).
+  const effect = await sandbox.execute(docAction, { idempotencyKey: KEY });
   return { work, effect };
 }
 

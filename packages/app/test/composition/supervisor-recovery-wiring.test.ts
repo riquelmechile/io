@@ -175,7 +175,7 @@ describe('buildSupervisorDispatch — onRecovery closure over work/journal/sandb
     }
   });
 
-  it('settles a fail-loud stale-token reconcile (fencing mismatch): marker cleared, NO dispatch, NO throw, NO hot retry (escalation)', async () => {
+  it('settles a stale-token reconcile (typed escalation): marker cleared, NO dispatch, NO throw, NO hot retry (escalation)', async () => {
     const connection = new InMemoryDbConnection();
     const sandboxRoot = mkdtempSync(join(tmpdir(), 'io-supervisor-recovery-'));
     try {
@@ -197,8 +197,9 @@ describe('buildSupervisorDispatch — onRecovery closure over work/journal/sandb
         principals: E2E_PRINCIPALS,
       });
 
-      // The reconcile THROWS (fail-loud fencing gate) — the composition MUST
-      // catch/settle it: the marker clears and the tick never hot-retries.
+      // The reconcile returns the TYPED UNRESOLVED escalation (spec "Stale
+      // reconciliation token is rejected" — never a thrown rejection) — the
+      // composition settles it: the marker clears and the tick never hot-retries.
       await expect(composed.onRecovery(COMPANY)).resolves.toBeUndefined();
       expect(llm.requests).toHaveLength(0); // no resume was attempted
       const workRepo = new PgWorkRepository(connection);

@@ -6,6 +6,7 @@ import type {
   JournalClaimResult,
   JournalEntry,
   JournalStatus,
+  MarkRetryableResult,
 } from '../src/ports/idempotency.js';
 import type { Work } from '../src/types.js';
 import type { CompleteWorkCommand, CompleteWorkDeps } from '../src/use-cases/index.js';
@@ -162,7 +163,9 @@ class LostClaimJournal implements IdempotencyJournalPort {
     return { ok: false, reason: 'attempt-in-flight' };
   }
   async complete(): Promise<void> {}
-  async markRetryable(): Promise<void> {}
+  async markRetryable(): Promise<MarkRetryableResult> {
+    return { ok: true };
+  }
 }
 
 describe('idempotent completeWork — same-key race loser (D6)', () => {
@@ -445,15 +448,17 @@ describe('markRetryable token gate (task 2.2) — matching marks, stale rejects,
       fencingToken: 7,
     });
 
-    await journal.markRetryable('att:acme:key-1', 7);
+    const result = await journal.markRetryable('att:acme:key-1', 7);
 
+    // A typed success — the marker write is a value, never a void that throws.
+    expect(result).toEqual({ ok: true });
     const entry = await journal.lookup('acme', 'key-1');
     expect(entry?.status).toBe('aborted_retryable');
     expect(entry?.fencingToken).toBe(7); // retained — a controlled retry uses N, never a fresh claim
     expect(entry?.resultJson).toBeUndefined();
   });
 
-  it('a STALE token cannot mark retryable: rejected WITHOUT mutation — status and stored token preserved', async () => {
+  it('a STALE token cannot mark retryable: TYPED failure WITHOUT mutation — status and stored token preserved (spec "Stale token cannot mark retryable")', async () => {
     const journal = new InMemoryIdempotencyJournalRepository();
     await journal.insertInFlight({
       companyId: 'acme',
@@ -463,7 +468,13 @@ describe('markRetryable token gate (task 2.2) — matching marks, stale rejects,
       fencingToken: 7,
     });
 
-    await expect(journal.markRetryable('att:acme:key-1', 3)).rejects.toThrow(/fencing|token/i);
+    // A typed failure value (never a thrown rejection), reporting the stored row.
+    const result = await journal.markRetryable('att:acme:key-1', 3);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'stale-token',
+      current: expect.objectContaining({ status: 'in_flight', fencingToken: 7 }),
+    });
 
     const entry = await journal.lookup('acme', 'key-1');
     expect(entry?.status).toBe('in_flight');

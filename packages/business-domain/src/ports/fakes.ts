@@ -6,6 +6,7 @@ import type {
   IdempotencyJournalPort,
   JournalClaimResult,
   JournalEntry,
+  MarkRetryableResult,
   NewJournalEntry,
 } from './idempotency.js';
 import { isUnresolvedJournalResult } from './idempotency.js';
@@ -463,24 +464,27 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
     );
   }
 
-  async markRetryable(attemptId: string, fencingToken: number): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken: number): Promise<MarkRetryableResult> {
     const entry = this.byAttempt.get(attemptId);
     if (entry === undefined) {
-      throw new Error(`no journal entry for attempt: ${attemptId}`);
+      // Missing attempt: a TYPED refusal (spec "Stale token cannot mark
+      // retryable" — a typed failure value, never a thrown rejection), with no
+      // row to report. Mirrors the PG adapter's 0-row result.
+      return { ok: false, reason: 'stale-token' };
     }
     if (entry.status !== 'in_flight') {
       // Only an in-flight attempt can be marked retryable: a completed attempt
-      // must never regress to a marker, and a marker is never re-marked.
-      throw new Error(`attempt is not in_flight: ${attemptId} (status: ${entry.status})`);
+      // must never regress to a marker, and a marker is never re-marked. Typed
+      // refusal with the stored row attached (PG-parity: 0-row → stale-token).
+      return { ok: false, reason: 'stale-token', current: entry };
     }
     if (entry.fencingToken !== fencingToken) {
       // Claim-ownership gate (fencing-tokens spec, "Stale token cannot mark
       // retryable"): the marker write is OWNED by the claim. A stale holder
-      // (zombie) supplies a token that no longer owns the row — rejected
-      // WITHOUT mutation, exactly like the PG adapter's AND fencing_token=$5.
-      throw new Error(
-        `fencing token mismatch for attempt: ${attemptId} (stored ${entry.fencingToken}, supplied ${fencingToken})`,
-      );
+      // (zombie) supplies a token that no longer owns the row — refused as a
+      // TYPED failure WITHOUT mutation, exactly like the PG adapter's AND
+      // fencing_token=$5 zero-row result.
+      return { ok: false, reason: 'stale-token', current: entry };
     }
     const updated: JournalEntry = { ...entry, status: 'aborted_retryable', resultJson: undefined };
     this.byAttempt.set(attemptId, updated);
@@ -488,6 +492,7 @@ export class InMemoryIdempotencyJournalRepository implements IdempotencyJournalP
       InMemoryIdempotencyJournalRepository.keyOf(entry.companyId, entry.idempotencyKey),
       updated,
     );
+    return { ok: true };
   }
 
   /**
@@ -555,9 +560,11 @@ export class DurableJournalFake implements IdempotencyJournalPort {
     this.persist();
   }
 
-  async markRetryable(attemptId: string, fencingToken: number): Promise<void> {
-    await this.delegate.markRetryable(attemptId, fencingToken);
-    this.persist();
+  async markRetryable(attemptId: string, fencingToken: number): Promise<MarkRetryableResult> {
+    const result = await this.delegate.markRetryable(attemptId, fencingToken);
+    // Persist ONLY on success — a typed stale-token refusal mutates nothing.
+    if (result.ok) this.persist();
+    return result;
   }
 
   private persist(): void {

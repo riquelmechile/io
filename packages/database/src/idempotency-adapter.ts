@@ -2,6 +2,7 @@ import type {
   IdempotencyJournalPort,
   JournalClaimResult,
   JournalEntry,
+  MarkRetryableResult,
   NewJournalEntry,
 } from '@io/business-domain/src/index.js';
 import { isUnresolvedJournalResult } from '@io/business-domain/src/index.js';
@@ -181,23 +182,41 @@ export class PgIdempotencyJournalRepository implements IdempotencyJournalPort {
     }
   }
 
-  async markRetryable(attemptId: string, fencingToken: number): Promise<void> {
+  async markRetryable(attemptId: string, fencingToken: number): Promise<MarkRetryableResult> {
     if (!attemptId) {
       throw new Error('a non-empty attemptId is required');
     }
     // Finalize CAS-loss recovery: in_flight → aborted_retryable, result_json
     // cleared. The status guard makes it a no-op-safe conditional write: a
-    // missing or completed (or already-marked) attempt updates 0 rows and is
-    // rejected — parity with the fake's contract. The claim-ownership GATE
-    // (fencing-tokens change): the marker write must carry the stored claim
-    // token — a STALE token (a zombie holder) matches 0 rows and is rejected
-    // WITHOUT mutation, exactly like the fake.
+    // missing or completed (or already-marked) attempt updates 0 rows. The
+    // claim-ownership GATE (fencing-tokens change): the marker write must carry
+    // the stored claim token — a STALE token (a zombie holder) matches 0 rows.
+    // A 0-row result is a TYPED refusal (spec "Stale token cannot mark
+    // retryable" — never a thrown rejection): the row is NEVER mutated, and
+    // `current` reports the stored row when it exists.
     const result = (await this.conn.execute(
       'UPDATE idempotency_journal SET status=$2, result_json=$4 WHERE attempt_id=$1 AND status=$3 AND fencing_token=$5',
       [attemptId, 'aborted_retryable', 'in_flight', null, fencingToken],
     )) as { rowCount?: number };
     if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`attempt is not in_flight (or missing): ${attemptId}`);
+      const rows = await this.conn.query<JournalEntry>(
+        'SELECT company_id AS "companyId", idempotency_key AS "idempotencyKey", request_hash AS "requestHash", ' +
+          'attempt_id AS "attemptId", status, fencing_token AS "fencingToken", result_json AS "resultJson" ' +
+          'FROM idempotency_journal WHERE attempt_id = $1',
+        [attemptId],
+      );
+      const current = rows[0];
+      return {
+        ok: false,
+        reason: 'stale-token',
+        // Normalize resultJson like lookup (`null` → undefined) so the
+        // informative read matches the fake's entry shape.
+        current:
+          current === undefined
+            ? undefined
+            : { ...current, resultJson: current.resultJson ?? undefined },
+      };
     }
+    return { ok: true };
   }
 }

@@ -212,7 +212,7 @@ export async function runClaimedWork(
   // 5. Effect OUTSIDE any terminal transaction (§9.8): the effect phase takes
   //    only sandbox + action (no journal/receipts/connection), so it cannot
   //    run inside the B7 finalize tx. The attempt stays in_flight.
-  const effect = await executeEffect(deps.sandbox, intent.action);
+  const effect = await executeEffect(deps.sandbox, intent.action, idempotencyKey);
 
   // 6. Verify (B8): a DISTINCT verifier principal confirms the effect outcome
   //    (verifier≠executor via checkSod; the undo log must confirm the effect).

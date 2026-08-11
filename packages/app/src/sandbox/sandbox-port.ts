@@ -32,12 +32,31 @@ export type EffectRecord = {
   readonly action: SandboxAction;
   readonly absolutePath: string;
   readonly applied: boolean;
+  /**
+   * Attempt correlation (supervisor-recovery, spec "Journal-Anchored
+   * Reconciliation"; verification CRITICAL #1): the `idempotencyKey` of the
+   * attempt whose cycle executed this effect — stamped by `execute` from the
+   * correlation the worker passes at the call site. The durable undo log is
+   * the applied-effect source of truth, and restart recovery may consider
+   * ONLY entries PROVABLY from the designated attempt: it filters the log by
+   * this key (never the globally-last applied entry). An entry WITHOUT a
+   * correlation (a pre-fix legacy record — empty string) CANNOT be attributed
+   * and forces escalation instead of a guess. `''` is the "no correlation"
+   * sentinel; real keys are non-empty (`wk:…`).
+   */
+  readonly idempotencyKey: string;
   readonly undo: UndoHandle;
 };
 
 export interface SandboxPort {
-  /** Apply the action and record exactly one undo-log entry for it. */
-  execute(action: SandboxAction): Promise<EffectRecord>;
+  /**
+   * Apply the action and record exactly one undo-log entry for it. The
+   * optional `correlation` stamps the executing attempt's `idempotencyKey` on
+   * the durable record (attempt correlation — see {@link EffectRecord}): the
+   * worker cycle ALWAYS passes it; tests that never run recovery may omit it
+   * (the record then carries the `''` no-correlation sentinel).
+   */
+  execute(action: SandboxAction, correlation?: { idempotencyKey: string }): Promise<EffectRecord>;
   /** Reverse a previously executed effect via its undo handle. */
   undo(handle: UndoHandle): Promise<void>;
   /** Whether the effect for `handleId` is still applied (undo log = SoT). */
