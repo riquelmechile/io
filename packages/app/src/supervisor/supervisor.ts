@@ -45,7 +45,7 @@ export function startSupervisor(
     const companyIds = await deps.events.listCompanyIds();
     for (const companyId of companyIds) {
       if (stopped) return;
-      await tickCompany(deps, companyId, options.onActivate);
+      await tickCompany(deps, companyId, options.onActivate, options.onRecovery);
     }
   }
 

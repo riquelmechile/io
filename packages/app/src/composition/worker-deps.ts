@@ -40,6 +40,12 @@ export type BuildWorkerDepsInput = {
   readonly sandboxRoot: string;
   readonly principals: WorkerPrincipals;
   readonly now?: () => number;
+  /** Explicit undo-log durability path (supervisor-recovery design D1): the
+   * `FileDocumentSandbox` persists its `{counter, undoLog}` evidence JSON here
+   * after every mutation so the applied-effect SoT survives a process restart.
+   * Defaults to `<sandboxRoot>/.io/undo-log.json` (the sandbox's own default).
+   */
+  readonly durabilityPath?: string;
 };
 
 export function buildWorkerDeps(input: BuildWorkerDepsInput): WorkerDeps {
@@ -55,7 +61,7 @@ export function buildWorkerDeps(input: BuildWorkerDepsInput): WorkerDeps {
     events: new PgBusinessEventRepository(connection),
     receipts: new PgBusinessReceiptRepository(connection),
     journal: new PgIdempotencyJournalRepository(connection),
-    sandbox: new FileDocumentSandbox(sandboxRoot),
+    sandbox: new FileDocumentSandbox(sandboxRoot, undefined, input.durabilityPath),
     llm,
     principals,
     now: input.now ?? (() => Date.now()),

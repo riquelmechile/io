@@ -10,7 +10,7 @@ import { finalizeInFlightWorkAtomically } from './finalize.js';
 import { UNRESOLVED_RESULT } from './finalize.js';
 import { prepareIntent } from './intent.js';
 import { reconcilePreEffect } from './reconcile.js';
-import type { WorkerDeps, WorkerResult } from './types.js';
+import type { ClaimedWorkIdentity, WorkerDeps, WorkerResult } from './types.js';
 import { verifyEffect } from './verify.js';
 
 /**
@@ -130,6 +130,28 @@ export async function runWorker(
     if (!claim.ok) return { ok: false, reason: claim.reason, current: claim.current };
     work = claim.value;
   }
+
+  // 2–7. The claimed-work cycle (design D5 seam): authority → intent →
+  // reconcile → effect → verify → finalize, extracted to runClaimedWork so
+  // recovery dispatch can resume designated in_progress Work through the SAME
+  // post-claim body without re-claiming.
+  return runClaimedWork(work, deps, model, {
+    companyId: cmd.companyId,
+    workId,
+    idempotencyKey,
+    requestHash,
+  });
+}
+
+export async function runClaimedWork(
+  work: Work,
+  deps: WorkerDeps,
+  model: ModelTier,
+  cmd: ClaimedWorkIdentity,
+): Promise<WorkerResult> {
+  const idempotencyKey = cmd.idempotencyKey;
+  const requestHash = cmd.requestHash;
+  const workId = cmd.workId;
 
   // 2. Authority at action time (B2): window active, not revoked, grant +
   // SoD hold; a revoked/expired/out-of-window grant DENIES here (work stays

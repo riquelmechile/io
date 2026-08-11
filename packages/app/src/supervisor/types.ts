@@ -26,14 +26,28 @@ export type SupervisorDeps = {
 export type OnActivate = (companyId: string, model: ModelTier) => void | Promise<void>;
 
 /**
+ * Recovery side-effect seam (supervisor-timer "Sequential Checkpointed Tick"
+ * delta, design D4): invoked with the company id AFTER `onActivate` and BEFORE
+ * the cursor checkpoint on BOTH decision branches — exactly once per company
+ * per tick. A failure leaves the cursor unadvanced for at-least-once re-tick
+ * of the recovery pass. The recovery deps (work/journal/sandbox) are CLOSED
+ * OVER in the composition root — `SupervisorDeps` stays `{events, cursors}`;
+ * this callback is the whole widening. MAY be a recorded no-op. Its
+ * designation and execution MUST NOT depend on `now`, age, lease, or
+ * heartbeat (operator-designation semantics, design D2).
+ */
+export type OnRecovery = (companyId: string) => void | Promise<void>;
+
+/**
  * One sequential company tick: read cursor → gate → derive stream tail →
- * side effect → checkpoint. `onActivate` is optional so the supervisor can
- * tick without a registered callback.
+ * side effect → recovery → checkpoint. `onActivate` and `onRecovery` are
+ * optional so the supervisor can tick without registered callbacks.
  */
 export type TickCompany = (
   deps: SupervisorDeps,
   companyId: string,
   onActivate?: OnActivate,
+  onRecovery?: OnRecovery,
 ) => Promise<void>;
 
 /**
@@ -50,6 +64,14 @@ export type StartSupervisorOptions = {
   /** Reserved (design): the heartbeat decision is never clock-defined. */
   readonly now?: () => number;
   readonly onActivate?: OnActivate;
+  /**
+   * Optional recovery seam (supervisor-timer delta, design D4): the composition
+   * root closes over work/journal/sandbox and resumes operator-designated
+   * orphaned `in_progress` Work after activation, before the checkpoint.
+   * `SupervisorDeps` is NOT widened — this callback carries the recovery
+   * surface.
+   */
+  readonly onRecovery?: OnRecovery;
   /** Default: setInterval. Tests inject a manual pump. */
   readonly schedule?: Schedule;
 };

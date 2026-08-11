@@ -91,7 +91,17 @@ function makeHarness() {
     events: new InMemoryBusinessEventRepository(),
     cursors: new InMemoryHeartbeatCursorStore(),
   };
-  const buildDispatch = vi.fn(() => ({ deps, onActivate: vi.fn() }));
+  const buildDispatch = vi.fn(() => ({
+    deps,
+    onActivate: vi.fn(),
+    // The widened composition seam (supervisor-recovery PR 4): recorded
+    // no-ops — the daemon never drives them in the lifecycle tests.
+    onRecovery: vi.fn(),
+    requestRecovery: vi.fn(async () => ({
+      ok: false as const,
+      reason: 'invalid-command' as const,
+    })),
+  }));
   const exit = vi.fn((code: number) => {
     order.push(`exit:${code}`);
   });

@@ -62,6 +62,19 @@ export type WorkerResult =
   | { ok: true; replayed: true; resultJson: unknown }
   | { ok: false; reason: WorkerFailureReason; detail?: string; current?: Work };
 
+/** The claim identity the claimed-work cycle operates under (design D5 seam):
+ * the row identity + the stable dispatch key/hash. `runClaimedWork` is the
+ * claim-gate-free entry — `dispatchRecovery` constructs this from the
+ * orphaned `in_progress` Work row + `keys.ts` — so the identity is explicit,
+ * never re-derived from Work (the idempotency key is CALLER-carried: unit
+ * cycles pass arbitrary keys, and only dispatch derives `wk:`). */
+export type ClaimedWorkIdentity = {
+  readonly companyId: string;
+  readonly workId: string;
+  readonly idempotencyKey: string;
+  readonly requestHash: string;
+};
+
 /** The repository set one worker step works on, bound to ONE connection —
  * mirrors `completeWorkAtomically` (packages/database/src/complete-work-flow.ts):
  * inside the terminal transaction the factory receives the TRANSACTION-SCOPED

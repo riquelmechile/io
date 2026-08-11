@@ -1,5 +1,6 @@
-import { runWorker } from '../worker/worker.js';
+import { runClaimedWork, runWorker } from '../worker/worker.js';
 import type { ModelTier } from '@io/business-domain/src/index.js';
+import type { Work } from '@io/business-domain/src/types.js';
 import { dispatchIdempotencyKeyFor, dispatchRequestHashFor } from './keys.js';
 import type { DispatchDeps, DispatchResult } from './types.js';
 
@@ -50,4 +51,39 @@ export async function dispatchCompanyActivation(
   // Settle: the typed worker result (ok or not) advances the cursor. A thrown
   // error propagates — never caught here (design R5).
   return { ok: true, dispatched: true, workId: first.workId, worker };
+}
+
+/**
+ * Designated recovery dispatch (work-dispatch "Designated Recovery Dispatch",
+ * design D5/D6/D7): resumes a supervisor-designated `in_progress` orphan
+ * through the claimed-work cycle WITHOUT re-claiming. Normal dispatch picks
+ * OLDEST ACCEPTED Work (`ACTIONABLE_WORK_STATES = ['accepted']`) — an
+ * `in_progress` Work is invisible to it by construction, and re-claiming one
+ * would `invalid-transition` (W1) or re-mint a fencing token (drift). Recovery
+ * therefore enters DIRECTLY at the claim-gate-free {@link runClaimedWork} seam
+ * (the same post-claim body normal dispatch runs), presenting the RETAINED
+ * token from the Work row (never re-minted, D6) and the DETERMINISTIC dispatch
+ * identity (`dispatchIdempotencyKeyFor` / `dispatchRequestHashFor` — the same
+ * `wk:` key + SHA-256 hash a normal activation derives, so the journal attempt
+ * reconciles to the original dispatch). The supervisor reconciles the attempt
+ * to the `aborted_retryable` retry boundary FIRST (recoverDesignatedWork); the
+ * pre-effect reconcile then reopens the key. Expected recovery failures are
+ * TYPED (the worker result settles — no thrown control flow).
+ */
+export async function dispatchRecovery(
+  companyId: string,
+  work: Work,
+  deps: DispatchDeps,
+  model: ModelTier,
+): Promise<DispatchResult> {
+  if (!companyId) {
+    throw new Error('a non-empty companyId is required');
+  }
+  const worker = await runClaimedWork(work, deps.worker, model, {
+    companyId,
+    workId: work.workId,
+    idempotencyKey: dispatchIdempotencyKeyFor(companyId, work.workId),
+    requestHash: dispatchRequestHashFor(work),
+  });
+  return { ok: true, dispatched: true, workId: work.workId, worker };
 }

@@ -316,6 +316,120 @@ describe('tickCompany — sequential checkpointed tick (task 3.1)', () => {
     expect(activations).toEqual(['acme']);
     expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
   });
+
+  it('onRecovery runs AFTER onActivate and BEFORE the cursor checkpoint — append, activate, recover, upsert (spec "Recovery runs in checkpoint order")', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const trace: string[] = [];
+    const cursors = new TracingCursorStore(trace); // upserts record into the SAME trace
+
+    await tickCompany(
+      { events, cursors },
+      'acme',
+      (companyId) => {
+        trace.push(`activate:${companyId}`);
+      },
+      (companyId) => {
+        trace.push(`recover:${companyId}`);
+      },
+    );
+
+    // The crash-safety order (spec): append → activation → ONE recovery call →
+    // cursor upsert — recovery between the side effect and the checkpoint.
+    expect(trace).toEqual(['activate:acme', 'recover:acme', 'upsert:acme']);
+    expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+  });
+
+  it('onRecovery runs on the no-llm-heartbeat branch too — recovery runs, onActivate MUST NOT (spec "No-LLM decision advances the cursor")', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:1', 'work.started', 'acme')); // not material
+    const cursors = new TracingCursorStore();
+    const activations: string[] = [];
+    const recoveries: string[] = [];
+
+    await tickCompany(
+      { events, cursors },
+      'acme',
+      (companyId) => {
+        activations.push(companyId);
+      },
+      (companyId) => {
+        recoveries.push(companyId);
+      },
+    );
+
+    // Declined branch: one decision appended, recovery ran, checkpointed — NO
+    // activation (spec: "onActivate MUST NOT run").
+    expect(activations).toEqual([]);
+    expect(recoveries).toEqual(['acme']);
+    expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+  });
+
+  it('a THROWING onRecovery leaves the cursor un-persisted; the next tick retries recovery (spec "Recovery failure leaves cursor unadvanced")', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const cursors = new TracingCursorStore();
+    const recoveries: string[] = [];
+
+    // Tick 1: recovery CRASHES after activation succeeded — the checkpoint
+    // MUST NOT persist (at-least-once retry of the recovery pass).
+    await expect(
+      tickCompany(
+        { events, cursors },
+        'acme',
+        () => {},
+        (companyId) => {
+          recoveries.push(companyId);
+          throw new Error('simulated crash during onRecovery');
+        },
+      ),
+    ).rejects.toThrow('simulated crash during onRecovery');
+    expect(await cursors.get('acme')).toBeUndefined();
+    expect(cursors.upsertTrace).toEqual([]);
+
+    // Tick 2: re-evaluates the same tail and re-invokes recovery (at-least-once).
+    await tickCompany(
+      { events, cursors },
+      'acme',
+      () => {},
+      (companyId) => {
+        recoveries.push(companyId);
+      },
+    );
+    expect(recoveries).toEqual(['acme', 'acme']);
+    // The retry checkpoints the PRE-append tail — tick 1's decision event.
+    expect(await cursors.get('acme')).toEqual({
+      lastEventId: buildHeartbeatDecisionEvent('acme', {
+        kind: 'activate',
+        model: 'flash',
+      }).eventId,
+    });
+  });
+
+  it('an APPEND failure fails the tick BEFORE onRecovery too — no recovery call, no checkpoint (spec "Append failure remains retryable")', async () => {
+    class FailingAppendEvents extends TracingEvents {
+      override async appendIfAbsent(_event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
+        throw new Error('simulated append failure');
+      }
+    }
+    const events = new FailingAppendEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const cursors = new TracingCursorStore();
+    const recoveries: string[] = [];
+
+    await expect(
+      tickCompany(
+        { events, cursors },
+        'acme',
+        () => {},
+        (companyId) => {
+          recoveries.push(companyId);
+        },
+      ),
+    ).rejects.toThrow('simulated append failure');
+    expect(recoveries).toEqual([]);
+    expect(await cursors.get('acme')).toBeUndefined();
+  });
 });
 
 describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () => {
@@ -720,6 +834,96 @@ describe('startSupervisor — periodic discoverable lifecycle (task 3.1)', () =>
       await pump.pump();
       expect(activations).toEqual(['acme']);
       expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+    } finally {
+      sup.stop();
+    }
+  });
+
+  it('onRecovery is threaded through startSupervisor: EXACTLY ONCE per company per tick (spec "Recovery runs once per company per tick")', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:1', 'work.completed', 'acme'));
+    const cursors = new TracingCursorStore();
+    const recoveries: string[] = [];
+    const pump = manualPump();
+
+    const sup = startSupervisor(
+      { events, cursors },
+      {
+        intervalMs: 1000,
+        schedule: pump.schedule,
+        onRecovery: (companyId) => {
+          recoveries.push(companyId);
+        },
+      },
+    );
+
+    try {
+      // One tick, one company, ONE recovery invocation — the closure handles
+      // any number of designated Work items internally, the seam fires once.
+      await pump.pump();
+      expect(recoveries).toEqual(['acme']);
+      // The no-llm tick still checkpointed after recovery.
+      expect(await cursors.get('acme')).toEqual({ lastEventId: 'evt:1' });
+    } finally {
+      sup.stop();
+    }
+  });
+
+  it('companies are processed sequentially THROUGH recovery — each company\'s activation, recovery and checkpoint finish before the next begins (spec "Companies are processed sequentially")', async () => {
+    const events = new TracingEvents();
+    await events.append(sampleEvent('evt:a-1', 'work.completed', 'company-a'));
+    await events.append(sampleEvent('evt:b-1', 'work.completed', 'company-b'));
+    const cursors = new TracingCursorStore();
+    const trace: string[] = [];
+    const pump = manualPump();
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    let aRecovered!: () => void;
+    const aRecoveredP = new Promise<void>((resolve) => {
+      aRecovered = resolve;
+    });
+
+    const sup = startSupervisor(
+      { events, cursors },
+      {
+        intervalMs: 1000,
+        schedule: pump.schedule,
+        onActivate: (companyId) => {
+          trace.push(`activate:${companyId}`);
+        },
+        onRecovery: async (companyId) => {
+          trace.push(`recover:${companyId}`);
+          if (companyId === 'company-a') {
+            aRecovered();
+            await gateA; // company-a stays mid-recovery until released
+          }
+        },
+      },
+    );
+
+    try {
+      const tickPromise = pump.pump();
+      await aRecoveredP; // company-a's recovery has begun
+      // Flush microtasks: a concurrent implementation would ALREADY have
+      // started company-b's tick.
+      for (let i = 0; i < 20; i += 1) {
+        await Promise.resolve();
+      }
+      expect(trace).toEqual(['activate:company-a', 'recover:company-a']);
+      expect(await cursors.get('company-b')).toBeUndefined();
+
+      releaseA(); // company-a finishes its recovery + checkpoint
+      await tickPromise;
+
+      expect(trace).toEqual([
+        'activate:company-a',
+        'recover:company-a',
+        'activate:company-b',
+        'recover:company-b',
+      ]);
+      expect(await cursors.get('company-b')).toEqual({ lastEventId: 'evt:b-1' });
     } finally {
       sup.stop();
     }

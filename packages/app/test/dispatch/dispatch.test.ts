@@ -4,7 +4,7 @@ import { InMemoryWorkRepository } from '@io/business-domain/src/ports/fakes.js';
 import type { Work } from '@io/business-domain/src/types.js';
 import { LlmError } from '@io/llm-client/src/index.js';
 
-import { dispatchCompanyActivation } from '../../src/dispatch/dispatch.js';
+import { dispatchCompanyActivation, dispatchRecovery } from '../../src/dispatch/dispatch.js';
 import { dispatchIdempotencyKeyFor, dispatchRequestHashFor } from '../../src/dispatch/keys.js';
 import type { DispatchDeps } from '../../src/dispatch/types.js';
 import { attemptIdFor } from '../../src/worker/intent.js';
@@ -228,5 +228,89 @@ describe('dispatchCompanyActivation — replay safety (R4) and orphan non-guaran
     const stored = await h.work.get('acme', 'work-1');
     expect(stored?.state).toBe('in_progress');
     expect(stored?.version).toBe(2);
+  });
+});
+
+describe('dispatchRecovery — designated recovery dispatch (work-dispatch "Designated Recovery Dispatch")', () => {
+  it('resumes in_progress Work through the claimed-work cycle — NO claim, NO token mint (scenario "Recovery resumes without re-claim")', async () => {
+    const h = harness();
+    // A designated orphan: claimed (in_progress, v2) with the minted claim
+    // token 1 — exactly the row the supervisor's discovery would hand over.
+    const orphan = acceptedWork({ state: 'in_progress', version: 2, fencingToken: 1 });
+    await h.work.save(orphan);
+    await h.delegation.save(activeDelegation());
+
+    const result = await dispatchRecovery('acme', orphan, dispatchDeps(h), 'flash');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.dispatched).toBe(true);
+    if (!result.dispatched) return;
+    expect(result.workId).toBe('work-1');
+    expect(result.worker.ok).toBe(true);
+    // The cycle ran WITHOUT re-claiming: no accepted → in_progress CAS (the
+    // Work was already in_progress, so startWork would have invalid-transitioned)
+    // and NO token mint (a re-claim would bump 1 → 2).
+    const stored = await h.work.get('acme', 'work-1');
+    expect(stored?.state).toBe('in_progress');
+    expect(stored?.version).toBe(2);
+    expect(stored?.fencingToken).toBe(1); // retained token N — never re-minted (D6)
+    // The full post-claim body ran: one LLM intent + one sandbox effect.
+    expect(h.llm.requests).toHaveLength(1);
+    expect(h.sandbox.executes).toHaveLength(1);
+    // The attempt is recorded under the DERIVED dispatch key + hash.
+    const entries = h.journal.snapshot();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.status).toBe('in_flight');
+    expect(entries[0]?.idempotencyKey).toBe(dispatchIdempotencyKeyFor('acme', 'work-1'));
+  });
+
+  it('reuses the EXACT normal-dispatch identity — same wk: key + SHA-256 hash (scenario "Recovery reuses dispatch identity")', async () => {
+    const h = harness();
+    const orphan = acceptedWork({ state: 'in_progress', version: 2, fencingToken: 1 });
+    await h.work.save(orphan);
+    await h.delegation.save(activeDelegation());
+
+    await dispatchRecovery('acme', orphan, dispatchDeps(h), 'flash');
+
+    // The journal row carries the SAME deterministic identity normal dispatch
+    // derives from the Work row (keys.ts): the wk: collision-guarded key and
+    // the SHA-256 hash over the STABLE identity fields — identical across
+    // accepted → in_progress → completed.
+    const entries = h.journal.snapshot();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.idempotencyKey).toBe(dispatchIdempotencyKeyFor('acme', orphan.workId));
+    expect(entries[0]?.requestHash).toBe(dispatchRequestHashFor(orphan));
+    expect(entries[0]?.attemptId).toBe(
+      attemptIdFor('acme', dispatchIdempotencyKeyFor('acme', orphan.workId)),
+    );
+    // The retained claim token rode into the pre-effect insert unchanged
+    // (the claim-ownership record — never re-minted, design D6).
+    expect(entries[0]?.fencingToken).toBe(1);
+  });
+
+  it('preserves LLM context byte-for-byte — same compiled messages + cohort prefix as the normal claimed-work baseline (scenario "Recovery preserves LLM context")', async () => {
+    // Two isolated harnesses over IDENTICAL Work identity fields: a normal
+    // activation claims and dispatches work-1; recovery resumes the same
+    // work-1 (in_progress). The compiled context (messages) and the §7.2/§7.3
+    // cohort prefix (`user`) MUST be byte-identical — recovery never alters
+    // LLM context.
+    const normalH = harness();
+    await seed(normalH); // accepted work-1 + active del-1
+    await dispatchCompanyActivation('acme', dispatchDeps(normalH), 'flash');
+
+    const recoveryH = harness();
+    const orphan = acceptedWork({ state: 'in_progress', version: 2, fencingToken: 1 });
+    await recoveryH.work.save(orphan);
+    await recoveryH.delegation.save(activeDelegation());
+    await dispatchRecovery('acme', orphan, dispatchDeps(recoveryH), 'flash');
+
+    expect(recoveryH.llm.requests).toHaveLength(1);
+    expect(normalH.llm.requests).toHaveLength(1);
+    const normal = normalH.llm.requests[0];
+    const recovered = recoveryH.llm.requests[0];
+    expect(recovered?.messages).toEqual(normal?.messages);
+    expect(recovered?.user).toBe(normal?.user); // io:{companyId}:{process}:v{schemaVersion}
+    expect(recovered?.user).toMatch(/^io:acme:/);
   });
 });

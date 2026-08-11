@@ -16,18 +16,29 @@ import type { SupervisorDeps, TickCompany } from './types.js';
  *    retry with the same unadvanced cursor rebuilds the same eventId and
  *    no-ops; an append failure propagates — the tick fails uncheckpointed);
  * 6. `activate` → `await onActivate?.(companyId)` — SIDE EFFECT FIRST;
- * 7. persist the checkpoint LAST — never before the callback returns.
+ * 7. `await onRecovery?.(companyId)` — the recovery pass (supervisor-timer
+ *    delta, design D4): runs on BOTH decision branches, exactly once per
+ *    company per tick, AFTER activation and BEFORE the checkpoint;
+ * 8. persist the checkpoint LAST — never before the callbacks return.
  *
  * At-least-once delivery (spec "Callback failure leaves the activation
- * retryable"): a crash or throw inside `onActivate` propagates with the cursor
- * UN-advanced (the schedule logs/swallows it), so the next tick re-evaluates
- * the same stream tail and re-invokes the callback. On `no-llm-heartbeat`
- * (no side effect) the checkpoint is upserted directly. `tailCursor([]) ===
- * undefined` → no checkpoint row (defensive; discovered companies have ≥1
- * event). Decision-event appends and cursor writes belong ONLY to the
- * supervisor (Non-Invasive Activation Seam).
+ * retryable" + "Recovery failure leaves cursor unadvanced"): a crash or throw
+ * inside `onActivate` OR `onRecovery` propagates with the cursor UN-advanced
+ * (the schedule logs/swallows it), so the next tick re-evaluates the same
+ * stream tail and re-invokes the callback(s). On `no-llm-heartbeat` (no
+ * activation side effect) recovery still runs, then the checkpoint is upserted
+ * directly. `tailCursor([]) === undefined` → no checkpoint row (defensive;
+ * discovered companies have ≥1 event). Decision-event appends, cursor writes,
+ * and the recovery writes (marker/journal/undo/resume — a NEW class
+ * legitimated by the supervisor-timer delta) belong ONLY to the supervisor
+ * within this tick boundary.
  */
-export const tickCompany: TickCompany = async (deps: SupervisorDeps, companyId, onActivate) => {
+export const tickCompany: TickCompany = async (
+  deps: SupervisorDeps,
+  companyId,
+  onActivate,
+  onRecovery,
+) => {
   if (!companyId) {
     throw new Error('a non-empty companyId is required');
   }
@@ -39,6 +50,7 @@ export const tickCompany: TickCompany = async (deps: SupervisorDeps, companyId, 
   if (decision.kind === 'activate') {
     await onActivate?.(companyId, decision.model);
   }
+  await onRecovery?.(companyId);
   if (tail !== undefined) {
     await deps.cursors.upsert(companyId, tail);
   }
