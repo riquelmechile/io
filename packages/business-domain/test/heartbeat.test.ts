@@ -72,14 +72,18 @@ describe('HeartbeatDecision (R1)', () => {
 
 describe('declared material event types (R2)', () => {
   it('declares exactly the material set from the design', () => {
-    expect(heartbeat.MATERIAL_EVENT_TYPES).toEqual(['work.completed']);
+    expect(heartbeat.MATERIAL_EVENT_TYPES).toEqual(['work.accepted', 'work.completed']);
     expectTypeOf<typeof heartbeat.MATERIAL_EVENT_TYPES>().toEqualTypeOf<
-      readonly ['work.completed']
+      readonly ['work.accepted', 'work.completed']
     >();
   });
 
   it('treats a declared eventType as material', () => {
     expect(heartbeat.isMaterialEvent(sampleEvent('evt:1', 'work.completed'))).toBe(true);
+  });
+
+  it('treats a declared work.accepted event as material (Declared Accepted Event is Material)', () => {
+    expect(heartbeat.isMaterialEvent(sampleEvent('evt:acc:work-1', 'work.accepted'))).toBe(true);
   });
 
   it('treats every undeclared eventType as non-material', () => {
@@ -114,6 +118,29 @@ describe('declared material event types (R2)', () => {
     expect(heartbeat.evaluateHeartbeat(decisionEvents, cursor)).toEqual({
       kind: 'no-llm-heartbeat',
     });
+  });
+
+  it('an accepted event at or before the cursor does not activate (Accepted Event at or Before the Cursor)', () => {
+    const events = [
+      sampleEvent('evt:acc:work-1', 'work.accepted'),
+      sampleEvent('evt:acc:work-2', 'work.accepted'),
+    ];
+    const cursor: heartbeat.HeartbeatCursor = { lastEventId: 'evt:acc:work-2' };
+
+    expect(heartbeat.hasMaterialNovelty(events, cursor)).toBe(false);
+    expect(heartbeat.evaluateHeartbeat(events, cursor)).toEqual({ kind: 'no-llm-heartbeat' });
+  });
+
+  it('cursor remains the sole novelty guard: two novel accepts, one tick, exactly one activate (Cursor Remains the Sole Novelty Guard)', () => {
+    const events = [
+      sampleEvent('evt:acc:work-1', 'work.accepted'),
+      sampleEvent('evt:acc:work-2', 'work.accepted'),
+    ];
+
+    // ONE gate evaluation (one tick) with the cursor unchanged → exactly ONE
+    // activate decision; the two novel events never produce two activations
+    // and no second guard or clock trigger influences the decision.
+    expect(heartbeat.evaluateHeartbeat(events)).toEqual({ kind: 'activate', model: 'flash' });
   });
 });
 

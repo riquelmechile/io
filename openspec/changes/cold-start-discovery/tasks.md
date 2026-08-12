@@ -30,13 +30,13 @@ Chain strategy: pending
 - [x] 1.1 [RED] Create `packages/business-domain/test/work-accepted-event.test.ts`: equal `workId` + different clocks/LLM outputs ⇒ equal `eventId = evt:acc:{workId}`; non-time routing/typing/payload fields deterministic from accepted Work; `occurredAt` excluded from identity; `acc:` produced ONLY by acceptor builder with `source:'acceptor'`, distinct from `hb:` supervisor and `evt:att:{companyId}:{idempotencyKey}` worker namespaces.
 - [x] 1.2 [GREEN] Create `packages/business-domain/src/work-accepted-event.ts`: pure `buildWorkAcceptedEvent(work, now?)`, zero `@io/*`, per design §Interfaces (D3, D4).
 - [x] 1.3 Export `buildWorkAcceptedEvent` from `packages/business-domain/src/index.ts`.
-- [ ] 1.4 Commit `feat(business-domain): add pure work.accepted event builder with identity tests`.
+- [x] 1.4 Commit `feat(business-domain): add work accepted event builder` — committed as `18cddf0`.
 
 ## Phase 2: acceptWork Widening + Materiality (business-domain)
 
-- [ ] 2.1 [RED] Extend `packages/business-domain/test/use-cases.test.ts` (update existing callers): success appends exactly one `work.accepted`; each typed failure (`version-conflict`/`invalid-transition`/`not-found`/`invalid-command`) returns `{ok:false}` appending nothing; two novel accepts + one tick ⇒ one `activate`; `complete` still appends `work.completed`, supervisor still appends `heartbeat.decision`.
-- [ ] 2.2 [GREEN] Modify `packages/business-domain/src/use-cases/accept-work.ts`: widen deps to `{ work, events, now? }`; build via `buildWorkAcceptedEvent` and append only on `ok:true`; typed failures resolve pre-write — no thrown control flow, no `@io/*` (D1, D6).
-- [ ] 2.3 [GREEN] Modify `packages/business-domain/src/heartbeat.ts`: add `'work.accepted'` to `MATERIAL_EVENT_TYPES` (readonly); leave `isMaterialEvent`/`hasMaterialNovelty`/cursor unchanged (D5, D9).
+- [x] 2.1 [RED] Extend `packages/business-domain/test/use-cases.test.ts` (update existing callers): success appends exactly one `work.accepted`; each typed failure (`version-conflict`/`invalid-transition`/`not-found`/`invalid-command`) returns `{ok:false}` appending nothing; two novel accepts + one tick ⇒ one `activate`; `complete` still appends `work.completed`, supervisor still appends `heartbeat.decision`.
+- [x] 2.2 [GREEN] Modify `packages/business-domain/src/use-cases/accept-work.ts`: widen deps to `{ work, events, now? }`; build via `buildWorkAcceptedEvent` and append only on `ok:true`; typed failures resolve pre-write — no thrown control flow, no `@io/*` (D1, D6).
+- [x] 2.3 [GREEN] Modify `packages/business-domain/src/heartbeat.ts`: add `'work.accepted'` to `MATERIAL_EVENT_TYPES` (readonly); leave `isMaterialEvent`/`hasMaterialNovelty`/cursor unchanged (D5, D9).
 - [ ] 2.4 Commit `feat(business-domain): emit work.accepted on accept and declare it material`.
 
 ## Phase 3: Atomic PostgreSQL Acceptance Seam + Rollback Proof (database)

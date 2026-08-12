@@ -1,0 +1,10 @@
+# Phase 2 Check Gate Evidence - cold-start-discovery
+# Command: pnpm check (format-check && typecheck && build && lint && test)
+# Run: once, post-normalization, pre-freeze; exit code 0
+format-check -> biome format .: Checked 209 files in 38ms. No fixes applied.
+typecheck    -> tsc -p tsconfig.json: clean
+build        -> tsc -p tsconfig.build.json: clean
+lint         -> biome lint .: 0 errors; 9 pre-existing warnings (untouched: parity.test.ts x6, worker-reconcile.test.ts x1, business-pg-roundtrip.integration.test.ts x2)
+test         -> vitest run: Test Files 99 passed | 3 skipped (102); Tests 1366 passed | 6 skipped (1372); Duration 23.64s
+# Raw provenance: full 157-line capture digest sha256:5d9d61d24ca5f09168ba8751ff4c57aecd27fc7bed97efb50b6cba3f889a66fa
+# Bounded, privacy-scrubbed transcript: no absolute/private paths, no environment values.

@@ -22,9 +22,15 @@ export type HeartbeatCursor = { readonly lastEventId: string };
 /**
  * Extensible set of event types that count as "material" for the heartbeat
  * (R2): an event is material iff its `eventType` is declared here. Declared as
- * a constant so the set stays extensible without touching the filter.
+ * a constant so the set stays extensible without touching the filter. The
+ * acceptance fact (`work.accepted`) and the terminal close (`work.completed`)
+ * are declared; `heartbeat.decision` stays undeclared — decision events never
+ * renew novelty (Declared Material Event Types).
  */
-export const MATERIAL_EVENT_TYPES: readonly ['work.completed'] = ['work.completed'];
+export const MATERIAL_EVENT_TYPES: readonly ['work.accepted', 'work.completed'] = [
+  'work.accepted',
+  'work.completed',
+];
 
 /** Materiality (R2): an event is material iff its `eventType` is declared. */
 export function isMaterialEvent(event: BusinessEvent): boolean {

@@ -1,114 +1,136 @@
-# Apply Progress: Cold-Start Discovery — Phase 1 (tasks 1.1–1.3)
+# Apply Progress: Cold-Start Discovery — Phases 1–2 (tasks 1.1–1.3, 2.1–2.3)
 
 - **Change**: `cold-start-discovery`
-- **Batch**: Phase 1, tasks 1.1–1.3 (pure event builder)
-- **Work unit**: `phase-1-pure-event-builder`
-- **Correction**: `phase-1-evidence-gate-correction` (evidence-only rerun; no source changes) — gate token `sha256:7476c6cc011fc758628c664641edf2ffe8f17400c0c9a31de43a1ac5321dcf55`, added lines ≤ 40
-- **Attempt token**: `sha256:6c1925976087c727d8cc454695dadfc5dcfe44f7fe545caaaa1034eada8be9c4` (parent-held; authenticated as same attempt, state `proceed`)
-- **Changed lines (authored)**: 189 (additions; 0 deletions) — under the 200 runtime budget
-- **Delivery**: single PR (Phase 1 slice); commit task 1.4 intentionally left unchecked — native review/receipt must precede commit
+- **Batch (Phase 2)**: tasks 2.1–2.3 (acceptWork widening + materiality)
+- **Work unit (Phase 2)**: `phase-2-accept-work-materiality`
+- **Attempt token (Phase 2)**: `sha256:8ba20d478a283cfe5960ee108751ebe45ba94549635a4588a152dd7d5e391697` (parent-held; authenticated as same attempt via `acquire --token`, state `proceed`, zero mutation)
+- **Changed lines (Phase 2, authored)**: 152 (131 insertions + 21 deletions) — under the 250 work-unit budget; cumulative Phase 1+2 = 189 + 152 = 341
+- **Delivery**: single PR (Phase 1+2 slices); commit task 2.4 intentionally left unchecked — native review/receipt must precede commit
 - **Mode**: Strict TDD (active; `openspec/config.yaml` strict_tdd + tdd true; runner `PATH=/data/node24/bin:$PATH pnpm test`)
 
+## Native Budget Reset Record (authorized 2026-08-11)
+
+- Native ledger measured **283 changed lines** against the original 250-line cap → `decision_required: true`, `next_action: reset`. Maintainer authorized **corrected max changed lines: 320** — budget accounting only; no scope expansion, no review bypass (Engram `sdd/cold-start-discovery/phase2-budget-reset` #6457; runtime revision `sha256:a2f26bfb256f9973eac805860d4cc3d7f57e9ed5b932561d3c57831527fd0b82`).
+- Revalidation (work unit `phase-2-accept-work-materiality-budget-reset`, state `proceed`, orchestrator-held token `sha256:465f14191250631efb51576bc4390dc587f99741282fa0575021abe326cdcbd6`): the pre-audit candidate measured **283 changed lines** (git numstat vs `18cddf0` = +200/−83; 152 authored src/test [131 ins + 21 del] + 131 SDD artifact edits); the 7-line audit reset-record appended in this artifact brings the intermediate total to **290 changed lines** (+207/−83), and the final total — **308 changed lines** (+225/−83) — includes the 10-line evidence artifact and subsequent evidence-record lines: **283 pre-audit → 290 after the 7-line reset record → 308 final**. All totals fit the authorized 320-line cap — **283 ≤ 320 ✓, 290 ≤ 320 ✓, 308 ≤ 320 ✓**. The append is budget accounting only; no scope change. Focused GREEN reproduced `Test Files 2 passed (2) / Tests 73 passed (73)`; prior RED/GREEN evidence and gate digest `sha256:5d9d61d24ca5f09168ba8751ff4c57aecd27fc7bed97efb50b6cba3f889a66fa` remain bound and truthful (raw log preserved byte-for-byte, see Check Gate section).
+- Precise deltas (live vs `18cddf0`): `accept-work.ts` +17/−4, `heartbeat.ts` +8/−2, `use-cases.test.ts` +77/−13, `heartbeat.test.ts` +29/−2, `tasks.md` +4/−4, `apply-progress.md` +80/−58 (the 7-line audit reset-record accounts for +7 of the delta over the pre-audit +65/−58; the evidence-correction record adds the remaining +8; supersedes the approximate per-file splits in the Files Changed table below; the 152-authored total there is exact).
+- State unchanged: tasks 1.4 + 2.1–2.3 complete, 2.4 pending commit; Phase 3+ untouched; no commit/stage/push performed.
+
+## Evidence Correction Record (2026-08-11, phase-2-evidence-gate-correction)
+
+- Work unit `phase-2-evidence-gate-correction` (orchestrator-held token `sha256:f959449007fcd0acf5ad988735d5bf667e2866fe094b88b01288b5afe16ebf68`): evidence-only corrective rerun, no source/test/spec/design changes.
+- Corrected accounting language above (**283 pre-audit → 290 after the 7-line audit append → 308 final** including the 10-line evidence artifact and subsequent evidence-record lines; all totals ≤ 320), pinned task 1.4 to the exact `18cddf0` subject `feat(business-domain): add work accepted event builder`, and bound the full-gate evidence to the in-repo artifact `evidence/phase-2-check-gate.log` (digest `a294f5c3…e005d`; raw full log digest `5d9d61d2…a66fa`).
+- Recomputed changed lines including the new evidence artifact: **308 final** — tracked diff vs `18cddf0` = 298 plus the 10-line evidence artifact = 308; chain **283 pre-audit → 290 after the 7-line reset record → 308 final**, still ≤ authorized 320. Tasks 2.4 pending; Phase 3+ untouched.
+
 ## Completed Tasks
+
+### Phase 1 (preserved — prior batch)
 
 - [x] 1.1 [RED] Created `packages/business-domain/test/work-accepted-event.test.ts` (11 tests).
 - [x] 1.2 [GREEN] Created `packages/business-domain/src/work-accepted-event.ts` — pure `buildWorkAcceptedEvent(work, now?)`, zero `@io/*`, per design §Interfaces (D3, D4).
 - [x] 1.3 Exported `buildWorkAcceptedEvent` from `packages/business-domain/src/index.ts`.
-- [ ] 1.4 Commit — pending native review/receipt (NOT done by design).
+- [x] 1.4 Commit `feat(business-domain): add work accepted event builder` — committed as `18cddf0` (exact subject verified in `git log`).
 
-## TDD Cycle Evidence
+### Phase 2 (this batch)
+
+- [x] 2.1 [RED] Extended `packages/business-domain/test/use-cases.test.ts` (all 6 `acceptWork` callers updated to `{ work, events }`) + `heartbeat.test.ts` materiality scenarios: success appends exactly one `work.accepted` (`evt:acc:{workId}`, `source:'acceptor'`); each typed failure (`version-conflict`/`invalid-transition`/`not-found`/`invalid-command`) returns `{ok:false}` appending nothing; two novel accepts + one tick ⇒ one `activate`; `work.completed` remains material and `heartbeat.decision` remains undeclared/non-material.
+- [x] 2.2 [GREEN] Modified `packages/business-domain/src/use-cases/accept-work.ts`: deps widened to `{ work, events, now? }`; builds via `buildWorkAcceptedEvent` and appends only on `ok:true`; typed failures resolve pre-write inside `applyWorkTransition` — `{ok:false}` values, no thrown control flow; zero `@io/*` (D1, D6).
+- [x] 2.3 [GREEN] Modified `packages/business-domain/src/heartbeat.ts`: `MATERIAL_EVENT_TYPES` → readonly `['work.accepted', 'work.completed']`; `isMaterialEvent`/`hasMaterialNovelty`/`resolveCursorIndex`/`escalationModelFor`/`evaluateHeartbeat`/`tailCursor` byte-unchanged (D5, D9).
+- [ ] 2.4 Commit `feat(business-domain): emit work.accepted on accept and declare it material` — pending native review/receipt (NOT done by design).
+
+## TDD Cycle Evidence (Phase 2)
 
 | Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
 |------|-----------|-------|------------|-----|-------|-------------|----------|
-| 1.1 | `packages/business-domain/test/work-accepted-event.test.ts` | Unit | N/A (new file) | ✅ Written first — 13/13 failed (`buildWorkAcceptedEvent is not a function`, `ENOENT src/work-accepted-event.ts`) | ✅ 13/13 passed after 1.2+1.3 | ✅ 11 cases: shape, clocks, LLM-variant, different workId, optional clock, rebuild, derived non-time fields, grammar for hostile workIds, hb:/att: disjointness, exclusive source, zero `@io/*` | ✅ Clean (format-check converged, tsc clean, 0 lint findings) |
-| 1.2 | (same test file) | Unit | N/A (new file) | N/A (RED from 1.1) | ✅ 13/13 passed (module created + export present) | ➖ covered by 1.1 cases | ✅ Clean |
-| 1.3 | (same test file — imports from `../src/index.js`) | Unit | ✅ 330/330 baseline before index edit | N/A (RED from 1.1) | ✅ 13/13 passed after export | ➖ single export line | ✅ Clean |
+| 2.1 | `packages/business-domain/test/use-cases.test.ts` + `test/heartbeat.test.ts` | Unit | ✅ 14 files / 341 tests passing (baseline before edits) | ✅ 5 failed / 68 passed (73) — genuine failures: `appends EXACTLY ONE work.accepted` (deps.events undefined), `two novel accepts + one tick` (work.accepted not material), heartbeat `declares exactly the material set`, `declared work.accepted is material`, `sole novelty guard` | ✅ 73/73 passed after 2.2+2.3 | ✅ success + 4 typed failures (distinct pre-write paths) + 2 materiality scenarios + `heartbeat.decision`/`work.completed` legality invariants (typed-failure "appends nothing" tests held in RED — they guard pre-existing invariants) | ✅ Format normalized pre-freeze (1 file fixed) then converged; tsc clean; 0 lint findings in changed files |
+| 2.2 | (same test files) | Unit | ✅ 341/341 baseline | N/A (RED from 2.1) | ✅ 73/73 passed (deps widened + conditional append) | ➖ covered by 2.1 cases | ✅ Clean |
+| 2.3 | (same test files) | Unit | ✅ 341/341 baseline | N/A (RED from 2.1) | ✅ 73/73 passed (materiality declared) | ✅ 3 heartbeat scenarios: declared material, at-or-before-cursor, sole novelty guard | ✅ Clean |
 
-## Work Unit Evidence
+## Work Unit Evidence (Phase 2)
 
 | Evidence | Required value |
 |----------|----------------|
-| Focused test command and exact result | `PATH=/data/node24/bin:$PATH pnpm vitest run packages/business-domain/test/work-accepted-event.test.ts` → `Test Files 1 passed (1); Tests 11 passed (11)` — smallest command proving this pure builder unit (final post-trim run; full run history below) |
-| Runtime harness command/scenario and exact result | `N/A` — justified: no runtime boundary exists. Pure event builder: zero I/O, no process, no DB, no production caller yet (design D3/D4 pure function; D10 no caller). The focused Vitest command above is the bounded proof. |
-| Rollback boundary | Revert `work-accepted-event.ts` + `work-accepted-event.test.ts` + the `index.ts` export line together; nothing else in the repo depends on the builder (no production caller — D10). |
+| Focused test command and exact result | RED: `PATH=/data/node24/bin:$PATH pnpm vitest run packages/business-domain/test/use-cases.test.ts packages/business-domain/test/heartbeat.test.ts` → `Test Files 2 failed (2); Tests 5 failed | 68 passed (73)`. GREEN: same command → `Test Files 2 passed (2); Tests 73 passed (73)`. |
+| Runtime harness command/scenario and exact result | `N/A` — source-true: this work unit is domain behavior exercised entirely through in-memory fakes (`InMemoryWorkRepository`, `InMemoryBusinessEventRepository`); there is no DB, process, network, or daemon boundary anywhere in the changed code. The focused Vitest commands above are the bounded proof. (Live-PG atomicity is Phase 3's runtime-boundary harness.) |
+| Rollback boundary | Revert the 4 Phase 2 files together: `use-cases/accept-work.ts` (deps widening + append), `heartbeat.ts` (materiality constant), `use-cases.test.ts` caller updates + new tests, `heartbeat.test.ts` materiality scenarios; plus the two tasks.md/apply-progress.md check-mark updates. Nothing outside business-domain depends on the widened signature (D10: no production caller yet; Phase 3/4 seams not implemented). Reverting 2.1–2.3 never removes Phase 1 work (`work-accepted-event.ts` + test + index export remain valid standalone). |
 
-## Check Gate (correction rerun) — `PATH=/data/node24/bin:$PATH pnpm check`
+## Check Gate (Phase 2) — `PATH=/data/node24/bin:$PATH pnpm check`
 
 ```
 exit code: 0
 $ pnpm run format-check && pnpm run typecheck && pnpm run build && pnpm run lint && pnpm run test
-format-check → biome format .: Checked 209 files in 45ms. No fixes applied. (non-mutating)
+format-check → biome format .: Checked 209 files in 38ms. No fixes applied. (converged pre-freeze: 1 file fixed by `pnpm format` BEFORE the gate, then re-verified non-mutating)
 typecheck    → tsc -p tsconfig.json: clean
 build        → tsc -p tsconfig.build.json: clean
-lint         → biome lint .: 0 errors (pre-existing warnings only in untouched files, e.g. parity.test.ts)
-test         → vitest run: Test Files 99 passed | 3 skipped (102); Tests 1361 passed | 6 skipped (1367); Duration 26.71s
-full log sha256: 30adcd8971004136000404c8e58475ca59f76c5fda66cfc352c850aedf88e619 (157 lines)
+lint         → biome lint .: 0 errors (9 pre-existing warnings only in untouched files: parity.test.ts ×6, worker-reconcile.test.ts ×1, business-pg-roundtrip.integration.test.ts ×2)
+test         → vitest run: Test Files 99 passed | 3 skipped (102); Tests 1366 passed | 6 skipped (1372); Duration 23.64s (per bound raw log)
+full log sha256: 5d9d61d24ca5f09168ba8751ff4c57aecd27fc7bed97efb50b6cba3f889a66fa (157 lines)
+evidence artifact: `evidence/phase-2-check-gate.log` (10 lines, sha256 a294f5c395ffc9a270e8e03be4c7f0f0b3e8fa0cfa28ce2187475261937e005d) — bounded, privacy-scrubbed, in-repo inspectable transcript of this run; counts bound: 209 files checked, 0 lint errors (9 pre-existing warnings), Test Files 99 passed | 3 skipped, Tests 1366 passed | 6 skipped.
 ```
 
-## Verification Evidence
+## Verification Evidence (Phase 2)
 
-### RED (1.1) — `PATH=/data/node24/bin:$PATH pnpm vitest run packages/business-domain/test/work-accepted-event.test.ts`
+### RED (2.1) — focused command
 ```
-Test Files  1 failed (1)
-     Tests  13 failed (13)
-TypeError: buildWorkAcceptedEvent is not a function
-Error: ENOENT: no such file or directory, open '.../src/work-accepted-event.ts'
+Test Files  2 failed (2)
+     Tests  5 failed | 68 passed (73)
+  × declares exactly the material set from the design
+  × treats a declared work.accepted event as material
+  × cursor remains the sole novelty guard: two novel accepts, one tick, exactly one activate
+  × appends EXACTLY ONE work.accepted event (evt:acc:{workId}, source acceptor) after the successful CAS
+  × two novel accepts + one tick ⇒ exactly one activate (use-cases)
 ```
-Proven before any production code existed.
+Proven before any production change: `acceptWork` still had the old signature (no `events` dep) and `work.accepted` was still undeclared.
 
-### GREEN (1.2 + 1.3) — same focused command
+### GREEN (2.2 + 2.3) — same focused command
 ```
-Test Files  1 passed (1)
-     Tests  13 passed (13)
-```
-After creating `src/work-accepted-event.ts` and exporting from `src/index.ts`. (13 → 11 after trimming below the 200-line budget; all assertions retained, `expectTypeOf` merged into the shape test.)
-
-### Final focused run (post-trim)
-```
-Test Files  1 passed (1)
-     Tests  11 passed (11)
+Test Files  2 passed (2)
+     Tests  73 passed (73)
 ```
 
-### Relevant suite — `PATH=/data/node24/bin:$PATH pnpm vitest run packages/business-domain/test`
+### Relevant business-domain suite — `PATH=/data/node24/bin:$PATH pnpm vitest run packages/business-domain/test`
 ```
 Test Files  14 passed (14)
-     Tests  341 passed (341)   # baseline 330 + 11 new; zero regressions
+     Tests  346 passed (346)   # baseline 341 + 5 new; zero regressions
 ```
 
-### Gates
+### Gates (Phase 2)
+- `pnpm run format-check` — converged (checked 209 files, no fixes applied; one `pnpm format` fix applied to the test file BEFORE freeze, then re-verified convergent)
 - `pnpm run typecheck` — clean (tsc, no errors)
-- `pnpm run format-check` — converged (checked 209 files, no fixes applied; one format fix applied to the test file BEFORE freeze, then re-verified convergent)
-- `pnpm run lint` — 0 findings in changed files (9 pre-existing warnings in untouched files: parity.test.ts ×6, worker-reconcile.test.ts ×1, business-pg-roundtrip.integration.test.ts ×2)
+- `pnpm run lint` — 0 findings in changed files (9 pre-existing warnings in untouched files, unchanged from Phase 1)
+- `pnpm check` — exit 0 (exactly once, after normalization)
 
-## Contract Proof (spec business-event R1 + Idempotent Single Emission)
+## Contract Proof (Phase 2 — spec work-lifecycle Atomic Acceptance Fact + heartbeat Declared Material Event Types)
 
-- `eventId = evt:acc:{workId}` determined SOLELY by `workId` — clocks, LLM-producible facts (description/proposer), companyId, version all excluded from identity.
-- Non-time fields (`companyId`, `aggregateKind`, `aggregateId`, `eventType`, `source`, `payload`) deterministic from accepted Work facts (`payload = { workId, state, actor: proposer }`).
-- `occurredAt = now?.() ?? Date.now()` — injected now, excluded from identity; optional clock defaults to ambient.
-- `source: 'acceptor'` exclusive to this builder; namespace disjointness proven: hostile workIds (`att:acme:attempt-1`, `hb:deadbeef`) still yield `evt:acc:` segment; `evt:acc:`/`evt:hb:`/`evt:att:` segments are pairwise distinct.
-- Zero `@io/*` imports — source imports only `./types.js` (type-only); asserted by the pure-surface test.
+- Success appends EXACTLY ONE `work.accepted` event: `eventId = evt:acc:{workId}`, `eventType:'work.accepted'`, `aggregateKind:'work'`, `aggregateId: workId`, `source:'acceptor'`, `payload = { workId, state:'accepted', actor: proposer }` — built from the CAS-winning Work via the Phase 1 pure builder (D3/D4).
+- Every typed failure (`version-conflict`, `invalid-transition`, `not-found`, `invalid-command`) resolves PRE-WRITE inside `applyWorkTransition` — `{ok:false}` values, never throws — and the event log stays empty (verified per-failure).
+- `now?` is threaded into the builder; `occurredAt` stays excluded from identity (no identity change — the Phase 1 determinism tests still pass).
+- Zero `@io/*` imports: `accept-work.ts` imports only `../ports/repositories.js`, `../types.js`, `../work-accepted-event.js`, `./result.js`; the recursive src-wide `@io/` boundary test in heartbeat.test.ts still passes.
+- Materiality: `MATERIAL_EVENT_TYPES` is exactly `['work.accepted', 'work.completed']`; `heartbeat.decision` stays undeclared → non-material → never renews novelty (test holds); cursor functions unchanged — `resolveCursorIndex`, `hasMaterialNovelty`, `escalationModelFor`, `evaluateHeartbeat`, `tailCursor` are byte-unchanged (D5/D9: cursor stays the SOLE novelty guard; no second guard, no clock trigger).
+- One tick with two novel accepts → exactly one `activate` (binary gate); accepted events at/before the cursor → `no-llm-heartbeat` (test holds).
+- Non-accept transitions untouched: `proposeWork`/`startWork`/`completeWork`/`verifyWork`/`rejectWork` signatures and results unchanged (only `acceptWork` gained the `events` dep — "Only the accept transition emits work.accepted", D1/D7).
 
-## Files Changed (Phase 1)
+## Files Changed (Phase 2)
 
 | File | Action | Lines | What |
 |------|--------|-------|------|
-| `packages/business-domain/src/work-accepted-event.ts` | Created | 34 | Pure `buildWorkAcceptedEvent(work, now?)` per design §Interfaces (D3, D4) |
-| `packages/business-domain/test/work-accepted-event.test.ts` | Created | 154 | Identity determinism + grammar/ownership disjointness + pure-surface tests |
-| `packages/business-domain/src/index.ts` | Modified | +1 | Export `buildWorkAcceptedEvent` |
-| `openspec/changes/cold-start-discovery/tasks.md` | Modified | — | Checked 1.1–1.3; 1.4 stays unchecked (commit after native review) |
+| `packages/business-domain/src/use-cases/accept-work.ts` | Modified | +15/−6 | Deps widened to `{ work, events, now? }`; append `buildWorkAcceptedEvent` only on `ok:true`; typed failures resolve pre-write (D1, D6) |
+| `packages/business-domain/src/heartbeat.ts` | Modified | +7/−2 | `MATERIAL_EVENT_TYPES` → readonly `['work.accepted','work.completed']` + doc note; filter/cursor untouched (D5, D9) |
+| `packages/business-domain/test/use-cases.test.ts` | Modified | +56/−8 | All 6 `acceptWork` callers updated; success-append + 4 typed-failure no-append + two-accepts-one-tick tests; `evaluateHeartbeat` import |
+| `packages/business-domain/test/heartbeat.test.ts` | Modified | +28/−3 | Material-set declaration updated; declared-accepted-is-material, at-or-before-cursor, sole-novelty-guard scenarios |
+| `openspec/changes/cold-start-discovery/tasks.md` | Modified | — | Checked 1.4 (commit `18cddf0`), 2.1–2.3; 2.4 stays unchecked |
+| `openspec/changes/cold-start-discovery/evidence/phase-2-check-gate.log` | Created | +10 | Bounded, privacy-scrubbed transcript of the Phase 2 `pnpm check` gate run; sha256 `a294f5c3…e005d`, raw full-log digest `5d9d61d2…a66fa` bound |
 
 ## Remaining Tasks
 
-- [ ] 1.4 Commit `feat(business-domain): add pure work.accepted event builder with identity tests` — after native review/receipt.
-- [ ] Phase 2: 2.1–2.4 (acceptWork widening + materiality)
+- [ ] 2.4 Commit `feat(business-domain): emit work.accepted on accept and declare it material` — after native review/receipt.
 - [ ] Phase 3: 3.1–3.4 (atomic PG acceptance seam + rollback proof)
 - [ ] Phase 4: 4.1–4.3 (composition surface + real-path e2e)
 - [ ] Phase 5: 5.1–5.3 (spec alignment, check-only gates, archive readiness)
 
 ## Deviations from Design
 
-None — implementation matches design §Interfaces exactly (`eventId`, `payload` incl. `actor: work.proposer`, `occurredAt`, `source`).
+None — implementation matches design D1 (`{ work, events, now? }`, append on `ok:true`, local to `acceptWork`), D4 (builder unchanged), D5 (`['work.accepted','work.completed']`), D6 (typed failures resolve pre-write; post-CAS duplicate `append` propagates for the Phase 3 rollback), D7 (no other transition touched), D9 (cursor untouched).
 
 ## Rollback Boundary (work unit)
 
-Revert `work-accepted-event.ts` + `work-accepted-event.test.ts` + the `index.ts` export line together; nothing else in the repo depends on the builder yet (no production caller — D10).
+Revert the 4 Phase 2 source/test files together; nothing else depends on the widened `acceptWork` signature (D10: no production caller yet). Phase 1 files (`work-accepted-event.ts`, its test, the index export) remain valid standalone and are NOT part of this unit's rollback.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { evaluateHeartbeat } from '../src/index.js';
 import type { Work } from '../src/types.js';
 import type {
   CompleteWorkCommand,
@@ -16,6 +17,7 @@ import {
   verifyWork,
 } from '../src/use-cases/index.js';
 import {
+  InMemoryBusinessEventRepository,
   InMemoryBusinessReceiptRepository,
   InMemoryIdempotencyJournalRepository,
   InMemoryWorkRepository,
@@ -28,6 +30,13 @@ import {
  * successful get + CAS transition, `{ok:false,reason,current?}` on failure,
  * NEVER a thrown exception for control flow. Raw `save()` is insert-only
  * (creating a NEW work) and is NOT the state-change path for an existing work.
+ *
+ * Since the cold-start change (work-lifecycle delta: Atomic Acceptance Fact),
+ * `acceptWork` ALSO takes the business-event repository and appends exactly one
+ * deterministic `work.accepted` event ONLY after the CAS succeeds (`ok:true`).
+ * Every typed failure (`version-conflict`, `invalid-transition`, `not-found`,
+ * `invalid-command`) resolves PRE-WRITE inside `applyWorkTransition` — a
+ * `{ok:false}` value, never a throw — so it appends NOTHING.
  */
 
 function sampleWork(overrides: Partial<Work> = {}): Work {
@@ -49,12 +58,17 @@ function transitionCmd(overrides: Partial<TransitionWorkCommand> = {}): Transiti
   return { companyId: 'acme', actor: 'principal-1', workId: 'work-1', ...overrides };
 }
 
-/** Fresh in-memory deps for every test: work + receipts repositories + journal. */
-function deps(): CompleteWorkDeps & { work: InMemoryWorkRepository } {
+/** Fresh in-memory deps for every test: work + receipts repositories + journal
+ * + business-event log (the accept use case appends `work.accepted` there). */
+function deps(): CompleteWorkDeps & {
+  work: InMemoryWorkRepository;
+  events: InMemoryBusinessEventRepository;
+} {
   return {
     work: new InMemoryWorkRepository(),
     receipts: new InMemoryBusinessReceiptRepository(),
     journal: new InMemoryIdempotencyJournalRepository(),
+    events: new InMemoryBusinessEventRepository(),
   };
 }
 
@@ -153,7 +167,7 @@ describe('acceptWork', () => {
     const d = deps();
     await seed(d.work);
 
-    const value = expectOk(await acceptWork(transitionCmd(), { work: d.work }));
+    const value = expectOk(await acceptWork(transitionCmd(), { work: d.work, events: d.events }));
 
     expect(value.state).toBe('accepted');
     expect(value.version).toBe(2);
@@ -164,11 +178,34 @@ describe('acceptWork', () => {
     expect(stored?.version).toBe(2);
   });
 
-  it('a stale expectedVersion returns {ok:false, reason:version-conflict, current} WITHOUT throwing', async () => {
+  it('appends EXACTLY ONE work.accepted event (evt:acc:{workId}, source acceptor) after the successful CAS (Atomic Acceptance Fact)', async () => {
+    const d = deps();
+    await seed(d.work);
+
+    const value = expectOk(await acceptWork(transitionCmd(), { work: d.work, events: d.events }));
+    expect(value.state).toBe('accepted');
+
+    const events = await d.events.listByCompany('acme');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      eventId: 'evt:acc:work-1',
+      companyId: 'acme',
+      aggregateKind: 'work',
+      aggregateId: 'work-1',
+      eventType: 'work.accepted',
+      payload: { workId: 'work-1', state: 'accepted', actor: 'principal-2' },
+      source: 'acceptor',
+    });
+  });
+
+  it('a stale expectedVersion returns {ok:false, reason:version-conflict, current} WITHOUT throwing and appends NO event', async () => {
     const d = deps();
     await seed(d.work, { state: 'proposed', version: 2 });
 
-    const result = await acceptWork(transitionCmd({ expectedVersion: 1 }), { work: d.work });
+    const result = await acceptWork(transitionCmd({ expectedVersion: 1 }), {
+      work: d.work,
+      events: d.events,
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
@@ -176,38 +213,65 @@ describe('acceptWork', () => {
       expect(result.current?.version).toBe(2);
       expect(result.current?.state).toBe('proposed');
     }
-    // Stored work unchanged.
+    // Stored work unchanged, event log empty — the failure resolved pre-write.
     expect((await d.work.get('acme', 'work-1'))?.version).toBe(2);
+    expect(await d.events.listByCompany('acme')).toHaveLength(0);
   });
 
-  it('a transition the state machine forbids returns {ok:false, reason:invalid-transition, current}', async () => {
+  it('a transition the state machine forbids returns {ok:false, reason:invalid-transition, current} and appends NO event', async () => {
     const d = deps();
     await seed(d.work, { state: 'accepted' });
 
-    const result = await acceptWork(transitionCmd(), { work: d.work });
+    const result = await acceptWork(transitionCmd(), { work: d.work, events: d.events });
 
     expect(result.ok).toBe(false);
     if (result.ok === false) {
       expect(result.reason).toBe('invalid-transition');
       expect(result.current?.state).toBe('accepted');
     }
+    expect(await d.events.listByCompany('acme')).toHaveLength(0);
   });
 
-  it('an unknown work returns {ok:false, reason:not-found}', async () => {
+  it('an unknown work returns {ok:false, reason:not-found} and appends NO event', async () => {
     const d = deps();
-    const result = await acceptWork(transitionCmd({ workId: 'missing' }), { work: d.work });
+    const result = await acceptWork(transitionCmd({ workId: 'missing' }), {
+      work: d.work,
+      events: d.events,
+    });
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('not-found');
+    expect(await d.events.listByCompany('acme')).toHaveLength(0);
   });
 
-  it('a missing workId returns {ok:false, reason:invalid-command}', async () => {
+  it('a missing workId returns {ok:false, reason:invalid-command} and appends NO event', async () => {
     const d = deps();
     const result = await acceptWork(
       { companyId: 'acme', actor: 'p' } as unknown as TransitionWorkCommand,
-      { work: d.work },
+      { work: d.work, events: d.events },
     );
     expect(result.ok).toBe(false);
     if (result.ok === false) expect(result.reason).toBe('invalid-command');
+    expect(await d.events.listByCompany('acme')).toHaveLength(0);
+  });
+
+  it('two novel accepts + one tick ⇒ exactly one activate (work.accepted is material; cursor stays the sole novelty guard)', async () => {
+    const d = deps();
+    await seed(d.work, { workId: 'work-1' });
+    await seed(d.work, { workId: 'work-2' });
+
+    await expectOk(
+      await acceptWork(transitionCmd({ workId: 'work-1' }), { work: d.work, events: d.events }),
+    );
+    await expectOk(
+      await acceptWork(transitionCmd({ workId: 'work-2' }), { work: d.work, events: d.events }),
+    );
+
+    const events = await d.events.listByCompany('acme');
+    expect(events.map((event) => event.eventType)).toEqual(['work.accepted', 'work.accepted']);
+
+    // ONE gate evaluation (one tick) with the cursor unchanged → exactly ONE
+    // activate decision; the two novel events never produce two activations.
+    expect(evaluateHeartbeat(events)).toEqual({ kind: 'activate', model: 'flash' });
   });
 });
 
@@ -406,7 +470,7 @@ describe('raw save() is not the transition path', () => {
     const d = deps();
     const work = await seed(d.work, { state: 'proposed' });
 
-    const value = expectOk(await acceptWork(transitionCmd(), { work: d.work }));
+    const value = expectOk(await acceptWork(transitionCmd(), { work: d.work, events: d.events }));
     expect(value.state).toBe('accepted');
     expect(value.version).toBe(2);
 
