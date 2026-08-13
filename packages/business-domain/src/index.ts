@@ -7,6 +7,12 @@
 
 export { evidenceId } from './evidence-id.js';
 export { buildHeartbeatDecisionEvent } from './heartbeat-decision-event.js';
+export { buildSkillOutcomeEvent } from './skill-outcome-event.js';
+export type {
+  ActivatedSkillRef,
+  SkillOutcomeEventInput,
+  SkillOutcomePayload,
+} from './skill-outcome-event.js';
 export { buildWorkAcceptedEvent } from './work-accepted-event.js';
 export type { JournalFakePersistence } from './ports/fakes.js';
 export {
