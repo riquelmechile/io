@@ -5,7 +5,13 @@ import type { Delegation, Skill, Work } from '@io/business-domain/src/index.js';
 import { describe, expect, it } from 'vitest';
 
 import type { CompileContextInput } from '../src/index.js';
-import { buildStablePrefix, CONTEXT_SCHEMA_VERSION, compileContext } from '../src/index.js';
+import {
+  buildDynamicSuffix,
+  buildStablePrefix,
+  compileContext,
+  CONTEXT_SCHEMA_VERSION,
+  deriveCohort,
+} from '../src/index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -257,5 +263,44 @@ describe('inverse cache-poisoning proof — seg 7 is cohort-pure (R2 S3, skill R
     const compiledAgain = compileContext(compiledInput);
     expect(compiled.messages[0]?.content).toBe(compiledAgain.messages[0]?.content);
     expect(compiled.user).toBe(compiledAgain.user);
+  });
+});
+
+/**
+ * Output extension byte-stability (context-compiler delta: Output extension is
+ * byte-stable). Adding `activatedSkills` to `compileContext` output SHALL leave
+ * the bytes of `messages` and `user` — including schema version and cohort —
+ * unchanged for identical input. The golden pin MUST still hold through the
+ * full compile path, not just `buildStablePrefix`, and the extension SHALL
+ * surface the same segment-7 selection the prefix renders.
+ */
+describe('compiled output extension — byte-stable pre/post (context-compiler delta)', () => {
+  it('messages and user are byte-identical to the prior contract (golden pin holds through compileContext)', () => {
+    const goldenPath = join(here, 'fixtures', `prefix.v${CONTEXT_SCHEMA_VERSION}.golden.txt`);
+    const golden = readFileSync(goldenPath, 'utf8');
+    const compiled = compileContext(seed);
+    // messages[0] is the stable prefix — the FULL compile path equals the golden
+    // bytes the pre-extension contract produced (schema version embedded).
+    expect(compiled.messages[0]?.content).toBe(golden);
+    // messages[1] is the dynamic suffix — unchanged from the pre-extension contract.
+    expect(compiled.messages[1]?.content).toBe(buildDynamicSuffix(seed));
+    // user is the derived cohort — identical, with the schema version embedded.
+    expect(compiled.user).toBe(
+      deriveCohort({
+        companyId: 'acme',
+        process: 'planning',
+        schemaVersion: CONTEXT_SCHEMA_VERSION,
+      }),
+    );
+    expect(compiled.user).toContain(`v${CONTEXT_SCHEMA_VERSION}`);
+  });
+
+  it('extension surfaces the SAME selection the prefix renders — activatedSkills matches seg 7', () => {
+    const compiled = compileContext(seed);
+    // The seed carries exactly one ACTIVE matching skill (skill-planning-v2).
+    expect(compiled.activatedSkills).toEqual([{ skillId: 'skill-planning-v2', version: 1 }]);
+    // Segment 7 renders PRESENT with the same identity in the prefix bytes.
+    expect(compiled.messages[0]?.content).toContain('id=skill-planning-v2');
+    expect(compiled.messages[0]?.content).toContain('v=1');
   });
 });

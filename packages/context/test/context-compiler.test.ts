@@ -1,8 +1,8 @@
 import type { Skill, Work } from '@io/business-domain/src/index.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CompileContextInput, Segment, SegmentRender } from '../src/index.js';
-import { buildStablePrefix, SEGMENTS } from '../src/index.js';
+import { buildStablePrefix, compileContext, SEGMENTS } from '../src/index.js';
 
 /** A fully-sourced Work fixture: drives segment 11 (current-work) rendering. */
 const work: Work = {
@@ -309,5 +309,71 @@ describe('segment 7 — active skills render (R1, skill R7)', () => {
     // Zero bytes: the prefix with empty skills is byte-identical to the
     // no-skills prefix (backward compatible).
     expect(buildStablePrefix({ ...input, skills: [] })).toBe(buildStablePrefix(input));
+  });
+});
+
+/**
+ * Compiled output selection (context-compiler delta: Compiled Output Contract).
+ * `compileContext` SHALL return `activatedSkills` exposing the EXACT segment-7
+ * cohort selection as ordered `{ skillId, version }` values — including an
+ * empty list when none is selected — surfaced from the SAME single-pass
+ * selection that renders segment 7. Compilation SHALL be pure and SHALL NOT
+ * invoke any client.
+ */
+describe('compileContext — activatedSkills output contract (context-compiler delta)', () => {
+  function renderSeg7(compiled: CompileContextInput): SegmentRender {
+    const segment = SEGMENTS.find((candidate) => candidate.position === 7);
+    if (segment === undefined) throw new Error('no segment at position 7');
+    return segment.render(compiled);
+  }
+
+  it('activatedSkills equals the segment-7 cohort selection in order', () => {
+    // Inserted as [skillB, skillA] but must surface as [skillA, skillB] (ASC).
+    const compiled = compileContext({ ...input, skills: [skillB, skillA] });
+    expect(compiled.activatedSkills).toEqual([
+      { skillId: 'a-skill', version: 1 },
+      { skillId: 'b-skill', version: 2 },
+    ]);
+  });
+
+  it('activatedSkills matches the segment-7 render order — same selection, same array', () => {
+    const compiled = compileContext({ ...input, skills: [skillB, skillA] });
+    const rendered = renderSeg7({ ...input, skills: [skillB, skillA] });
+    expect(rendered.present).toBe(true);
+    // The rendered bytes expose skillId+version in order; the refs must match.
+    const renderedLines = (rendered.text ?? '').split('\n');
+    const renderedRefs = renderedLines
+      .filter((line) => line.startsWith('- id='))
+      .map((line) => {
+        const id = line.match(/^- id=(\S+)/)?.[1] ?? '';
+        const version = Number(line.match(/ v=(\d+)/)?.[1] ?? '');
+        return { skillId: id, version };
+      });
+    expect(compiled.activatedSkills).toEqual(renderedRefs);
+  });
+
+  it('empty selection surfaces an explicit empty list (no skills → [])', () => {
+    const empty = compileContext({ ...input, skills: [] });
+    const missing = compileContext(input); // no skills key at all
+    expect(empty.activatedSkills).toEqual([]);
+    expect(missing.activatedSkills).toEqual([]);
+    // Empty list and segment 7 ABSENT coexist: prefix bytes unchanged.
+    expect(buildStablePrefix({ ...input, skills: [] })).toBe(buildStablePrefix(input));
+  });
+
+  it('compileContext makes ZERO LlmClient calls — pure data transformation', () => {
+    const client = { complete: vi.fn() };
+    const compiled = compileContext({ ...input, skills: [skillA, skillB] });
+    // Output is LlmClient-complete-consumable: messages + user are present.
+    expect(compiled.messages).toHaveLength(2);
+    expect(compiled.messages[0]?.role).toBe('system');
+    expect(compiled.messages[1]?.role).toBe('user');
+    expect(typeof compiled.user).toBe('string');
+    expect(compiled.activatedSkills).toEqual([
+      { skillId: 'a-skill', version: 1 },
+      { skillId: 'b-skill', version: 2 },
+    ]);
+    // The client spy is never invoked — compilation returns data only.
+    expect(client.complete).not.toHaveBeenCalled();
   });
 });
