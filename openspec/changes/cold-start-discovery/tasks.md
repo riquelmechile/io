@@ -50,7 +50,7 @@ Chain strategy: pending
 
 - [x] 4.1 [RED] Create `packages/app/test/e2e/cold-start-e2e.integration.test.ts`: propose → accept via the composition `acceptWork` seam → assert `listCompanyIds()` contains the company → pump `startSupervisor(deps, { intervalMs, schedule: oneShot, onActivate, onRecovery })` then `handle.stop()` → assert discovery → `activate` → dispatch → `runWorker` → finalize → `work.completed` + Work `completed`. MUST NOT use `seedAcceptedWork`; MUST NOT call `onActivate`/`onRecovery` directly (D10).
 - [x] 4.2 [GREEN] Modify `packages/app/src/composition/supervisor-dispatch.ts`: add `acceptWork: (cmd) => acceptWorkAtomically(connection, cmd)` to the return (D10).
-- [ ] 4.3 Commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e`.
+- [x] 4.3 Commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e` — committed as `2565175` (exact subject verified in `git log`).
 
 ## Phase 5: Spec Alignment, Check-Only Gates, Archive Readiness
 

@@ -243,3 +243,12 @@ None — implementation matches design D1 (`{ work, events, now? }`, append on `
 - **Phase 2**: Revert the 4 Phase 2 source/test files together; nothing else depends on the widened `acceptWork` signature (D10). Phase 1 files remain valid standalone — not part of this unit's rollback.
 - **Phase 3**: Revert the 6 Phase 3 source/test files together (see Work Unit Evidence, rollback row). Reverting 3.1–3.3 never removes Phase 1/2 work and never touches Phase 4+.
 - **Phase 4**: Revert the 4 Phase 4 files together (see Work Unit Evidence, rollback row). Reverting 4.1–4.2 never removes Phase 1–3 work and never touches Phase 5 (5.1–5.3 untouched).
+
+## Final Phase 4 Review & Delivery Disposition (2026-08-13, closeout work unit phase-4-closeout)
+
+- Work unit `phase-4-closeout`: native acquire state `proceed`, max attempts 1, max changed lines **40**; opaque token parent-held (no acquire/settle/reset performed by executor). Evidence-only closeout — no source/test/evidence-log changes, no test reruns, no Docker start/mutation, no commit/stage/push, no review launched; parent settles and handles any later artifact commit.
+- **Reviewed frozen candidate**: target `sha256:6e2c67c76eb3c5e67ad6c301bb79afa4ebe0846e6f7445a38921668cc282d702`; lineage `review-6e2c67c76eb3c5e6`; reliability lens **CLEAN**.
+- **Isolated PG final verification**: 1 file / 2 tests, exit 0 (cold-start e2e, harness `io-phase4-iso-pg-3cdff5d7`, `127.0.0.1:5434`).
+- **Receipt**: approved. **Pre-commit gate**: allow.
+- **Task 4.3**: committed `2565175` — `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e` (exact subject verified read-only in `git log`).
+- **Phase 5 (5.1–5.3) remains pending.**
