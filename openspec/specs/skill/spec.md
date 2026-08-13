@@ -4,7 +4,7 @@
 
 Versioned declarative procedural knowledge — durable, tenant-scoped, cohort-safe activation for the IO worker's compiled context prefix. A skill is declared procedural memory that conditions the worker's reasoned plan; it is not executed directly but shapes what the worker produces.
 
-This capability provides the definition store and deterministic selection rule (DECLARED + SELECTED). Segment-7 rendering, worker execution, heartbeats, learning/promotion, and outcome events are deferred to later slices.
+This capability provides the definition store, deterministic selection and segment-7 rendering rules, and intent-captured outcome attribution (DECLARED + SELECTED + ATTRIBUTED). Learning/promotion and direct Skill execution remain outside this capability.
 
 ## Requirements
 

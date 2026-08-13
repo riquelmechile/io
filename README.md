@@ -92,10 +92,10 @@ IO se construye incrementalmente: cada incremento debe funcionar y producir evid
 
 | Estado | Qué |
 |---|---|
-| **Completado** | Fundación de desarrollo root-only ([ADR-0004](docs/adr/README.md)), fundación de dominio (Work, receipts, eventos de negocio, heartbeat), trust kernel, capa de persistencia PostgreSQL, cliente DeepSeek con E2E en vivo, compilador de contexto, activación por heartbeat, supervisor timer y work dispatch, daemon durable, heartbeat decision events, escalada Flash→Pro, fencing tokens, y supervisor recovery (Scope B). |
-| **Siguiente** | Cold-start discovery gap + Skill outcome BusinessEvents — trazado en [pasos siguientes](docs/PASOS_SIGUIENTES_INCREMENTO_4.md). |
+| **Completado** | Fundación de desarrollo root-only ([ADR-0004](docs/adr/README.md)), fundación de dominio (Work, receipts, eventos de negocio, heartbeat), trust kernel, capa de persistencia PostgreSQL, cliente DeepSeek con E2E en vivo, compilador de contexto, activación por heartbeat, supervisor timer y work dispatch, daemon durable, heartbeat decision events, escalada Flash→Pro, fencing tokens, supervisor recovery (Scope B), cold-start discovery y Skill outcome BusinessEvents. |
+| **Siguiente** | Incremento 8 — Learning/promotion: ciclo de promoción de Skill `candidate → active`, trazado en [pasos siguientes](docs/PASOS_SIGUIENTES_INCREMENTO_4.md). |
 
-Todo el trabajo se entrega bajo Spec-Driven Development: 27 cambios completados, verificados y archivados en [`openspec/changes/archive/`](openspec/changes/archive/).
+Todo el trabajo se entrega bajo Spec-Driven Development: 29 cambios completados, verificados y archivados en [`openspec/changes/archive/`](openspec/changes/archive/).
 
 ---
 
