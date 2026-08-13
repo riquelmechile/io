@@ -107,12 +107,14 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       expect(entry?.attemptId).toBe(attemptIdFor(companyId, key));
       expect(entry?.requestHash).toBe(expectedHash);
 
-      // EXACTLY ONE work.completed event appended (R5 atomic emission).
+      // EXACTLY TWO events with the Work aggregate id (R5 atomic emission +
+      // business-event Atomic Worker Terminal Emission): work.completed AND
+      // the composite work.skill-outcome, both appended inside T1.
       const events = await h.conn.query<{ count: number }>(
         'SELECT count(*)::int AS count FROM business_event WHERE aggregate_id = $1',
         [workId],
       );
-      expect(events[0]?.count).toBe(1);
+      expect(events[0]?.count).toBe(2);
     });
 
     it('re-activation after completion settles dispatched:false — no second receipt (R4)', async () => {
