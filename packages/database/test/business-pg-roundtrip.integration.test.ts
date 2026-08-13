@@ -36,6 +36,7 @@ const SCHEMA_001 = join(pkgRoot, 'sql', '001_create_tables.sql');
 const SCHEMA_002 = join(pkgRoot, 'sql', '002_create_business_tables.sql');
 const SCHEMA_003 = join(pkgRoot, 'sql', '003_harden_columns.sql');
 const SCHEMA_004 = join(pkgRoot, 'sql', '004_harden_constraints.sql');
+const SCHEMA_006 = join(pkgRoot, 'sql', '006_business_events.sql');
 const SCHEMA_009 = join(pkgRoot, 'sql', '009_work_company_state_index.sql');
 const SCHEMA_010 = join(pkgRoot, 'sql', '010_fencing_tokens.sql');
 const SCHEMA_011 = join(pkgRoot, 'sql', '011_recovery_designation.sql');
@@ -44,7 +45,7 @@ const SCHEMA_011 = join(pkgRoot, 'sql', '011_recovery_designation.sql');
  * Integration test — REAL PostgreSQL round-trip for all four business-domain
  * aggregates (design §Testing Strategy) plus the Slice B concurrency surface.
  * Connects to live PG 18.4 via PgDbConnection, applies the shipped schema DDL
- * (001 → 002 → 003 → 004, in order), and round-trips each type through
+ * (001 → 002 → 003 → 004 → 006 → 009 → 010 → 011), and round-trips each type through
  * save→get, asserting byte-identical field-level equality including JSONB
  * nested objects and nullable fields. Slice B additions covered here:
  *   - transaction(): commit persists, error rolls back with NO partial write,
@@ -97,6 +98,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
     await conn.execute(readFileSync(SCHEMA_002, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_003, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_004, 'utf8'), []);
+    await conn.execute(readFileSync(SCHEMA_006, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_009, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_010, 'utf8'), []);
     await conn.execute(readFileSync(SCHEMA_011, 'utf8'), []);
