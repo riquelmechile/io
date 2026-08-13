@@ -873,6 +873,9 @@ describe('journal fencing token threading through the worker cycle (task 2.4)', 
         attemptId: ATTEMPT,
         fencingToken: 0, // STALE — not the claim owner
         effect,
+        // Skill-outcome contract: reconcile never emits outcomes; carry the
+        // empty selection to satisfy the shared FinalizeInput type.
+        activatedSkills: [],
       },
     );
 
@@ -918,6 +921,9 @@ describe('journal fencing token threading through the worker cycle (task 2.4)', 
         attemptId: ATTEMPT,
         fencingToken: 1, // the claim owner
         effect,
+        // Skill-outcome contract: reconcile never emits outcomes; carry the
+        // empty selection to satisfy the shared FinalizeInput type.
+        activatedSkills: [],
       },
     );
 

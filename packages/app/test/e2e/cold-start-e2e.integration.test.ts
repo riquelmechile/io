@@ -142,9 +142,10 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       expect(stored?.state).toBe('completed');
       expect(stored?.version).toBe(4);
 
-      // 6. EXACTLY ONE work.completed business event (source worker), the
-      //    acceptance event (source acceptor), and one supervisor decision
-      //    event in the live database — the full material chain persisted.
+      // 6. EXACTLY ONE work.completed + EXACTLY ONE work.skill-outcome
+      //    (source worker, both appended inside T1), the acceptance event
+      //    (source acceptor), and one supervisor decision event in the live
+      //    database — the full material chain persisted.
       const eventRows = await harness.conn.query<{ eventType: string; source: string }>(
         'SELECT event_type AS "eventType", source FROM business_event ORDER BY id ASC',
         [],
@@ -153,6 +154,7 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         'acceptor:work.accepted',
         'supervisor:heartbeat.decision',
         'worker:work.completed',
+        'worker:work.skill-outcome',
       ]);
 
       // 7. EXACTLY ONE business receipt + journal `completed` — the real
@@ -185,13 +187,17 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       supervisor.stop();
 
       // The completed Work is no longer actionable: the re-pump settles the
-      // dispatch with zero worker/LLM invocation and appends no second
-      // work.completed event (D9 settled-failure residual).
+      // dispatch with zero worker/LLM invocation and appends NO second
+      // work.completed and NO second skill-outcome (D9 settled-failure
+      // residual) — the worker-source stream stays exactly one of each.
       const eventRows = await harness.conn.query<{ eventType: string; source: string }>(
         'SELECT event_type AS "eventType", source FROM business_event WHERE source = $1',
         ['worker'],
       );
-      expect(eventRows).toEqual([{ eventType: 'work.completed', source: 'worker' }]);
+      expect(eventRows).toEqual([
+        { eventType: 'work.completed', source: 'worker' },
+        { eventType: 'work.skill-outcome', source: 'worker' },
+      ]);
       const receiptCount = await harness.conn.query<{ count: number }>(
         'SELECT count(*)::int AS count FROM business_receipt',
         [],

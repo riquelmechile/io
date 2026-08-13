@@ -95,13 +95,15 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       );
       expect(journal).toEqual([{ status: 'completed' }]);
 
-      // R5 structure: EXACTLY ONE `work.completed` business_event row in the
-      // live database after the full cycle — the append committed inside T1.
+      // R5 structure: EXACTLY TWO business_event rows in the live database
+      // after the full cycle — `work.completed` AND the composite
+      // `work.skill-outcome` (business-event Atomic Worker Terminal Emission),
+      // both appended inside T1.
       const eventCount = await harness.conn.query<{ count: number }>(
         'SELECT count(*)::int AS count FROM business_event',
         [],
       );
-      expect(eventCount[0]?.count).toBe(1);
+      expect(eventCount[0]?.count).toBe(2);
       const eventRows = await harness.conn.query<{
         eventId: string;
         eventType: string;
@@ -119,6 +121,14 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         {
           eventId: `evt:${attemptId}`,
           eventType: 'work.completed',
+          companyId: E2E_COMPANY,
+          aggregateKind: 'work',
+          aggregateId: E2E_WORK_ID,
+          source: 'worker',
+        },
+        {
+          eventId: `evt:sk:${attemptId}`,
+          eventType: 'work.skill-outcome',
           companyId: E2E_COMPANY,
           aggregateKind: 'work',
           aggregateId: E2E_WORK_ID,

@@ -17,6 +17,8 @@ import {
 } from '../src/worker/finalize.js';
 import { runWorker } from '../src/worker/worker.js';
 import {
+  acceptedWork,
+  activeDelegation,
   cannedLlm,
   harness,
   principals,
@@ -47,7 +49,10 @@ const HASH = 'hash-1';
 const ATTEMPT = 'att:acme:close-2026-q3';
 const WORK_ID = 'work-1';
 
-/** DbConnection double that counts committed vs rolled-back transactions. */
+/** Intent-time skill selection threaded into finalize (skill-outcome Unit 3). */
+const SAMPLE_REFS = [
+  { skillId: 'invoice-extraction', version: 1 },
+] as const; /** DbConnection double that counts committed vs rolled-back transactions. */
 class TxTrackingConnection implements DbConnection {
   commits = 0;
   rollbacks = 0;
@@ -185,6 +190,9 @@ function finalizeInput(
     // claim-owned terminal close must present the retained token.
     fencingToken: 1,
     effect,
+    // Skill-outcome contract (Unit 3): finalize ALWAYS receives the
+    // intent-captured selection (empty included) — it never re-derives it.
+    activatedSkills: [],
     ...overrides,
   };
 }
@@ -197,7 +205,7 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
 
     const result = await finalizeInFlightWorkAtomically(
       finalizeDeps(h, conn),
-      finalizeInput(effect),
+      finalizeInput(effect, { activatedSkills: SAMPLE_REFS }),
     );
 
     expect(result.ok).toBe(true);
@@ -219,9 +227,8 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     const row = await h.journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('completed');
     expect(row?.resultJson).toMatchObject({ state: 'completed' });
-    // EXACTLY ONE `work.completed` event appended in the SAME transaction
-    // (R5): evt:{attemptId}, built ONLY from terminal-close facts.
-    expect(h.events.appends).toHaveLength(1);
+    const types = h.events.appends.map((event) => event.eventType);
+    expect(types).toEqual(['work.completed', 'work.skill-outcome']);
     const event = h.events.appends[0];
     expect(event?.eventId).toBe(`evt:${ATTEMPT}`);
     expect(event?.companyId).toBe(COMPANY);
@@ -239,6 +246,29 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
       attemptId: ATTEMPT,
       actor: principals.executor,
     });
+    // The composite skill-outcome fact (business-event Idempotent Single
+    // Emission): `evt:sk:{attemptId}` = `evt:sk:att:{companyId}:{idempotencyKey}`,
+    // aggregateId = the closed workId, payload v1 = the threaded intent selection.
+    const skill = h.events.appends[1];
+    expect(skill?.eventId).toBe(`evt:sk:${ATTEMPT}`);
+    expect(skill?.companyId).toBe(COMPANY);
+    expect(skill?.aggregateKind).toBe('work');
+    expect(skill?.aggregateId).toBe(WORK_ID);
+    expect(skill?.eventType).toBe('work.skill-outcome');
+    expect(skill?.source).toBe('worker');
+    expect(typeof skill?.occurredAt).toBe('number');
+    expect(skill?.payload).toEqual({ version: 1, activatedSkills: SAMPLE_REFS });
+    // T1 placement: skill-outcome lands AFTER work.completed, BEFORE journal.complete.
+    const i = (marker: string) => h.trace.indexOf(marker);
+    expect(i('events:append:work.completed')).toBeGreaterThan(
+      i('journal:insertInFlight:acme:close-2026-q3'),
+    );
+    expect(i('events:append:work.skill-outcome')).toBeGreaterThan(
+      i('events:append:work.completed'),
+    );
+    expect(i('journal:complete:att:acme:close-2026-q3')).toBeGreaterThan(
+      i('events:append:work.skill-outcome'),
+    );
     // T1 committed; nothing rolled back.
     expect(conn.commits).toBe(1);
     expect(conn.rollbacks).toBe(0);
@@ -291,13 +321,20 @@ describe('finalizeInFlightWorkAtomically — T1 atomic close (WC atomic-close)',
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
     if (!a.ok || 'replayed' in a || !b.ok || 'replayed' in b) return;
-    // Exactly one event per close, and the two are BYTE-IDENTICAL.
-    expect(first.events.appends).toHaveLength(1);
-    expect(second.events.appends).toHaveLength(1);
-    expect(second.events.appends[0]).toEqual(first.events.appends[0]);
-    // No LLM output leaked into the event payload (no content/path fields).
+    // Exactly one event pair per close, and both are BYTE-IDENTICAL across
+    // cycles: work.completed AND the composite work.skill-outcome are built
+    // ONLY from terminal-close facts + the threaded intent selection — the
+    // model output MUST NOT select, judge, or alter any event field (R6).
+    expect(first.events.appends).toHaveLength(2);
+    expect(second.events.appends).toHaveLength(2);
+    expect(second.events.appends).toEqual(first.events.appends);
+    // Both cycles captured NO skills → the empty selection is recorded (v1 payload).
+    expect(first.events.appends[1]?.payload).toEqual({ version: 1, activatedSkills: [] });
+    // No LLM output leaked into either event payload (no content/path fields).
     expect(first.events.appends[0]?.payload).not.toHaveProperty('content');
     expect(first.events.appends[0]?.payload).not.toHaveProperty('relativePath');
+    expect(first.events.appends[1]?.payload).not.toHaveProperty('content');
+    expect(first.events.appends[1]?.payload).not.toHaveProperty('relativePath');
   });
   it('T1 CAS-loss: stops BEFORE receipts.save → T1 ROLLS BACK; the pre-committed in_flight row survives; marker is NOT a failure-complete', async () => {
     const h = harness();
@@ -640,5 +677,70 @@ describe('reconcilePostEffectFailure — widened no-effect branch (idempotency-j
     const row = await h.journal.lookup(COMPANY, KEY);
     expect(row?.status).toBe('in_flight');
     expect(row?.fencingToken).toBe(1);
+  });
+});
+
+describe('skill-outcome emission (Unit 3 — Atomic Worker Terminal Emission)', () => {
+  /** Cohort-matching active skill (scope = the low-risk-documents v2 cohort). */
+  const matchingSkill = {
+    skillId: 'invoice-extraction',
+    companyId: COMPANY,
+    name: 'Invoice extraction',
+    version: 1,
+    body: 'Extract vendor and amount fields from invoice documents.',
+    scope: { process: 'low-risk-documents', schemaVersion: 2 },
+    state: 'active' as const,
+    createdAt: 1750000000000,
+    updatedAt: 1750000000000,
+  };
+
+  it('full cycle threads the intent selection: appended skill-outcome carries the intent-time v1 refs; skills fetched ONCE (skill: Captured version is attributed; Version drift)', async () => {
+    const h = harness();
+    await seed(h);
+    await h.skills.save(matchingSkill);
+    const conn = new TxTrackingConnection(new InMemoryDbConnection());
+
+    const result = await runWorker(workerInput(), { ...h, connection: conn }, 'flash');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok || 'replayed' in result) return;
+    expect(result.work.state).toBe('completed');
+    // Fetch-once: skills read exactly once at intent — finalize appends the
+    // intent-CAPTURED selection, never a re-read (drift cannot leak in).
+    expect(h.skills.listCalls).toEqual(['acme']);
+    expect(h.events.appends.map((event) => event.eventType)).toEqual([
+      'work.completed',
+      'work.skill-outcome',
+    ]);
+    expect(h.events.appends[1]?.payload).toEqual({
+      version: 1,
+      activatedSkills: [{ skillId: 'invoice-extraction', version: 1 }],
+    });
+    expect(conn.commits).toBe(1);
+    expect(conn.rollbacks).toBe(0);
+  });
+
+  it('typed non-success dispositions emit no skill-outcome — invalid-plan, denied, recovery-required (Failure emits no usage outcome)', async () => {
+    // invalid-plan: the malformed LLM output stops the cycle at intent.
+    const invalid = harness({ llm: cannedLlm('not-json') });
+    await seed(invalid);
+    const a = await runWorker(workerInput(), invalid, 'flash');
+    expect(a).toMatchObject({ ok: false, reason: 'invalid-plan' });
+    expect(invalid.events.appends).toHaveLength(0);
+
+    // denied: authority at action time denies the cycle.
+    const denied = harness();
+    await denied.work.save(acceptedWork());
+    await denied.delegation.save(activeDelegation({ state: 'revoked' }));
+    const b = await runWorker(workerInput(), denied, 'flash');
+    expect(b).toMatchObject({ ok: false, reason: 'denied' });
+    expect(denied.events.appends).toHaveLength(0);
+
+    // recovery-required: an in_flight row maps to recovery pre-effect.
+    const recovery = harness();
+    await closeReady(recovery);
+    const c = await runWorker(workerInput(), recovery, 'flash');
+    expect(c).toMatchObject({ ok: false, reason: 'recovery-required' });
+    expect(recovery.events.appends).toHaveLength(0);
   });
 });
