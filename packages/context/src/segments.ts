@@ -1,4 +1,4 @@
-import type { Delegation, Skill, Work } from '@io/business-domain/src/index.js';
+import type { ActivatedSkillRef, Delegation, Skill, Work } from '@io/business-domain/src/index.js';
 import { activeSkillsFor } from '@io/business-domain/src/index.js';
 
 /**
@@ -128,11 +128,31 @@ function renderBusinessProcess({ process }: CompileContextInput): SegmentRender 
  * the exact bytes are locked by the v2 golden pin. An empty selection renders
  * ABSENT with zero bytes (backward compatible).
  */
-function renderActiveSkills({ companyId, process, skills }: CompileContextInput): SegmentRender {
-  const selected = activeSkillsFor(
+
+/**
+ * The SINGLE segment-7 selection call site (skill-outcome design: compiler
+ * single-pass). Computes the cohort selection ONCE from the raw tenant skill
+ * store; `compileContext` feeds the SAME selected array into both
+ * {@link renderSelectedSkills} (prefix bytes) and {@link toActivatedSkillRefs}
+ * (output refs) — the selection is never re-derived.
+ */
+export function selectActiveSkills({
+  companyId,
+  process,
+  skills,
+}: CompileContextInput): readonly Skill[] {
+  return activeSkillsFor(
     { companyId, process, schemaVersion: CONTEXT_SCHEMA_VERSION },
     skills ?? [],
   );
+}
+
+/**
+ * Render a CALLER-SUPPLIED selected array (skill-outcome design: segment-7
+ * render receives the already-selected array — no re-selection). Empty renders
+ * ABSENT with zero bytes (backward compatible).
+ */
+export function renderSelectedSkills(selected: readonly Skill[]): SegmentRender {
   if (selected.length === 0) return { present: false };
   const text =
     'Active skills:\n' +
@@ -140,6 +160,21 @@ function renderActiveSkills({ companyId, process, skills }: CompileContextInput)
       .map((skill) => `- id=${skill.skillId} name=${skill.name} v=${skill.version}\n${skill.body}`)
       .join('\n');
   return { present: true, text };
+}
+
+/**
+ * Map the already-selected segment-7 `Skill[]` to ordered refs (skill-outcome
+ * design: the SAME array, no re-select — order preserved as rendered). The
+ * refs carry only the identity pair the usage-outcome fact attributes:
+ * `{ skillId, version }` (skill delta: Captured version is attributed).
+ */
+export function toActivatedSkillRefs(selected: readonly Skill[]): readonly ActivatedSkillRef[] {
+  return selected.map((skill) => ({ skillId: skill.skillId, version: skill.version }));
+}
+
+/** Canonical seg-7 render for the SEGMENTS table (single selection internally). */
+function renderActiveSkills(input: CompileContextInput): SegmentRender {
+  return renderSelectedSkills(selectActiveSkills(input));
 }
 
 /**

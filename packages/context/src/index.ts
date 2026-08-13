@@ -5,8 +5,17 @@
  * governs byte stability (Req R6). Nothing here touches llm-client, openai, or
  * app code.
  */
-import type { CompileContextInput } from './segments.js';
-import { buildDynamicSuffix, buildStablePrefix, CONTEXT_SCHEMA_VERSION } from './segments.js';
+import type { ActivatedSkillRef } from '@io/business-domain/src/index.js';
+import type { CompileContextInput, Segment } from './segments.js';
+import {
+  buildDynamicSuffix,
+  buildStablePrefix,
+  CONTEXT_SCHEMA_VERSION,
+  renderSelectedSkills,
+  SEGMENTS,
+  selectActiveSkills,
+  toActivatedSkillRefs,
+} from './segments.js';
 
 /**
  * Cache-cohort derivation (Req R5 / design §7.3). `user` is derived as
@@ -40,6 +49,13 @@ export interface CompiledContext {
   readonly messages: readonly ContextMessage[];
   /** Derived cache cohort — NEVER caller-supplied (Req R5). */
   readonly user: string;
+  /**
+   * Exact segment-7 cohort selection as ordered `{ skillId, version }` refs
+   * (skill-outcome design: compiler single-pass). Exposed from the SAME
+   * selection that renders the stable prefix — never re-selected — and empty
+   * when no Skill is eligible.
+   */
+  readonly activatedSkills: readonly ActivatedSkillRef[];
 }
 
 /**
@@ -47,19 +63,35 @@ export interface CompiledContext {
  * messages[0] = stable prefix (segments 1–9, role system), messages[1] =
  * dynamic suffix (segments 10–13, role user), user = derived cohort
  * io:{companyId}:{process}:v{CONTEXT_SCHEMA_VERSION}. No client is ever
- * invoked and no side effect occurs — same input always yields identical bytes.
+ * accepted or invoked and no side effect occurs — same input always yields
+ * identical bytes.
+ *
+ * Single-pass selection (skill-outcome design): the segment-7 cohort is
+ * computed ONCE via `selectActiveSkills`; the SAME selected array is closed
+ * over by the seg-7 render (prefix bytes unchanged) and mapped by
+ * `toActivatedSkillRefs` into the output `activatedSkills` refs.
  */
 export function compileContext(input: CompileContextInput): CompiledContext {
+  // ONE selection — shared by prefix rendering and the output refs.
+  const selected = selectActiveSkills(input);
+  // Render the prefix with the pre-selected array (no re-selection): override
+  // the seg-7 render slot with a closure over the SAME array.
+  const segments: readonly Segment[] = SEGMENTS.map((segment) =>
+    segment.id === 'active-skills'
+      ? { ...segment, render: () => renderSelectedSkills(selected) }
+      : segment,
+  );
   return {
     messages: [
-      { role: 'system', content: buildStablePrefix(input) },
-      { role: 'user', content: buildDynamicSuffix(input) },
+      { role: 'system', content: buildStablePrefix(input, segments) },
+      { role: 'user', content: buildDynamicSuffix(input, segments) },
     ],
     user: deriveCohort({
       companyId: input.companyId,
       process: input.process,
       schemaVersion: CONTEXT_SCHEMA_VERSION,
     }),
+    activatedSkills: toActivatedSkillRefs(selected),
   };
 }
 
@@ -76,3 +108,4 @@ export {
   buildStablePrefix,
   buildDynamicSuffix,
 } from './segments.js';
+export type { ActivatedSkillRef } from '@io/business-domain/src/index.js';
