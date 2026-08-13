@@ -1,0 +1,14 @@
+# Focused remediation evidence — cold-start-discovery no-backfill (2026-08-13)
+# Command: DATABASE_URL=<isolated dev target, never printed> IO_REQUIRE_PG=1 PATH=/data/node24/bin:$PATH
+#          pnpm vitest run --no-file-parallelism packages/app/test/e2e/cold-start-e2e.integration.test.ts
+# Target: dedicated isolated harness io-phase4-iso-pg-3cdff5d7 (postgres:18.4) + vol io-phase4-iso-pg-vol-3cdff5d7, loopback 127.0.0.1:5434.
+# Result: 1 passed (1); 3 passed (3) = 2 pre-existing + 1 NEW no-backfill case; exit 0; NO skip (IO_REQUIRE_PG=1).
+# Raw runner output verbatim below.
+
+ RUN  v4.1.10 /data/io
+
+
+ Test Files  1 passed (1)
+      Tests  3 passed (3)
+   Start at  02:30:40
+   Duration  784ms (transform 190ms, setup 0ms, import 299ms, tests 390ms, environment 0ms)

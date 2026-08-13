@@ -11,8 +11,10 @@ import {
   createE2eHarness,
   E2E_COMPANY,
   E2E_DELEGATION_ID,
+  E2E_WORK_ID,
   e2eRequirePg,
   pgReachable,
+  seedAcceptedWork,
 } from './harness.js';
 
 /**
@@ -196,6 +198,61 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       );
       expect(receiptCount[0]?.count).toBe(1);
       expect((harness.llm as FakeLlmClient).requests).toHaveLength(1);
+    });
+  },
+);
+
+describe.skipIf(!reachable && !e2eRequirePg)(
+  'E2E (no-backfill): pre-change accepted Work with no event is not discovered/activated; no work.accepted synthesized',
+  () => {
+    let harness: E2eHarness;
+    let composed: ReturnType<typeof buildSupervisorDispatch>;
+
+    beforeAll(async () => {
+      harness = await createE2eHarness({ databaseName: 'io_dev_e2e_nobackfill' });
+      // GIVEN: pre-change persisted state — accepted Work, NO event row.
+      await seedAcceptedWork(harness);
+      composed = buildSupervisorDispatch({
+        connection: harness.conn,
+        llm: harness.llm,
+        sandboxRoot: harness.sandboxRoot,
+        principals: harness.principals,
+      });
+    });
+
+    afterAll(async () => {
+      await harness?.close();
+    });
+
+    it('proves no synthesis and no activation', async () => {
+      const count = async (table: string): Promise<number> => {
+        const rows = await harness.conn.query<{ count: number }>(
+          `SELECT count(*)::int AS count FROM ${table}`,
+          [],
+        );
+        return rows[0]?.count ?? 0;
+      };
+      // DISCOVERY is event-log-driven: the bare accepted Work row is absent.
+      expect(await composed.deps.events.listCompanyIds()).toEqual([]);
+      // HEARTBEAT: real one-shot supervisor pump — nothing discovered, so no
+      // gate fires, no activation, and no startup/backfill synthesizes events.
+      const pump = manualPump();
+      const supervisor: SupervisorHandle = startSupervisor(composed.deps, {
+        intervalMs: 1_000,
+        schedule: pump.schedule,
+        onActivate: composed.onActivate,
+        onRecovery: composed.onRecovery,
+      });
+      await pump.pump();
+      supervisor.stop();
+      // THEN: no synthesis (event log still empty), no activation (no
+      // receipts, no LLM plan), and the historical Work is untouched.
+      expect(await count('business_event')).toBe(0);
+      expect(await count('business_receipt')).toBe(0);
+      expect((harness.llm as FakeLlmClient).requests).toHaveLength(0);
+      const stored = await harness.work.get(E2E_COMPANY, E2E_WORK_ID);
+      expect(stored?.state).toBe('accepted');
+      expect(stored?.version).toBe(1);
     });
   },
 );
