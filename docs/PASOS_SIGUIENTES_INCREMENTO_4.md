@@ -14,7 +14,8 @@
 
 | Rev | Fecha | `main` | Qué cambió en este doc | Por qué cambió |
 |-----|-------|--------|------------------------|----------------|
-| **8** (vigente) | 2026-08-11 | `79537f2` | Se completa **supervisor-recovery** (2º ítem post-work-dispatch): recovery dirigido por supervisor (Scope B) — el Work `in_progress` huérfano post-claim se reconcilia y reanuda por designación explícita del operador, con evidencia durable y sin re-ejecutar efectos no probados. Undo log durable (`snapshotUndoLog` + persistencia FS), designation CAS (migración 011, token preservado), matriz W1/W2/W3 (resume / abort-retryable / undo+retry), escalada tipada `UNRESOLVED_REQUIRES_HUMAN`, `dispatchRecovery` sin re-claim y seam `onRecovery` en el tick secuencial. Conteo de tests **1243 → 1350** (post-archive). Specs synced **24 → 24** (6 MODIFIED: `sandbox-port`, `idempotency-journal`, `worker-cycle`, `work-dispatch`, `supervisor-timer`, `io-persistence-recovery-contract`; 1 ADDED req en `work-lifecycle`). Hito: la no-garantía de crash se vuelve recovery seguro y auditado — 3 CRITICALs cerrados. El snapshot de Rev 7 se conserva marcado como superado. | El ciclo SDD supervisor-recovery se completó: 6 commits stacked-to-main (b6ada93→79537f2), verify PASS 8/8 reqs / 44/44 escenarios, 1350 tests (live-PG sequential), 0 blockers / 0 critical. Review por slice 0 BLOCKER / 0 CRITICAL (slice 2: 3 WARNING); sdd-verify cazó 2 CRITICALs cross-cutting que los reviews por slice no vieron, y el review de remediation cazó R4-002 (CRITICAL); los 3 quedaron cerrados en `79537f2`. |
+| **9** (vigente) | 2026-08-13 | `d5998aa` | Se completan y archivan **cold-start-discovery** y **skill-outcome-events**. El arranque en frío puede descubrir trabajo aceptado sin depender de eventos previos, y cada cierre exitoso registra una atribución compuesta `work.skill-outcome` basada en la selección de Skills capturada al inicio. Conteo CI **1411 passed / 5 skipped**. Archivo **27 → 29**; specs canónicas se mantienen en **24**. El snapshot de Rev 8 se conserva marcado como superado. | Ambos ciclos SDD quedaron completos, verificados, archivados y fusionados. `skill-outcome-events` cerró 7/7 requisitos, 24/24 escenarios y 19/19 tareas, sin hallazgos críticos. El siguiente incremento ya no es observabilidad de outcomes: es Learning/promotion. |
+| **8** (superada) | 2026-08-11 | `79537f2` | Se completa **supervisor-recovery** (2º ítem post-work-dispatch): recovery dirigido por supervisor (Scope B) — el Work `in_progress` huérfano post-claim se reconcilia y reanuda por designación explícita del operador, con evidencia durable y sin re-ejecutar efectos no probados. Undo log durable (`snapshotUndoLog` + persistencia FS), designation CAS (migración 011, token preservado), matriz W1/W2/W3 (resume / abort-retryable / undo+retry), escalada tipada `UNRESOLVED_REQUIRES_HUMAN`, `dispatchRecovery` sin re-claim y seam `onRecovery` en el tick secuencial. Conteo de tests **1243 → 1350** (post-archive). Specs synced **24 → 24** (6 MODIFIED: `sandbox-port`, `idempotency-journal`, `worker-cycle`, `work-dispatch`, `supervisor-timer`, `io-persistence-recovery-contract`; 1 ADDED req en `work-lifecycle`). Hito: la no-garantía de crash se vuelve recovery seguro y auditado — 3 CRITICALs cerrados. El snapshot de Rev 7 se conserva marcado como superado. | El ciclo SDD supervisor-recovery se completó: 6 commits stacked-to-main (b6ada93→79537f2), verify PASS 8/8 reqs / 44/44 escenarios, 1350 tests (live-PG sequential), 0 blockers / 0 critical. Review por slice 0 BLOCKER / 0 CRITICAL (slice 2: 3 WARNING); sdd-verify cazó 2 CRITICALs cross-cutting que los reviews por slice no vieron, y el review de remediation cazó R4-002 (CRITICAL); los 3 quedaron cerrados en `79537f2`. |
 | **7** (superada) | 2026-08-08 | `ea1dc59` | Se completa **fencing-tokens** (1er ítem post-work-dispatch): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS. Se agrega trazabilidad por slice. Conteo de tests **1243 → 1243** (post-archive). Specs synced **24 → 24** (3 MODIFIED: `work-lifecycle`, `worker-cycle`, `idempotency-journal`). Hito: el journal idempotency queda cercado — `markRetryable` con claim-ownership gate, `complete` con status guard, y el flake pre-existente de race de PG corregido (no-target ON CONFLICT). El snapshot de Rev 6 se conserva marcado como superado. | El ciclo SDD fencing-tokens se completó en limpio: 5 commits stacked-to-main (b83b5ec→ea1dc59), verify PASS 7/7 reqs / 36/36 escenarios, live-PG e2e 50/50 sequential, race hammer 25/25 (0 throws). Review adversarial cazó y refutó R4-001 (BIGINT string false positive) con read-only refuter; defense-in-depth guard añadido al borde RETURNING. |
 | **6** (superada) | 2026-08-08 | `929daef` | Paso 3 y Post-Paso 3 siguen **COMPLETOS** y se completan **3 slices post-work-dispatch** (daemon-lifecycle, heartbeat-decision-events, pro-escalation) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-work-dispatch. Conteo de tests **1071 → 1169**. Specs synced **23 → 24** (1 NEW: `daemon-lifecycle`; MODIFIED: `heartbeat`, `supervisor-timer`, `business-event`, `worker-cycle`, `work-dispatch`). Hito acumulado: el runtime ya corre en producción (daemon zero-dep, schedule sin solapamiento, shutdown gracioso), la decisión del pre-gate se vuelve hecho de negocio auditable (eventos `heartbeat.decision`), y §13.2 completa su escalada Flash→Pro determinística por `riskClass`. El flake PG concurrente de Paso 3 queda resuelto de facto (`152768d`, paralelismo de archivos off). El snapshot de Rev 5 se conserva marcado como superado. | Los 3 primeros ítems del roadmap posterior a work-dispatch se completaron en limpio: ciclos SDD con verify **PASS** (7/7+12/12, 6/6+21/21, 7/7+19/19), live E2E DeepSeek/PG 3/3 en pro-escalation, archivados y pusheados. |
 | **5** (superada) | 2026-08-02 | `4eb2451` | Paso 3 sigue **COMPLETO** y se completan **3 slices post-Paso 3** (heartbeat-activation, supervisor-timer, work-dispatch) verificados + archivados + pusheados. Se agrega trazabilidad por slice post-Paso 3. Conteo de tests **968 → 1071**. Specs synced **21 → 23** (2 NEW: `supervisor-timer`, `work-dispatch`; MODIFIED: `worker-cycle`, `heartbeat`, `business-event`, `work-lifecycle`). Hito acumulado: el ahorro de costo §2 se vuelve **REAL** — `activate` dispara un ciclo de worker que despacha trabajo accionable; `no-llm-heartbeat` no gasta LLM. Supervisor durable (wake-ups sin trabajo + cursor per-company) + dispatch desde `onActivate`. El snapshot de Rev 4 se conserva marcado como superado. | Los 3 slices que siguen al roadmap de Paso 3 se completaron en limpio (heartbeat-activation, supervisor-timer, work-dispatch): ciclos SDD con verify **PASS**, archivados y pusheados. `work-dispatch` hace real el ahorro de costo del pre-gate §13.2 construido en Paso 3. |
@@ -23,11 +24,28 @@
 | **2** (superada) | 2026-07-31 | `4cc0b15` | Paso 1 `harden` pasa de "🔄 SIGUIENTE" a **"✅ CERRADO"** (verificado + archivado + pusheado). Paso 2 `first-enterprise-vertical` pasa a **🔄 SIGUIENTE**. Conteo de tests actualizado **411 → 604**. Se agrega evidencia de verify por slice y el snapshot de Rev 1 se conserva marcado como superado. | El ciclo limpio `harden-first-enterprise-vertical-foundation` se completó: **18/18 requisitos, 61/61 escenarios, 0 blockers, 0 critical**, review adversarial CLEAN en cada slice (A/B/C). Se cumplió la *regla de oro* (no abrir la vertical sin harden limpio) → la vertical queda desbloqueada. |
 | **1** (superada) | 2026-07-31 | `4ea1653` | Versión inicial. Baseline `deepseek-client` cerrada; `harden` como Paso 1 pendiente; `first-enterprise-vertical` como Paso 2. | Reset a una baseline limpia tras el ciclo harden **contaminado** (hacks de gate: findings vacíos inyectados y gap-fixes post-verify). Se documentó el punto de partida estable para rehacer el harden en limpio. |
 
-**Estado actual (Rev 8):** `main @ 79537f2` = `origin/main`. supervisor-recovery **COMPLETO Y ARCHIVADO**. Siguiente: Skill outcome BusinessEvents (más allá de `work.completed`).
+**Estado actual (Rev 9):** `main @ d5998aa` = `origin/main`. cold-start-discovery y skill-outcome-events **COMPLETOS Y ARCHIVADOS**. Siguiente: Incremento 8 — Learning/promotion.
 
 ---
 
-## Estado actual (Rev 8 — vigente)
+## Estado actual (Rev 9 — vigente)
+
+| Check | Resultado |
+|-------|-----------|
+| Commit | `d5998aa` — ambos cambios implementados, verificados y archivados |
+| GitHub `main` | = baseline local al iniciar Rev 9 |
+| Quality gate CI | GREEN — **1411 passed / 5 skipped** |
+| Cold-start discovery | **COMPLETO** — descubre Work aceptado sin historial previo y conserva el flujo atómico de aceptación |
+| Skill outcome events | **COMPLETO** — 7/7 requisitos, 24/24 escenarios, 19/19 tareas, 0 CRITICAL |
+| Specs canónicas | **24** |
+| Cambios archivados | **29**; últimos: `2026-08-13-cold-start-discovery/` y `2026-08-13-skill-outcome-events/` |
+| Siguiente | **Incremento 8 — Learning/promotion**: ciclo de Skill `candidate → active` |
+
+---
+
+## Snapshot histórico (Rev 8 — superada, se conserva para trazabilidad)
+
+> ⚠️ **Este bloque refleja el estado a `79537f2` y YA NO es el punto de partida vigente.**
 
 | Check | Resultado |
 |-------|-----------|
@@ -387,7 +405,7 @@ explore → propose → design → spec → tasks
 - [x] **ACTUAR sobre la decisión de heartbeat** → hecho en `heartbeat-activation` (Rev 5): branching en worker-cycle — saltea `prepareIntent` / `llm.complete` en `no-llm-heartbeat`, corre Flash en `activate`.
 - [x] Timer / scheduler / cadencia → hecho en `supervisor-timer` (Rev 5): wake-ups sin trabajo + `startSupervisor`/`tickAll`/`tickCompany`.
 - [x] Persistencia del cursor (durable per-company) → hecho en `supervisor-timer` (Rev 5): cursor store durable por company.
-- [ ] Skill outcome / activation BusinessEvents (más allá de `work.completed`). *(Los eventos `heartbeat.decision` llegaron en Rev 6, pero son del pre-gate, no de skills.)*
+- [x] Skill outcome / activation BusinessEvents (más allá de `work.completed`) → hecho en `skill-outcome-events` (Rev 9): una atribución compuesta por cierre exitoso, capturada al inicio y sin backfill histórico.
 - [ ] Learning / promotion (Increment 8): ciclo candidate → active.
 - [ ] Memory OS.
 - [ ] Extracción de `Skill` al paquete canónico `competency/`.
@@ -422,14 +440,15 @@ explore → propose → design → spec → tasks
 
 ### Próximos pasos (después de work-dispatch)
 
-> **Actualizado en Rev 8:** los 5 primeros ítems (daemon lifecycle, heartbeat-decision events, escalamiento a Pro, fencing tokens y recovery dirigido por supervisor) **YA se completaron** en los slices post-work-dispatch — ver sección "Post-work-dispatch". El próximo paso vigente es **Skill outcome BusinessEvents**.
+> **Actualizado en Rev 9:** cold-start discovery y Skill outcome BusinessEvents también se completaron. El próximo paso vigente es **Learning/promotion (Incremento 8)**.
 
 - [x] **Daemon / process lifecycle wiring** → hecho en `daemon-lifecycle` (Rev 6): daemon de producción zero-dep, schedule sin solapamiento, shutdown gracioso.
 - [x] **heartbeat-decision BusinessEvents** → hecho en `heartbeat-decision-events` (Rev 6): la decisión del pre-gate se registra como hecho de negocio.
 - [x] **Escalamiento a Pro** → hecho en `pro-escalation` (Rev 6): tier / escalation determinístico por `riskClass`.
 - [x] **Fencing tokens** → hecho en `fencing-tokens` (Rev 7): protección contra escritores zombies via fencing token monotónico minteado en el claim CAS; markRetryable con claim-ownership gate; complete con status guard; flake pre-existente de PG race corregido.
 - [x] **Recovery dirigido por supervisor (Scope B)** → hecho en `supervisor-recovery` (Rev 8): Work `in_progress` huérfano post-claim se reconcilia y reanuda por designación del operador (undo log durable, matriz W1/W2/W3, dispatch directo sin re-claim, seam `onRecovery` en el tick). Verify PASS 8/8 reqs / 44/44 escenarios, 1350 tests.
-- [ ] **Skill outcome BusinessEvents** (más allá de `work.completed`).
+- [x] **Cold-start discovery** → hecho en Rev 9: el supervisor descubre Work aceptado aunque no exista historial previo de eventos.
+- [x] **Skill outcome BusinessEvents** → hecho en Rev 9: el cierre verificado emite un único hecho compuesto con la selección capturada al inicio.
 - [ ] **Learning / promotion (Increment 8)**: ciclo candidate → active.
 - [ ] **Memory OS**.
 - [ ] **Extracción de `Skill`** al paquete canónico `competency/`.
@@ -475,10 +494,10 @@ explore → propose → design → spec → tasks
 
 ---
 
-## Resumen (actualizado en Rev 8)
+## Resumen (actualizado en Rev 9)
 
 ```text
-main @ 79537f2  ← AQUÍ ESTAMOS (Rev 8, verificado, pusheado)
+main @ d5998aa  ← AQUÍ ESTAMOS (Rev 9, verificado, archivado y fusionado)
   ├─ domain-foundation (código + specs)
   ├─ deepseek-client (código + archive PASS)
   ├─ harden-first-enterprise-vertical-foundation (CERRADO + archivado + specs synced)
@@ -494,15 +513,17 @@ main @ 79537f2  ← AQUÍ ESTAMOS (Rev 8, verificado, pusheado)
   │    ├─ heartbeat-activation (@1a0ca39)
   │    ├─ supervisor-timer (@9501b7e)
   │    └─ work-dispatch (@4eb2451)
-  └─ post-work-dispatch (COMPLETO + 5 slices archivados)
-       ├─ daemon-lifecycle (@07eea12)
-       ├─ heartbeat-decision-events (@a301d16)
-       ├─ pro-escalation (@929daef)
-       ├─ fencing-tokens (@ea1dc59)
-       └─ supervisor-recovery (@79537f2)
+  ├─ post-work-dispatch (COMPLETO + 5 slices archivados)
+  │    ├─ daemon-lifecycle (@07eea12)
+  │    ├─ heartbeat-decision-events (@a301d16)
+  │    ├─ pro-escalation (@929daef)
+  │    ├─ fencing-tokens (@ea1dc59)
+  │    └─ supervisor-recovery (@79537f2)
+  ├─ cold-start-discovery (COMPLETO + archivado)
+  └─ skill-outcome-events (COMPLETO + archivado; 7/7 req, 24/24 escenarios)
 
 siguiente
-  └─ Skill outcome BusinessEvents (más allá de work.completed)
+  └─ Incremento 8 — Learning/promotion (Skill candidate → active)
 ```
 
 ## Regla de oro

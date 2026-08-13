@@ -12,10 +12,10 @@ Este documento conserva la visión y la investigación fundacional. Las decision
 - [ADR 0001: roles primarios y temporales](adr/0001-primary-and-temporary-worker-roles.md): cada trabajador tiene exactamente un rol primario y puede asumir roles temporales compatibles y acotados.
 - [ADR 0002: Delegation como compromiso de autoridad](adr/0002-delegation-as-authority-commitment.md): Delegation y Work son agregados separados; recibir trabajo no concede autoridad.
 - [ADR 0003: controles de autoridad según riesgo](adr/0003-risk-tiered-authority-controls.md): el riesgo se clasifica antes de evaluar autoridad y determina la separación de funciones.
-- [Contrato de dominio v2](../openspec/changes/io-domain-contract-v2/exploration.md): inventario y taxonomía de los 30 paquetes.
-- [Contrato de puertos y confianza v2](../openspec/changes/io-ports-trust-contract-v2/exploration.md): topología hexagonal, límites de credenciales y autoridad por comando.
-- [Contrato de persistencia y recuperación](../openspec/changes/io-persistence-recovery-contract/exploration.md): transacciones, auditoría, idempotencia y recuperación.
-- [Contrato de entrega y calidad](../openspec/changes/io-delivery-quality-contract/exploration.md): planificación SDD, disciplina TDD y autoridad de entrega RDD.
+- [Contrato de dominio v2](../openspec/changes/archive/2026-07-29-io-domain-contract-v2/exploration.md): inventario y taxonomía de los 30 paquetes.
+- [Contrato de puertos y confianza v2](../openspec/changes/archive/2026-07-30-io-ports-trust-contract-v2/exploration.md): topología hexagonal, límites de credenciales y autoridad por comando.
+- [Contrato de persistencia y recuperación](../openspec/changes/archive/2026-07-30-io-persistence-recovery-contract/exploration.md): transacciones, auditoría, idempotencia y recuperación.
+- [Contrato de entrega y calidad](../openspec/changes/archive/2026-07-30-io-delivery-quality-contract/exploration.md): planificación SDD, disciplina TDD y autoridad de entrega RDD.
 
 Cuando una formulación exploratoria de este documento sea más amplia que una decisión aceptada, prevalecen los ADR y contratos anteriores. Los mecanismos aún marcados como hipótesis en OpenSpec no se consideran decisiones.
 
