@@ -48,8 +48,8 @@ Chain strategy: pending
 
 ## Phase 4: Production Composition Surface + Real-Path E2E (app)
 
-- [ ] 4.1 [RED] Create `packages/app/test/e2e/cold-start-e2e.integration.test.ts`: propose → accept via the composition `acceptWork` seam → assert `listCompanyIds()` contains the company → pump `startSupervisor(deps, { intervalMs, schedule: oneShot, onActivate, onRecovery })` then `handle.stop()` → assert discovery → `activate` → dispatch → `runWorker` → finalize → `work.completed` + Work `completed`. MUST NOT use `seedAcceptedWork`; MUST NOT call `onActivate`/`onRecovery` directly (D10).
-- [ ] 4.2 [GREEN] Modify `packages/app/src/composition/supervisor-dispatch.ts`: add `acceptWork: (cmd) => acceptWorkAtomically(connection, cmd)` to the return (D10).
+- [x] 4.1 [RED] Create `packages/app/test/e2e/cold-start-e2e.integration.test.ts`: propose → accept via the composition `acceptWork` seam → assert `listCompanyIds()` contains the company → pump `startSupervisor(deps, { intervalMs, schedule: oneShot, onActivate, onRecovery })` then `handle.stop()` → assert discovery → `activate` → dispatch → `runWorker` → finalize → `work.completed` + Work `completed`. MUST NOT use `seedAcceptedWork`; MUST NOT call `onActivate`/`onRecovery` directly (D10).
+- [x] 4.2 [GREEN] Modify `packages/app/src/composition/supervisor-dispatch.ts`: add `acceptWork: (cmd) => acceptWorkAtomically(connection, cmd)` to the return (D10).
 - [ ] 4.3 Commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e`.
 
 ## Phase 5: Spec Alignment, Check-Only Gates, Archive Readiness

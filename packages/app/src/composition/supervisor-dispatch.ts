@@ -1,5 +1,7 @@
 import type { DbConnection } from '@io/database/src/connection.js';
+import { acceptWorkAtomically } from '@io/database/src/index.js';
 import type { ModelTier } from '@io/business-domain/src/index.js';
+import type { TransitionWorkCommand, UseCaseResult, Work } from '@io/business-domain/src/index.js';
 import {
   requestRecovery,
   type RequestRecoveryCommand,
@@ -56,6 +58,11 @@ export function buildSupervisorDispatch(input: {
   onActivate: OnActivate;
   onRecovery: OnRecovery;
   requestRecovery: (cmd: RequestRecoveryCommand) => Promise<RequestRecoveryResult>;
+  /** The atomic acceptance seam (cold-start D10): the PRODUCTION composition
+   * root for the accept transition — `acceptWorkAtomically(connection, cmd)`
+   * binds the Work CAS and the `work.accepted` event append to ONE
+   * transaction-scoped connection (commit-on-resolved, rollback-on-throw). */
+  acceptWork: (cmd: TransitionWorkCommand) => Promise<UseCaseResult<Work>>;
 } {
   const workerDeps = buildWorkerDeps(input);
   const supervisorDeps = buildSupervisorDeps(input.connection);
@@ -160,5 +167,9 @@ export function buildSupervisorDispatch(input: {
     // state/fencing token, and sets/clears the recovery marker.
     requestRecovery: (cmd: RequestRecoveryCommand) =>
       requestRecovery(cmd, { work: workerDeps.work }),
+    // Cold-start acceptance seam (D10): the atomic accept use case bound to
+    // the production connection — the composition root surfaces BOTH the
+    // supervision callbacks and the acceptance command through ONE seam.
+    acceptWork: (cmd: TransitionWorkCommand) => acceptWorkAtomically(input.connection, cmd),
   };
 }

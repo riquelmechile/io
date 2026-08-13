@@ -1,0 +1,18 @@
+# Phase 4 focused GREEN run — cold-start-discovery (task 4.2, D10 acceptWork seam present)
+# METADATA (documentary header — labeled; the runner output below is the captured raw bytes):
+# - Command: DATABASE_URL='postgresql://127.0.0.1:5434/io_dev' PATH=/data/node24/bin:$PATH pnpm vitest run --no-file-parallelism packages/app/test/e2e/cold-start-e2e.integration.test.ts
+# - Target: dedicated isolated Phase 4 harness ONLY — container io-phase4-iso-pg-3cdff5d7 (postgres:18.4)
+#   + volume io-phase4-iso-pg-vol-3cdff5d7, loopback-only 127.0.0.1:5434. Dev role/db credentials were
+#   env-injected, never printed; shared io_pg/io_dev (5432) not used.
+# - Result (observed): Test Files 1 passed (1); Tests 2 passed (2); runner exit code 0.
+# - Captured 2026-08-13, single GREEN run after task 4.2; header normalized for self-containment,
+#   raw bytes untouched, no rerun performed.
+
+ RUN  v4.1.10 /data/io
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  01:00:42
+   Duration  555ms (transform 175ms, setup 0ms, import 286ms, tests 182ms, environment 0ms)
+

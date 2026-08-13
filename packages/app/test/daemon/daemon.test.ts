@@ -102,6 +102,10 @@ function makeHarness() {
       ok: false as const,
       reason: 'invalid-command' as const,
     })),
+    // The cold-start acceptance seam (cold-start-discovery D10): the daemon
+    // does not drive acceptance; a recorded no-op keeps the mock shape in
+    // sync with the production composition root.
+    acceptWork: vi.fn(),
   }));
   const exit = vi.fn((code: number) => {
     order.push(`exit:${code}`);

@@ -1,12 +1,26 @@
-# Apply Progress: Cold-Start Discovery — Phases 1–3 (tasks 1.1–1.3, 2.1–2.3, 3.1–3.3)
+# Apply Progress: Cold-Start Discovery — Phases 1–4 (tasks 1.1–1.3, 2.1–2.3, 3.1–3.3, 4.1–4.2)
 - **Change**: `cold-start-discovery`
-- **Batch (Phase 2)**: tasks 2.1–2.3 (acceptWork widening + materiality)
-- **Work unit (Phase 2)**: `phase-2-accept-work-materiality`
-- **Attempt token (Phase 2)**: `sha256:8ba20d478a283cfe5960ee108751ebe45ba94549635a4588a152dd7d5e391697` (parent-held; authenticated as same attempt via `acquire --token`, state `proceed`, zero mutation)
-- **Changed lines (Phase 2, authored)**: 152 (131 insertions + 21 deletions) — under the 250 work-unit budget; cumulative Phase 1+2 = 189 + 152 = 341
-- **Phase 3**: tasks 3.1–3.3 (atomic PG acceptance seam + rollback proof); unit `phase-3-atomic-pg-acceptance` → corrected by `phase-3-isolated-evidence-correction` → `phase-3-raw-schema-readback-correction` → final evidence correction `phase-3-raw-gate-lineage-correction` (this artifact, 2026-08-13); attempt token `sha256:1111f851…` (parent-held, authenticated as same attempt, state `proceed`, zero mutation); complete candidate vs `9fada4b` ≤ **520** ✓ (authorized Engram #6526; numstat in Exact Accounting)
-- **Delivery**: single PR (Phase 1+2+3 slices); 3.4 committed `feat(database): add atomic acceptance transaction` under ordinary repository policy after candidate-scoped decline (`declined_this_candidate`, RDD not disabled) — no receipt/native approval claimed; task 2.4's commit `9fada4b` exists (exact subject verified), so 2.4 is checked
+- **Batch (Phase 4)**: tasks 4.1–4.2 (composition `acceptWork` seam + real-path e2e)
+- **Work unit (Phase 4)**: `phase-4-production-composition-e2e`
+- **Attempt (Phase 4)**: native acquire returned state `proceed`, max attempts 1, max changed lines **400**; opaque token parent-held (no acquire/settle/reset performed by executor); complete candidate vs `a5315ea` = **313 changed lines ≤ 400** at the prior gate (73 tracked + 240 untracked; recomputed post-correction in Exact Accounting below)
+- **Delivery**: auto-chain (no chained PR required per forecast); work-unit slice `phase-4-production-composition-e2e`; rollback boundary = composition seam + e2e + necessary Phase 4 artifact updates; 4.3 commit + 5.1–5.3 stay pending (parent owns commit/review)
 - **Mode**: Strict TDD (active; `openspec/config.yaml` strict_tdd + tdd true; runner `PATH=/data/node24/bin:$PATH pnpm test`)
+
+## Phase 4 Record (2026-08-13, work unit phase-4-production-composition-e2e)
+
+- **RED (4.1)**: created `packages/app/test/e2e/cold-start-e2e.integration.test.ts` FIRST — references `composed.acceptWork(...)` (D10 seam) which did NOT exist → genuine RED `TypeError: composed.acceptWork is not a function`, `Test Files 1 failed (1); Tests 2 failed (2)` (raw: `evidence/phase-4-focused-red.log`). No `seedAcceptedWork`, no direct `onActivate`/`onRecovery` invocation.
+- **GREEN (4.2)**: added `acceptWork: (cmd) => acceptWorkAtomically(input.connection, cmd)` + return-type member to `buildSupervisorDispatch` (`supervisor-dispatch.ts`) → focused `Test Files 1 passed (1); Tests 2 passed (2)` (raw: `evidence/phase-4-focused-green.log`). Safety net + regression: daemon/supervisor/composition suites `12 passed (12); 103 passed (103)` (includes daemon mock surface-growth pin `acceptWork: vi.fn()`); full app e2e dir `10 passed | 1 skipped (11); 22 passed | 3 skipped (25)`.
+- **TRIANGULATE**: second e2e case — a re-pump after completion does NOT re-run the worker (completed Work no longer actionable; empty queue settles; exactly one `work.completed` + one receipt + one LLM request preserved).
+- **REFACTOR**: biome format normalized 1 file pre-freeze; `format-check` converged (211 files, no fixes applied); `typecheck` clean; `lint` 0 errors (9 pre-existing warnings, identical set, none in changed files).
+- **Runtime harness (dedicated isolated Phase 4)**: preserved Phase 3 harness `io-phase3-iso-pg-ca93986d` could NOT be restarted — its bound port 127.0.0.1:5433 is occupied by unrelated `medusa-build-pg` (untouched). Created DEDICATED isolated harness: container `io-phase4-iso-pg-3cdff5d7` (`9a28320f4a6e`, postgres:18.4) + volume `io-phase4-iso-pg-vol-3cdff5d7`, `127.0.0.1:5434` loopback-only; role/db non-sensitive dev credentials env-injected, never printed. All Phase 4 runs targeted this harness via `DATABASE_URL`; shared `io_pg`/`io_dev` (5432) never used.
+- **4.3 stays PENDING** (commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e` — parent owns commit/review). Phase 5 (5.1–5.3) untouched.
+
+## Fresh-Context Gate Correction Record (2026-08-13, phase-4-evidence-correction)
+
+- Work unit `phase-4-evidence-correction`: native acquire state `proceed`, max attempts 1, max changed lines **400**; opaque token parent-held (no acquire/settle/reset performed). Evidence/documentation normalization ONLY — no source/test/spec/design/task-state changes, no test reruns, no Docker start/mutation, no commit/stage/push, no review launched; task 4.3 and Phase 5 untouched.
+- **Accounting corrected**: complete Phase 4 candidate vs `a5315ea` at the prior gate = **313 changed lines (73 tracked + 240 untracked) ≤ 400 ✓**, replacing the stale **255** (which counted only the 15 source/test tracked lines + 240 untracked, omitting the 58 artifact-delta lines) and the false "artifact deltas add ~0" statement.
+- **`phase-4-focused-green.log` made self-contained**: exact command incl. `PATH=/data/node24/bin:$PATH` and isolated credential-free `DATABASE_URL` target → `127.0.0.1:5434`; harness identity `io-phase4-iso-pg-3cdff5d7` (postgres:18.4, loopback 127.0.0.1:5434); exact result 1 file / 2 tests passing; exit code 0. Metadata clearly labeled vs captured runner output; raw bytes untouched, no rerun.
+- `phase-4-focused-red.log` byte-unchanged (raw capture, task 4.1).
 
 ## Final Evidence Correction Record (2026-08-13, phase-3-raw-gate-lineage-correction)
 
@@ -60,6 +74,26 @@
 - [x] 3.2 [GREEN] Created `packages/database/src/accept-work-flow.ts`: `acceptWorkAtomically(conn, cmd)` mirrors `completeWorkAtomically`; work + event repos bound to ONE `conn.transaction`; commit-on-resolved, rollback-on-throw (D2).
 - [x] 3.3 Exported `acceptWorkAtomically` from `packages/database/src/index.ts` (+1); `boundary.test.ts` pin (+3).
 - [x] 3.4 Commit `feat(database): add atomic acceptance transaction` — committed (exact subject; no hash preclaimed); candidate-scoped decline `declined_this_candidate`; RDD not disabled; delivery unmanaged under ordinary repository policy.
+
+### Phase 4 (this batch)
+
+- [x] 4.1 [RED] Created `packages/app/test/e2e/cold-start-e2e.integration.test.ts`: propose → accept via the composition `acceptWork` seam → assert `listCompanyIds()` contains the company → pump `startSupervisor(deps, { intervalMs, schedule: oneShot, onActivate, onRecovery })` then `handle.stop()` → assert discovery → `activate` → dispatch → `runWorker` → finalize → `work.completed` + Work `completed`. MUST NOT use `seedAcceptedWork`; MUST NOT call `onActivate`/`onRecovery` directly (D10). Genuine RED: `TypeError: composed.acceptWork is not a function`, `1 failed (1); 2 failed (2)` (raw `evidence/phase-4-focused-red.log`).
+- [x] 4.2 [GREEN] Modified `packages/app/src/composition/supervisor-dispatch.ts`: added `acceptWork: (cmd) => acceptWorkAtomically(input.connection, cmd)` to the return + typed member `(cmd: TransitionWorkCommand) => Promise<UseCaseResult<Work>>` (D10). Focused GREEN `1 passed (1); 2 passed (2)` (raw `evidence/phase-4-focused-green.log`); daemon mock surface pin (`acceptWork: vi.fn()`); no production behavior change to supervision/recovery paths.
+
+## TDD Cycle Evidence (Phase 4)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 4.1 | `packages/app/test/e2e/cold-start-e2e.integration.test.ts` | E2E (live PG) | ✅ daemon/supervisor/composition 12 files / 103 tests passing pre-edit | ✅ `TypeError: composed.acceptWork is not a function`, `1 failed (1); 2 failed (2)` — seam referenced before existence | ✅ `1 passed (1); 2 passed (2)` after 4.2 | ✅ 2 cases: full cold-start chain + re-pump after completion settles (no second worker run) | ✅ Biome normalized pre-freeze; tsc clean; 0 lint findings in changed files |
+| 4.2 | (same) | E2E (live PG) | ✅ 103/103 baseline | N/A (RED from 4.1 — missing member) | ✅ `1 passed (1); 2 passed (2)` | ➖ covered by 4.1 cases | ✅ Clean |
+
+## Work Unit Evidence (Phase 4)
+
+| Evidence | Required value |
+|----------|----------------|
+| Focused test command and exact result | RED (raw `evidence/phase-4-focused-red.log`): `DATABASE_URL='postgresql://io:io_dev@127.0.0.1:5434/io_dev' pnpm vitest run --no-file-parallelism packages/app/test/e2e/cold-start-e2e.integration.test.ts` → `Test Files 1 failed (1); Tests 2 failed (2)` — `composed.acceptWork is not a function`. GREEN (self-contained `evidence/phase-4-focused-green.log`): `DATABASE_URL='postgresql://127.0.0.1:5434/io_dev' PATH=/data/node24/bin:$PATH pnpm vitest run --no-file-parallelism packages/app/test/e2e/cold-start-e2e.integration.test.ts` → `Test Files 1 passed (1); Tests 2 passed (2)`, exit 0; regression suites `12 passed (12); 103 passed (103)`; full app e2e `10 passed | 1 skipped (11); 22 passed | 3 skipped (25)`. |
+| Runtime harness command/scenario and exact result | **LIVE PostgreSQL (dedicated isolated Phase 4 harness)**: container `io-phase4-iso-pg-3cdff5d7` (`9a28320f4a6e`, postgres:18.4) + volume `io-phase4-iso-pg-vol-3cdff5d7`, `127.0.0.1:5434` loopback-only. Scenario: zero-history company → real `proposeWork` (live PG) → composition `acceptWork` seam (atomic tx) → `listCompanyIds()` discovers → `startSupervisor` one-shot pump (injected schedule, `onActivate`/`onRecovery` from composition) → gate `activate` → `dispatchCompanyActivation` → `runWorker` → finalize → Work `completed`@v4 + exactly one `work.completed` (worker) + one `work.accepted` (acceptor) + one `heartbeat.decision` (supervisor) + one receipt + journal `completed` + exactly one LLM request. The preserved Phase 3 harness could NOT be restarted (its 127.0.0.1:5433 binding is occupied by unrelated `medusa-build-pg` — untouched), so a dedicated isolated Phase 4 harness was created per instructions; shared `io_pg`/`io_dev` never used. |
+| Rollback boundary | Revert Phase 4 files together: `supervisor-dispatch.ts` `acceptWork` seam (+ return member + import), `cold-start-e2e.integration.test.ts` (delete), `daemon.test.ts` mock surface pin, plus tasks.md/apply-progress.md check-mark + evidence log updates. D10: nothing else consumes the seam yet (no daemon/CLI caller); the supervision/recovery paths are byte-unchanged. Reverting 4.1–4.2 never removes Phase 1–3 work. |
 
 ## TDD Cycle Evidence (Phase 2)
 
@@ -174,6 +208,14 @@ Test Files  14 passed (14)
 | `evidence/phase-3-scratch-lineage.log` | 64 | Fresh scratch DB `io_scratch_lin_20260813a` verbatim lineage: pre-absence→CREATE→identity→baseline-0→001–011 manifest→readback→DROP→post-absence |
 | `evidence/phase-3-isolated-harness.md` | 29 | Harness identity, corrected shared-DB truth, isolation proof, defect/fix |
 | `evidence/phase-3-focused-live-pg.log` | 13 | Raw focused run: 60 passed (60), exit 0 |
+| `evidence/phase-4-focused-red.log` | 16 | Raw RED: `composed.acceptWork is not a function`, 1 file / 2 tests failed (captured before any production change) |
+| `evidence/phase-4-focused-green.log` | 18 | Self-contained GREEN: exact command (`PATH=/data/node24/bin:$PATH`, credential-free isolated `DATABASE_URL` → 127.0.0.1:5434), harness `io-phase4-iso-pg-3cdff5d7` (postgres:18.4), 1 passed (1), 2 passed (2), exit 0 — metadata labeled, captured runner output preserved |
+
+## Exact Accounting (complete Phase 4 candidate vs `a5315ea`, work unit phase-4-production-composition-e2e)
+
+- **Prior gate (before this correction)**: complete candidate = **313 changed lines ≤ 400 ✓** = **73 tracked + 240 untracked**. Tracked `git diff --numstat a5315ea` = 73 changed lines (63 ins / 10 del): `supervisor-dispatch.ts` +11, `daemon.test.ts` +4, `tasks.md` +2/−2, `apply-progress.md` +46/−8. Untracked candidate files = 240 lines: `cold-start-e2e.integration.test.ts` 215, `phase-4-focused-red.log` 16, `phase-4-focused-green.log` 9. (The stale 255 counted only source/test 15 + untracked 240, omitting the 58 artifact-delta lines.)
+- **Final (after this evidence-only correction)**: complete candidate = **329 changed lines ≤ 400 ✓** = **80 tracked + 249 untracked**. Tracked `git diff --numstat a5315ea` = 80 changed lines (70 ins / 10 del): `supervisor-dispatch.ts` +11, `daemon.test.ts` +4, `tasks.md` +2/−2, `apply-progress.md` +53/−8 (Fresh-Context Gate Correction Record + accounting rewrite). Untracked candidate files = 249 lines: `cold-start-e2e.integration.test.ts` 215, `phase-4-focused-red.log` 16, `phase-4-focused-green.log` 18 (self-contained header added; raw bytes untouched).
+- Excludes machine-local `.pi/` tooling state (pre-existing, not a candidate file) and all Phase 1–3 files (baseline in `a5315ea`).
 
 ## Final Review & Delivery Disposition (2026-08-13)
 
@@ -186,15 +228,18 @@ Test Files  14 passed (14)
 
 ## Remaining Tasks
 
-- [ ] Phase 4: 4.1–4.3 (composition surface + real-path e2e)
+- [x] Phase 4: 4.1–4.2 (composition surface + real-path e2e) — 4.3 commit PENDING (parent-owned)
+- [ ] Phase 4: 4.3 Commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e`
 - [ ] Phase 5: 5.1–5.3 (spec alignment, check-only gates, archive readiness)
 
 ## Deviations from Design
 
 None — implementation matches design D1 (`{ work, events, now? }`, append on `ok:true`, local to `acceptWork`), D4 (builder unchanged), D5 (`['work.accepted','work.completed']`), D6 (typed failures resolve pre-write; post-CAS duplicate `append` propagates for the Phase 3 rollback), D7 (no other transition touched), D9 (cursor untouched).
 - **Phase 3**: None — matches D2 (one `conn.transaction` binding work+event repos; commit-on-resolved, rollback-on-throw), D4 (acceptor one-shot `evt:acc:{workId}`), D6 (typed failures pre-write `{ok:false}`; only a throw rolls back), spec seam extension. `acceptWorkAtomically` exactly `(conn, cmd)` (D2); `occurredAt` excluded from identity. Evidence corrections added no source/test/spec/design change.
+- **Phase 4**: None — matches D10 exactly (`acceptWork: (cmd) => acceptWorkAtomically(connection, cmd)` on `buildSupervisorDispatch`'s return; supervision/recovery paths byte-unchanged). The daemon test mock gained an `acceptWork: vi.fn()` surface pin (return type grew); the e2e drives `startSupervisor` with the injectable one-shot schedule and never invokes `onActivate`/`onRecovery` directly (no `seedAcceptedWork`, no hardcoded company callbacks).
 
 ## Rollback Boundary (work units)
 
 - **Phase 2**: Revert the 4 Phase 2 source/test files together; nothing else depends on the widened `acceptWork` signature (D10). Phase 1 files remain valid standalone — not part of this unit's rollback.
 - **Phase 3**: Revert the 6 Phase 3 source/test files together (see Work Unit Evidence, rollback row). Reverting 3.1–3.3 never removes Phase 1/2 work and never touches Phase 4+.
+- **Phase 4**: Revert the 4 Phase 4 files together (see Work Unit Evidence, rollback row). Reverting 4.1–4.2 never removes Phase 1–3 work and never touches Phase 5 (5.1–5.3 untouched).

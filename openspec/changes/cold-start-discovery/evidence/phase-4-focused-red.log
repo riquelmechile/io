@@ -1,0 +1,16 @@
+# Phase 4 focused RED run — cold-start-discovery (task 4.1, captured BEFORE any production change)
+# Command: DATABASE_URL='postgresql://io:io_dev@127.0.0.1:5434/io_dev' pnpm vitest run --no-file-parallelism packages/app/test/e2e/cold-start-e2e.integration.test.ts
+# Isolated harness: io-phase4-iso-pg-3cdff5d7 (postgres:18.4, 127.0.0.1:5434), dedicated scratch DB per run.
+# Genuine RED: the composition seam `composed.acceptWork(...)` did not exist yet (D10 surface not implemented).
+
+ RUN  v4.1.10 /data/io
+
+ FAIL  packages/app/test/e2e/cold-start-e2e.integration.test.ts > E2E (cold-start, 4.1): zero-history company accepted through the composition acceptWork seam → supervisor one-shot pump → completed (D10, no seedAcceptedWork) > propose → accept via the composition seam → discovered by listCompanyIds → one-shot supervisor pump → work.completed + Work completed
+TypeError: composed.acceptWork is not a function
+    104|       // 2. ACCEPT through the composition `acceptWork` seam (D10) — t…
+    106|       const accepted = await composed.acceptWork({
+ FAIL  packages/app/test/e2e/cold-start-e2e.integration.test.ts > E2E (cold-start, 4.1): zero-history company accepted through the composition acceptWork seam → supervisor one-shot pump → completed (D10, no seedAcceptedWork) > triangulation: a second one-shot pump after completion does NOT re-run the worker (empty actionable queue settles, D9)
+ AssertionError: expected [] to deeply equal [ { …(2) } ]   (cascade: first test never reached the pump)
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
