@@ -1,0 +1,162 @@
+# Phase 5 Check Gate Evidence — cold-start-discovery (2026-08-13, check-only, work unit phase-5-spec-alignment-gates)
+# Command: DATABASE_URL=<isolated target, dev credentials env-injected, never printed> PATH=/data/node24/bin:$PATH pnpm check — run EXACTLY ONCE
+# Target: dedicated isolated harness io-phase4-iso-pg-3cdff5d7 (postgres:18.4) + io-phase4-iso-pg-vol-3cdff5d7, loopback-only 127.0.0.1:5434; shared io_pg/io_dev (5432) never touched. Exit 0. Standalone `pnpm build` after: exit 0 (`$ tsc -p tsconfig.build.json`, clean). No source/test/spec/design mutation — format-check "No fixes applied"; build noEmit.
+# Worktree truth at capture time (corrected 2026-08-13, phase-5-evidence-correction): the worktree was NOT git-clean — it intentionally contained Phase 5 tracked modifications `tasks.md` + `apply-progress.md`, this untracked evidence artifact + `phase-5-focused-live-pg.log`, and the pre-existing machine-local `.pi/` directory; no staged changes and no commit at capture time. Valid raw functional gate bytes preserved below verbatim: format-check "Checked 211 files in 47ms. No fixes applied."; typecheck clean; build clean; lint 0 errors / 9 pre-existing warnings; vitest 100 passed | 3 skipped (103), 1380 passed | 6 skipped (1386); exit 0.
+# Documentary metadata: this header (lines 1–6) is narrative context written at capture time (line 4 corrected); the raw command output below (line 7 onward, 156 lines) is byte-for-byte verbatim — preserved, never rerun.
+# Raw runner output verbatim below.
+$ pnpm run format-check && pnpm run typecheck && pnpm run build && pnpm run lint && pnpm run test
+$ biome format .
+Checked 211 files in 47ms. No fixes applied.
+$ tsc -p tsconfig.json
+$ tsc -p tsconfig.build.json
+$ biome lint .
+packages/app/test/parity.test.ts:348:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    347 │     const fakeClaim = (await fake.updateIfVersion(
+  > 348 │       { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    349 │       1,
+    350 │       { kind: 'claim' },
+  
+
+packages/app/test/parity.test.ts:353:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    351 │     )) as Extract<CasResult, { ok: true }>;
+    352 │     const pgClaim = (await pg.updateIfVersion(
+  > 353 │       { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    354 │       1,
+    355 │       { kind: 'claim' },
+  
+
+packages/app/test/parity.test.ts:379:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    377 │     // Claim in both worlds: token 1, version 2, in_progress.
+    378 │     const fakeClaim = await fake.updateIfVersion(
+  > 379 │       { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    380 │       1,
+    381 │       { kind: 'claim' },
+  
+
+packages/app/test/parity.test.ts:384:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    382 │     );
+    383 │     const pgClaim = await pg.updateIfVersion(
+  > 384 │       { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    385 │       1,
+    386 │       { kind: 'claim' },
+  
+
+packages/app/test/parity.test.ts:423:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    421 │     const { fake, pg } = await seedBoth();
+    422 │     const fakeClaim = await fake.updateIfVersion(
+  > 423 │       { ...(await fake.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    424 │       1,
+    425 │       { kind: 'claim' },
+  
+
+packages/app/test/parity.test.ts:428:12 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    426 │     );
+    427 │     const pgClaim = await pg.updateIfVersion(
+  > 428 │       { ...(await pg.get(COMPANY, WORK_ID))!, state: 'in_progress' },
+        │            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    429 │       1,
+    430 │       { kind: 'claim' },
+  
+
+packages/app/test/worker-reconcile.test.ts:19:13 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! This import is unused.
+  
+    17 │ import { decidePreEffect, reconcilePreEffect } from '../src/worker/reconcile.js';
+    18 │ import { reconcilePostEffectFailure } from '../src/worker/finalize.js';
+  > 19 │ import type { EffectRecord, SandboxAction } from '../src/sandbox/sandbox-port.js';
+        │             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    20 │ import { runWorker } from '../src/worker/worker.js';
+    21 │ import { harness, seed, workerInput } from './worker-helpers.js';
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     17  17 │   import { decidePreEffect, reconcilePreEffect } from '../src/worker/reconcile.js';
+     18  18 │   import { reconcilePostEffectFailure } from '../src/worker/finalize.js';
+     19     │ - import·type·{·EffectRecord,·SandboxAction·}·from·'../src/sandbox/sandbox-port.js';
+     20  19 │   import { runWorker } from '../src/worker/worker.js';
+     21  20 │   import { harness, seed, workerInput } from './worker-helpers.js';
+  
+
+packages/database/test/business-pg-roundtrip.integration.test.ts:1125:29 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter tx is unused.
+  
+    1123 │         };
+    1124 │         const [a, b] = await Promise.all([
+  > 1125 │           conn.transaction((tx) => repo.insertInFlight(claimKey)),
+        │                             ^^
+    1126 │           conn.transaction((tx) => repo.insertInFlight(claimKey)),
+    1127 │         ]);
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend tx with an underscore.
+  
+    1123 1123 │           };
+    1124 1124 │           const [a, b] = await Promise.all([
+    1125      │ - ··········conn.transaction((tx)·=>·repo.insertInFlight(claimKey)),
+         1125 │ + ··········conn.transaction((_tx)·=>·repo.insertInFlight(claimKey)),
+    1126 1126 │             conn.transaction((tx) => repo.insertInFlight(claimKey)),
+    1127 1127 │           ]);
+  
+
+packages/database/test/business-pg-roundtrip.integration.test.ts:1126:29 lint/correctness/noUnusedFunctionParameters  FIXABLE  ━━━━━━━━━━
+
+  ! This parameter tx is unused.
+  
+    1124 │         const [a, b] = await Promise.all([
+    1125 │           conn.transaction((tx) => repo.insertInFlight(claimKey)),
+  > 1126 │           conn.transaction((tx) => repo.insertInFlight(claimKey)),
+        │                             ^^
+    1127 │         ]);
+    1128 │         const wins = [a, b].filter((r) => r.ok === true);
+  
+  i Unused parameters might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: If this is intentional, prepend tx with an underscore.
+  
+    1124 1124 │           const [a, b] = await Promise.all([
+    1125 1125 │             conn.transaction((tx) => repo.insertInFlight(claimKey)),
+    1126      │ - ··········conn.transaction((tx)·=>·repo.insertInFlight(claimKey)),
+         1126 │ + ··········conn.transaction((_tx)·=>·repo.insertInFlight(claimKey)),
+    1127 1127 │           ]);
+    1128 1128 │           const wins = [a, b].filter((r) => r.ok === true);
+  
+
+Checked 211 files in 107ms. No fixes applied.
+Found 9 warnings.
+$ vitest run
+
+ RUN  v4.1.10 /data/io
+
+
+ Test Files  100 passed | 3 skipped (103)
+      Tests  1380 passed | 6 skipped (1386)
+   Start at  01:45:44
+   Duration  26.97s (transform 752ms, setup 0ms, import 4.52s, tests 13.31s, environment 8ms)

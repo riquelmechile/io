@@ -54,9 +54,9 @@ Chain strategy: pending
 
 ## Phase 5: Spec Alignment, Check-Only Gates, Archive Readiness
 
-- [ ] 5.1 Run `pnpm check` (ordered gates: tsc typecheck, biome lint/format, vitest) — all GREEN; run `pnpm build` — clean.
-- [ ] 5.2 Spec-alignment sweep: no backfill (D8); cursor-only novelty, no second guard (D5/D9); existing emitters unchanged — `work.completed` (`finalize.ts:321`) + `heartbeat.decision` (`tick.ts:49`) (D7); three disjoint namespaces `evt:att:`/`evt:hb:`/`evt:acc:` with exclusive builder/source ownership; typed-failure no-write behavior (D6); thrown post-CAS rollback (D2).
-- [ ] 5.3 Archive readiness: deltas match implementation; rollback plan coherent (revert builder + widening + atomic flow + materiality + composition + e2e + three deltas together); `verify-report.md` prerequisites met.
+- [x] 5.1 Run `pnpm check` (ordered gates: tsc typecheck, biome lint/format, vitest) — all GREEN; run `pnpm build` — clean.
+- [x] 5.2 Spec-alignment sweep: no backfill (D8); cursor-only novelty, no second guard (D5/D9); existing emitters unchanged — `work.completed` (`finalize.ts:321`) + `heartbeat.decision` (`tick.ts:49`) (D7); three disjoint namespaces `evt:att:`/`evt:hb:`/`evt:acc:` with exclusive builder/source ownership; typed-failure no-write behavior (D6); thrown post-CAS rollback (D2).
+- [x] 5.3 Archive readiness: deltas match implementation; rollback plan coherent (revert builder + widening + atomic flow + materiality + composition + e2e + three deltas together); `verify-report.md` prerequisites met.
 
 ## Implementation Order
 

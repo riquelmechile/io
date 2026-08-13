@@ -228,9 +228,7 @@ Test Files  14 passed (14)
 
 ## Remaining Tasks
 
-- [x] Phase 4: 4.1–4.2 (composition surface + real-path e2e) — 4.3 commit PENDING (parent-owned)
-- [ ] Phase 4: 4.3 Commit `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e`
-- [ ] Phase 5: 5.1–5.3 (spec alignment, check-only gates, archive readiness)
+- [x] Phase 4: 4.1–4.3 committed (`2565175`); Phase 5: 5.1–5.3 complete (2026-08-13) — all 18 tasks done, archive-ready
 
 ## Deviations from Design
 
@@ -252,3 +250,18 @@ None — implementation matches design D1 (`{ work, events, now? }`, append on `
 - **Receipt**: approved. **Pre-commit gate**: allow.
 - **Task 4.3**: committed `2565175` — `feat(app): surface atomic accept in supervisor dispatch and prove cold-start e2e` (exact subject verified read-only in `git log`).
 - **Phase 5 (5.1–5.3) remains pending.**
+
+## Phase 5 Record (2026-08-13, check-only work unit phase-5-spec-alignment-gates)
+- Acquire: state `proceed`, max attempts 1, max changed lines **200**, token parent-held; candidate frozen — check-only gates only, no RED by design; no source/test/spec/design change; no commit/stage/push/review; parent owns settle/verify/archive.
+- **5.1 (PASS)**: harness identity verified pre-start (`docker inspect` postgres:18.4, loopback `127.0.0.1:5434`, vol `io-phase4-iso-pg-vol-3cdff5d7`) → started → `DATABASE_URL` env-injected (never printed) `PATH=/data/node24/bin:$PATH pnpm check` EXACTLY once → **exit 0** (format 211 no fixes; typecheck clean; build clean; lint 0 errors/9 pre-existing warnings; vitest **100 passed | 3 skipped (103); 1380 passed | 6 skipped (1386)** — PG suites ran, not skipped); standalone `pnpm build` → **exit 0**; focused PG proof → **2 files/62 tests passed, exit 0**; harness stopped, preserved. Raw: `evidence/phase-5-check-gate.log`, `evidence/phase-5-focused-live-pg.log`.
+- **5.2 (PASS, read-only)**: D8 zero migration/SQL in whole change + delta "not backfilled"; D5/D9 `heartbeat.ts` diff = ONLY `MATERIAL_EVENT_TYPES` (cursor fns byte-unchanged, sole novelty guard); D7 `complete-work.ts`/`finalize.ts`/`tick.ts` untouched — `work.completed` (finalize.ts:321) + `heartbeat.decision` (tick.ts:49) preserved; D4 disjoint `evt:att:{companyId}:{idempotencyKey}`/`evt:hb:{digest}`/`evt:acc:{workId}` + exclusive builder/source + `uq_business_event_event_id` backstop; D6 typed failures resolve pre-write (`{ok:false}`, append only on `ok:true`); D2 one `conn.transaction`, commit-on-resolved, rollback-on-throw.
+- **5.3 (PASS)**: 3 change-dir delta specs match implementation exactly; canonical `openspec/specs/` untouched (deltas pending archive); rollback plan coherent (proposal+design: revert builder+widening+atomic flow+materiality+composition+e2e+3 deltas together; appended facts immutable, undeclared ⇒ non-material; D10 no other caller); verify-report prerequisites met (18/18 `[x]`, gate exit 0, build clean, PG unskipped, conformance).
+- **Accounting**: complete candidate vs `f2c39de` = **202 changed lines ≤ 210 ✓** — 200 at the phase-5-spec-alignment-gates gate + 2 from this phase-5-evidence-correction (truth-fix header in `phase-5-check-gate.log`, 160→162 lines; raw gate output bytes untouched, no rerun; tracked: `tasks.md` +3/−3, `apply-progress.md` +16/−3; untracked: `phase-5-check-gate.log` 162, `phase-5-focused-live-pg.log` 15; excludes `.pi/` and Phase 1–4 baseline).
+
+## Work Unit Evidence (Phase 5 — check-only, no RED by design)
+
+| Evidence | Required value |
+|----------|----------------|
+| Focused test command and exact result | isolated `DATABASE_URL` + `PATH=/data/node24/bin:$PATH pnpm check` → exit 0 (1380 passed/6 skipped); `pnpm build` → exit 0; focused vitest `business-pg-roundtrip` + `cold-start e2e` → 2 files/62 tests passed, exit 0 |
+| Runtime harness command/scenario and exact result | LIVE PG — dedicated isolated `io-phase4-iso-pg-3cdff5d7` (postgres:18.4, 127.0.0.1:5434, vol `io-phase4-iso-pg-vol-3cdff5d7`): identity-verified, started, gates run, stopped+preserved; shared `io_pg`/`io_dev` never touched; PG suites executed unskipped (60 atomic + 2 e2e) |
+| Rollback boundary | Phase 5 = evidence logs + tasks.md/apply-progress marks only (delete → clean return to `f2c39de`); production rollback per design: revert builder+widening+atomic flow+materiality+composition+e2e+3 deltas together |
