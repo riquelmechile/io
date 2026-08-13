@@ -48,7 +48,9 @@ describe.skipIf(!reachable && !e2eRequirePg)(
 
     it('post-cycle: the company stream ⇒ activate flash; fresh company ⇒ no-llm-heartbeat', async () => {
       // Full worker cycle over the REAL stack — the terminal close appends
-      // exactly one `work.completed` business event to the live store.
+      // `work.completed` + the composite `work.skill-outcome` business events
+      // to the live store (Atomic Worker Terminal Emission). The skill-outcome
+      // is NON-MATERIAL: the heartbeat gate MUST ignore it and still activate.
       const result = await runWorker(workerInputFor(harness), harness.deps, 'flash');
       expect(result.ok).toBe(true);
       if (!result.ok || 'replayed' in result) {
@@ -62,11 +64,12 @@ describe.skipIf(!reachable && !e2eRequirePg)(
         'SELECT count(*)::int AS count FROM business_event',
         [],
       );
-      expect(liveEventCount[0]?.count).toBe(1);
+      expect(liveEventCount[0]?.count).toBe(2);
 
       // The GATE reads the company's REAL stream (pool-bound adapter on deps)
       // and returns the PURE domain decision — the future supervisor's entry
-      // point for choosing whether to run the work-bearing cycle.
+      // point for choosing whether to run the work-bearing cycle. The extra
+      // non-material event does NOT flip the decision (heartbeat unchanged).
       const decision = await evaluateHeartbeatGate({ events: harness.deps.events }, E2E_COMPANY);
       expect(decision).toEqual({ kind: 'activate', model: 'flash' });
 
@@ -78,13 +81,13 @@ describe.skipIf(!reachable && !e2eRequirePg)(
       expect(fresh).toEqual({ kind: 'no-llm-heartbeat' });
 
       // The evaluation wrote NOTHING: the live event stream is unchanged
-      // (still exactly the one event the cycle committed) and the work is
+      // (still exactly the two events the cycle committed) and the work is
       // untouched by the read.
       const afterEval = await harness.conn.query<{ count: number }>(
         'SELECT count(*)::int AS count FROM business_event',
         [],
       );
-      expect(afterEval[0]?.count).toBe(1);
+      expect(afterEval[0]?.count).toBe(2);
       const stored = await harness.work.get(E2E_COMPANY, E2E_WORK_ID);
       expect(stored?.state).toBe('completed');
     });
