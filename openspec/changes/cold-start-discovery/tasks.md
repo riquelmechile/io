@@ -37,14 +37,14 @@ Chain strategy: pending
 - [x] 2.1 [RED] Extend `packages/business-domain/test/use-cases.test.ts` (update existing callers): success appends exactly one `work.accepted`; each typed failure (`version-conflict`/`invalid-transition`/`not-found`/`invalid-command`) returns `{ok:false}` appending nothing; two novel accepts + one tick ⇒ one `activate`; `complete` still appends `work.completed`, supervisor still appends `heartbeat.decision`.
 - [x] 2.2 [GREEN] Modify `packages/business-domain/src/use-cases/accept-work.ts`: widen deps to `{ work, events, now? }`; build via `buildWorkAcceptedEvent` and append only on `ok:true`; typed failures resolve pre-write — no thrown control flow, no `@io/*` (D1, D6).
 - [x] 2.3 [GREEN] Modify `packages/business-domain/src/heartbeat.ts`: add `'work.accepted'` to `MATERIAL_EVENT_TYPES` (readonly); leave `isMaterialEvent`/`hasMaterialNovelty`/cursor unchanged (D5, D9).
-- [ ] 2.4 Commit `feat(business-domain): emit work.accepted on accept and declare it material`.
+- [x] 2.4 Commit `feat(business-domain): emit work accepted event` — committed as `9fada4b` (exact subject verified in `git log`).
 
 ## Phase 3: Atomic PostgreSQL Acceptance Seam + Rollback Proof (database)
 
-- [ ] 3.1 [RED] Extend `packages/database/test/business-pg-roundtrip.integration.test.ts`: success COMMITS Work@vN+1 + one event; each typed failure COMMITS an empty tx (persists NEITHER); post-CAS duplicate-`append` THROWS ⇒ ROLLBACK ⇒ persists NEITHER; duplicate accept ⇒ `invalid-transition`. Extend the in-memory fake `append`/`appendIfAbsent` to throw on duplicate `source:'acceptor'` eventId (`ports/fakes.ts`).
-- [ ] 3.2 [GREEN] Create `packages/database/src/accept-work-flow.ts`: `acceptWorkAtomically(conn, cmd)` mirroring `completeWorkAtomically` (`complete-work-flow.ts:28`); bind work + event repos to one `conn.transaction(tx ⇒ acceptWork(cmd, { work, events, now }))`; commit-on-resolved, rollback-on-throw (D2).
-- [ ] 3.3 Export `acceptWorkAtomically` from `packages/database/src/index.ts`.
-- [ ] 3.4 Commit `feat(database): add atomic acceptance transaction with rollback proof`.
+- [x] 3.1 [RED] Extend `packages/database/test/business-pg-roundtrip.integration.test.ts`: success COMMITS Work@vN+1 + one event; each typed failure COMMITS an empty tx (persists NEITHER); post-CAS duplicate-`append` THROWS ⇒ ROLLBACK ⇒ persists NEITHER; duplicate accept ⇒ `invalid-transition`. Extend the in-memory fake `append`/`appendIfAbsent` to throw on duplicate `source:'acceptor'` eventId (`ports/fakes.ts`).
+- [x] 3.2 [GREEN] Create `packages/database/src/accept-work-flow.ts`: `acceptWorkAtomically(conn, cmd)` mirroring `completeWorkAtomically` (`complete-work-flow.ts:28`); bind work + event repos to one `conn.transaction(tx ⇒ acceptWork(cmd, { work, events, now }))`; commit-on-resolved, rollback-on-throw (D2).
+- [x] 3.3 Export `acceptWorkAtomically` from `packages/database/src/index.ts`.
+- [x] 3.4 Commit `feat(database): add atomic acceptance transaction` — exact subject (no hash preclaimed); ordinary-policy delivery after candidate-scoped decline (consent `declined_this_candidate`, RDD not disabled).
 
 ## Phase 4: Production Composition Surface + Real-Path E2E (app)
 

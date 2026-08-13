@@ -1,0 +1,64 @@
+# Phase 3 Fresh Scratch DB Freshness/Drop Lineage — cold-start-discovery (final evidence correction, 2026-08-13)
+# Target: FRESH scratch DB io_scratch_lin_20260813a created and dropped on the preserved isolated server ONLY,
+#         reached BY IDENTITY via: docker exec io-phase3-iso-pg-ca93986d psql -h 127.0.0.1 -p 5432 -U io_iso -tA [-d db].
+#         No shared-server command in this lineage. Each migration applied via docker exec -i <container> psql
+#         -h 127.0.0.1 -p 5432 -U io_iso -v ON_ERROR_STOP=1 -tA -d <db> < <migration-file> (exit 0 = OK); sha256
+#         of repo bytes. psql -tA output verbatim; no env values, no secrets.
+# pre-absence: SELECT count(*) FROM pg_database WHERE datname='io_scratch_lin_20260813a'
+0
+# create: CREATE DATABASE io_scratch_lin_20260813a
+CREATE DATABASE
+# current_database identity: SELECT current_database()
+io_scratch_lin_20260813a
+# baseline table count (fresh, before any migration): count(*) information_schema.tables WHERE table_schema='public'
+0
+# migration manifest 001..011 (repo packages/database/sql, sorted; each applied + exit 0)
+001_create_tables.sql|OK|sha256:e7205e5b6633ac7f7e13a7632d9cb4154945cb654bde937eaa0978da3de91e8d
+002_create_business_tables.sql|OK|sha256:0f0d6d14a84a89ad030d9d74fcae373ac52bb9123b4a2aea06acaafffd907cbb
+003_harden_columns.sql|OK|sha256:906e9b1edc75821dd621f978d97496bf62edbe716831178a5f873bc4f874aaec
+004_harden_constraints.sql|OK|sha256:e30eb035143483bf665760dfa33693f7e5d3b94f2965dc0e024e9c117622676f
+005_journal_retryable_status.sql|OK|sha256:939a4808dac4240348c4569f904413accfe779cf32e3002f62895e9487fee0f6
+006_business_events.sql|OK|sha256:719d18898f101b9a98973451083dee28bcd67d1d74d0c9d3d9bc9d01ddbf8d78
+007_skills.sql|OK|sha256:03e68196347ac1daa9bf1def673e94bf7d9b04196b904cfc2c1724ae1c091067
+008_heartbeat_cursor.sql|OK|sha256:2891beea981c7dd6d5ea36c3302ff82b2c503e737c2a98aa59fc8a0daca4da3c
+009_work_company_state_index.sql|OK|sha256:9df52400d6ef3137be5d714a70d6a2602694eeea10fb888ec95b3f86f03d360e
+010_fencing_tokens.sql|OK|sha256:bbec4ea7233aa3077a0bac74f75531c067bfa6b0d75e857f9ebf6900fd631212
+011_recovery_designation.sql|OK|sha256:4be7948d4134bb2eef7e6304514491b969b577e4afc8e47baae8ee27eb63f113
+# final public tables: SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename
+audit
+business_event
+business_receipt
+company
+delegation
+evidence
+heartbeat_cursor
+idempotency_journal
+skill
+work
+# final table count
+10
+# design indexes name|table|unique|partial(indpred IS NOT NULL)|predicate
+idx_work_company_state|work|false|false|
+idx_work_recovery_requested|work|false|true|(recovery_requested AND (state = 'in_progress'::text))
+uq_business_event_event_id|business_event|true|false|
+uq_company_company_id|company|true|false|
+uq_delegation_delegation_id|delegation|true|false|
+uq_receipt_receipt_id|business_receipt|true|false|
+uq_receipt_work_terminal|business_receipt|true|false|
+uq_skill_company_skill_version|skill|true|false|
+uq_work_work_id|work|true|false|
+# total public indexes
+31
+# CHECK: conname|pg_get_constraintdef
+idempotency_journal_status_check|CHECK ((status = ANY (ARRAY['in_flight'::text, 'completed'::text, 'aborted_retryable'::text])))
+# 010/011 columns: table.column|data_type|is_nullable
+business_receipt.terminal_event_id|text|NO
+idempotency_journal.fencing_token|bigint|NO
+work.fencing_token|bigint|NO
+work.recovery_requested|boolean|NO
+# migration-history / unrelated table absence: LIKE %migration%|%schema_version%|%_history%
+0
+# drop: DROP DATABASE io_scratch_lin_20260813a WITH (FORCE)
+DROP DATABASE
+# post-absence: SELECT count(*) FROM pg_database WHERE datname='io_scratch_lin_20260813a'
+0

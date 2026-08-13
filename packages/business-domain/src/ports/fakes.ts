@@ -249,7 +249,10 @@ export class InMemoryBusinessEventRepository implements BusinessEventRepository 
     if (this.entries.some((entry) => entry.eventId === event.eventId)) {
       // Append-only, single-issuance (R7): an event is a write-once fact. A
       // duplicate eventId is rejected and the ORIGINAL event is preserved —
-      // mirrors the PostgreSQL adapter's uq_business_event_event_id.
+      // mirrors the PostgreSQL adapter's uq_business_event_event_id. This
+      // covers the acceptor namespace too: `evt:acc:{workId}` is one-shot
+      // (cold-start Atomic Acceptance Fact), so a duplicate append is an
+      // integrity violation, not a retry.
       throw new Error(`BusinessEvent already recorded: ${event.eventId}`);
     }
     this.entries.push(event);
@@ -260,6 +263,15 @@ export class InMemoryBusinessEventRepository implements BusinessEventRepository 
     requireCompanyId(event.companyId);
     const existing = this.entries.find((entry) => entry.eventId === event.eventId);
     if (existing !== undefined) {
+      if (event.source === 'acceptor') {
+        // One-shot acceptor fact (cold-start Atomic Acceptance Fact): a
+        // duplicate `evt:acc:{workId}` means a broken one-shot accept — it
+        // THROWS instead of no-op'ing (the accept use case appends via the
+        // throwing `append`, so a duplicate surfaces as a post-CAS failure
+        // that rolls the shared transaction back). The at-most-once no-op is
+        // preserved for every OTHER source (supervisor heartbeat etc.).
+        throw new Error(`BusinessEvent already recorded: ${event.eventId}`);
+      }
       // At-most-once (supervisor-timer): a duplicate conditional append no-ops
       // and returns the STORED ORIGINAL — never the input, never an overwrite.
       // Mirrors the PostgreSQL adapter's ON CONFLICT (event_id) DO NOTHING.

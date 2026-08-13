@@ -352,6 +352,8 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
       expect(databaseApi.completeWorkAtomically).toBeTypeOf('function');
       expect(databaseApi.parseWorkRow).toBeTypeOf('function');
       expect(databaseApi.parseBusinessReceiptRow).toBeTypeOf('function');
+      // cold-start addition (design D2): the atomic acceptance wiring.
+      expect(databaseApi.acceptWorkAtomically).toBeTypeOf('function');
       // PR2 additions (design §006): the business_event adapter + row guard.
       expect(databaseApi.PgBusinessEventRepository).toBeTypeOf('function');
       expect(databaseApi.parseBusinessEventRow).toBeTypeOf('function');
@@ -378,6 +380,7 @@ describe('database package boundary & exclusions (Req 5, scenario 2)', () => {
           'PgIdempotencyJournalRepository',
           'PgSkillRepository',
           'PgWorkRepository',
+          'acceptWorkAtomically',
           'completeWorkAtomically',
           'parseBusinessEventRow',
           'parseBusinessReceiptRow',

@@ -1,0 +1,13 @@
+# Phase 3 Focused Live-PG Evidence - cold-start-discovery (phase-3-isolated-evidence-correction)
+# Command: <node24-bin> pnpm vitest run --no-file-parallelism packages/database/test/business-pg-roundtrip.integration.test.ts
+# DB target: EXCLUSIVE harness io-phase3-iso-pg-ca93986d (postgres:18.4) on 127.0.0.1:5433 via injected DATABASE_URL (targeted by identity); no write claim against the shared 5432 server is made. Run: exactly once; exit 0.
+# Raw transcript verbatim (9 lines; vitest project-root path redacted as <repo> for privacy):
+ RUN  v4.1.10 <repo>
+
+
+ Test Files  1 passed (1)
+      Tests  60 passed (60)
+   Start at  23:10:00
+   Duration  4.47s (transform 140ms, setup 0ms, import 208ms, tests 4.17s, environment 0ms)
+
+# Full raw capture digest (verbatim except <repo> redaction): sha256:2bcd11b2e600ab811699bb0bf2ad3491d60e4ba631a4bb0441f8de64b05ecb48

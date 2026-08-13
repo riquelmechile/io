@@ -9,6 +9,7 @@ import type {
   CasResult,
   CompleteWorkCommand,
   CompleteWorkDeps,
+  TransitionWorkCommand,
 } from '@io/business-domain/src/index.js';
 import { completeWork } from '@io/business-domain/src/index.js';
 import { evidenceId } from '@io/business-domain/src/index.js';
@@ -17,6 +18,8 @@ import {
   InMemoryWorkRepository,
 } from '@io/business-domain/src/index.js';
 
+import { acceptWorkAtomically } from '../src/accept-work-flow.js';
+import { PgBusinessEventRepository } from '../src/business-event-adapter.js';
 import { PgBusinessReceiptRepository } from '../src/business-receipt-adapter.js';
 import { PgCompanyRepository } from '../src/company-adapter.js';
 import { PgDelegationRepository } from '../src/delegation-adapter.js';
@@ -58,6 +61,11 @@ const SCHEMA_011 = join(pkgRoot, 'sql', '011_recovery_designation.sql');
  *     for the same (work_id, terminal_event_id) with a different receiptId.
  *   - idempotency_journal (004): usable, UNIQUE(attempt_id) and UNIQUE
  *     (company_id, idempotency_key) enforced (the LOGIC is Slice C).
+ *   - atomic acceptance (cold-start delta, D2): acceptWorkAtomically COMMITS
+ *     the accepted Work @vN+1 AND exactly one work.accepted event in one tx;
+ *     every typed failure COMMITS an empty tx (persists NEITHER); a post-CAS
+ *     duplicate-append THROWS ⇒ ROLLBACK ⇒ persists NEITHER; a duplicate
+ *     accept resolves invalid-transition (proposed→accepted is one-shot).
  * State is isolated via TRUNCATE in beforeEach. The whole suite is SKIPPED when
  * no live PG is reachable.
  */
@@ -100,7 +108,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
 
   beforeEach(async () => {
     await conn.execute(
-      'TRUNCATE company, delegation, work, business_receipt, idempotency_journal RESTART IDENTITY',
+      'TRUNCATE company, delegation, work, business_event, business_receipt, idempotency_journal RESTART IDENTITY',
       [],
     );
   });
@@ -527,11 +535,15 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       // timeout).
       timeout: 30_000,
     }, async () => {
-      // Scratch database on the SAME server; the io role is superuser in the
-      // dev container. Created here and dropped after — the write must NOT
+      // Scratch database on the SAME server the suite is pointed at
+      // (DATABASE_URL / pgConnectionString). Hardcoding io:io_dev@localhost:5432
+      // would dial the shared dev server even when DATABASE_URL targets an
+      // exclusive harness — the coupling that invalidated the prior shared-DB
+      // evidence (#6474). Created here and dropped after — the write must NOT
       // leak across databases.
       const isoName = 'io_dev_iso';
-      const isoUrl = `postgresql://io:io_dev@localhost:5432/${isoName}`;
+      const isoUrl = new URL(pgConnectionString());
+      isoUrl.pathname = `/${isoName}`;
       const dbs = await conn.query<{ datname: string }>(
         'SELECT datname FROM pg_database WHERE datname = $1',
         [isoName],
@@ -540,7 +552,7 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
         await conn.execute('CREATE DATABASE io_dev_iso', []);
       }
 
-      const isoConn = new PgDbConnection(isoUrl);
+      const isoConn = new PgDbConnection(isoUrl.toString());
       try {
         await isoConn.execute(readFileSync(SCHEMA_001, 'utf8'), []);
 
@@ -1288,6 +1300,164 @@ describe.skipIf(!reachable)('integration: real PG business-domain round-trip', (
       // race net clears it when it observes a terminal Work.
       const stored = await workRepo.get('acme-corp', 'work-001');
       expect(stored?.state).toBe('completed');
+    });
+  });
+
+  describe('atomic acceptance — acceptWorkAtomically (D2, Atomic Acceptance Fact) — live PG', () => {
+    /** A PROPOSED Work at version 1 — the valid pre-accept row. */
+    async function seedProposed(overrides: Partial<Work> = {}): Promise<Work> {
+      const w: Work = {
+        ...sampleWork(),
+        workId: 'work-acc-001',
+        state: 'proposed',
+        version: 1,
+        fencingToken: 0,
+        evidenceRefs: [],
+        ...overrides,
+      };
+      await workRepo.save(w);
+      return w;
+    }
+
+    function acceptCmd(overrides: Partial<TransitionWorkCommand> = {}): TransitionWorkCommand {
+      return {
+        companyId: 'acme-corp',
+        actor: 'principal-2',
+        workId: 'work-acc-001',
+        ...overrides,
+      };
+    }
+
+    const eventsRepo = (): PgBusinessEventRepository => new PgBusinessEventRepository(conn);
+    const eventCount = async (): Promise<number> =>
+      (await eventsRepo().listByCompany('acme-corp')).length;
+
+    it('success: COMMITS the accepted Work at version N+1 AND exactly one work.accepted event in the SAME transaction', async () => {
+      await seedProposed();
+
+      const result = await acceptWorkAtomically(conn, acceptCmd());
+
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.value.state).toBe('accepted');
+        expect(result.value.version).toBe(2);
+      }
+      // The Work CAS and the event append committed TOGETHER — both visible
+      // outside the transaction.
+      const stored = await workRepo.get('acme-corp', 'work-acc-001');
+      expect(stored?.state).toBe('accepted');
+      expect(stored?.version).toBe(2);
+
+      const events = await eventsRepo().listByCompany('acme-corp');
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        eventId: 'evt:acc:work-acc-001',
+        companyId: 'acme-corp',
+        aggregateKind: 'work',
+        aggregateId: 'work-acc-001',
+        eventType: 'work.accepted',
+        source: 'acceptor',
+      });
+      expect(events[0]?.payload).toEqual({
+        workId: 'work-acc-001',
+        state: 'accepted',
+        actor: 'principal-2',
+      });
+    });
+
+    it('version-conflict: COMMITS an EMPTY transaction — the Work stays proposed@v1 AND no event persists', async () => {
+      await seedProposed();
+
+      const result = await acceptWorkAtomically(conn, acceptCmd({ expectedVersion: 99 }));
+
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toBe('version-conflict');
+      const stored = await workRepo.get('acme-corp', 'work-acc-001');
+      expect(stored?.state).toBe('proposed');
+      expect(stored?.version).toBe(1);
+      expect(await eventCount()).toBe(0);
+    });
+
+    it('invalid-transition: COMMITS an EMPTY transaction — a non-proposed Work cannot be accepted, no event persists', async () => {
+      await seedProposed({ state: 'in_progress' });
+
+      const result = await acceptWorkAtomically(conn, acceptCmd());
+
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toBe('invalid-transition');
+      expect((await workRepo.get('acme-corp', 'work-acc-001'))?.state).toBe('in_progress');
+      expect(await eventCount()).toBe(0);
+    });
+
+    it('not-found: COMMITS an EMPTY transaction — an unknown workId resolves not-found, no event persists', async () => {
+      await seedProposed();
+
+      const result = await acceptWorkAtomically(conn, acceptCmd({ workId: 'work-missing' }));
+
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toBe('not-found');
+      expect(await eventCount()).toBe(0);
+    });
+
+    it('invalid-command: COMMITS an EMPTY transaction — a missing workId resolves invalid-command before any write', async () => {
+      await seedProposed();
+
+      const result = await acceptWorkAtomically(conn, acceptCmd({ workId: '' }));
+
+      expect(result.ok).toBe(false);
+      if (result.ok === false) expect(result.reason).toBe('invalid-command');
+      expect(await eventCount()).toBe(0);
+    });
+
+    it('post-CAS duplicate-append THROWS ⇒ ROLLBACK: NEITHER the accepted Work NOR a new event persists (uq_business_event_event_id)', async () => {
+      await seedProposed();
+      // Crash-gap residue: an ORPHAN acceptor event row already occupies the
+      // eventId the acceptance will append (single issuance, R7). The CAS
+      // lands inside the tx (accepted v2), then the append rejects on the
+      // UNIQUE constraint — the shared transaction MUST roll back BOTH.
+      await conn.execute(
+        'INSERT INTO business_event (event_id, company_id, aggregate_kind, aggregate_id, ' +
+          'event_type, occurred_at, payload, source, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [
+          'evt:acc:work-acc-001',
+          'acme-corp',
+          'work',
+          'work-acc-001',
+          'work.accepted',
+          1,
+          '{}',
+          'acceptor',
+          Date.now(),
+        ],
+      );
+
+      await expect(acceptWorkAtomically(conn, acceptCmd())).rejects.toThrow(
+        /duplicate key|unique/i,
+      );
+
+      // FULL rollback: the Work CAS did NOT persist…
+      const stored = await workRepo.get('acme-corp', 'work-acc-001');
+      expect(stored?.state).toBe('proposed');
+      expect(stored?.version).toBe(1);
+      // …and exactly ONE event row remains — the pre-existing orphan, unchanged.
+      const events = await eventsRepo().listByCompany('acme-corp');
+      expect(events).toHaveLength(1);
+      expect(events[0]?.eventId).toBe('evt:acc:work-acc-001');
+    });
+
+    it('duplicate accept: a SECOND accept of an already-accepted Work resolves invalid-transition — proposed→accepted is one-shot', async () => {
+      await seedProposed();
+      await acceptWorkAtomically(conn, acceptCmd());
+      expect((await workRepo.get('acme-corp', 'work-acc-001'))?.state).toBe('accepted');
+
+      const second = await acceptWorkAtomically(conn, acceptCmd());
+
+      expect(second.ok).toBe(false);
+      if (second.ok === false) expect(second.reason).toBe('invalid-transition');
+      // No second event: exactly one acceptor row from the first accept.
+      const events = await eventsRepo().listByCompany('acme-corp');
+      expect(events).toHaveLength(1);
+      expect(events[0]?.eventId).toBe('evt:acc:work-acc-001');
     });
   });
 });

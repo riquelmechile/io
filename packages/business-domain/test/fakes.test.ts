@@ -900,6 +900,54 @@ describe('InMemoryBusinessEventRepository — appendIfAbsent (at-most-once appen
   });
 });
 
+describe('InMemoryBusinessEventRepository — acceptor one-shot duplicates (cold-start Atomic Acceptance Fact)', () => {
+  /** An acceptor-shaped event: `evt:acc:{workId}`, source:'acceptor' (D4). */
+  function acceptorEvent(workId: string): BusinessEvent {
+    return {
+      eventId: `evt:acc:${workId}`,
+      companyId: 'acme',
+      aggregateKind: 'work',
+      aggregateId: workId,
+      eventType: 'work.accepted',
+      occurredAt: 1750000000000,
+      payload: { workId, state: 'accepted', actor: 'principal-2' },
+      source: 'acceptor',
+    };
+  }
+
+  it('append THROWS on a duplicate source:"acceptor" eventId and preserves the ORIGINAL event', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const original = acceptorEvent('work-1');
+    await repo.append(original);
+
+    await expect(repo.append({ ...original, payload: { tampered: true } })).rejects.toThrow(
+      /already recorded/i,
+    );
+    expect(await repo.listByCompany('acme')).toEqual([original]);
+  });
+
+  it('appendIfAbsent THROWS on a duplicate source:"acceptor" eventId — the at-most-once no-op does NOT apply to one-shot acceptor facts', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const original = acceptorEvent('work-1');
+    await repo.append(original);
+
+    await expect(repo.appendIfAbsent({ ...original, occurredAt: 999 })).rejects.toThrow(
+      /already recorded/i,
+    );
+    expect(await repo.listByCompany('acme')).toEqual([original]);
+  });
+
+  it('appendIfAbsent KEEPS the at-most-once no-op for NON-acceptor sources (worker/supervisor semantics preserved)', async () => {
+    const repo = new InMemoryBusinessEventRepository();
+    const original = sampleEvent('evt:hb-1', 'acme');
+    await repo.appendIfAbsent(original);
+
+    const duplicate = { ...original, occurredAt: 999, payload: { tampered: true } };
+    expect(await repo.appendIfAbsent(duplicate)).toEqual(original);
+    expect(await repo.listByCompany('acme')).toEqual([original]);
+  });
+});
+
 /** JSON-file-backed persistence for the durable fake (fs lives in the test —
  * business-domain src stays pure). */
 function jsonFilePersistence(path: string): JournalFakePersistence {

@@ -1,0 +1,32 @@
+# Phase 3 Check Gate Evidence — cold-start-discovery (final evidence correction, 2026-08-13)
+# Command: <node24-bin> pnpm check (format-check && typecheck && build && lint && test) — run EXACTLY once against the
+#          isolated harness (DATABASE_URL -> 127.0.0.1:5433, container io-phase3-iso-pg-ca93986d, targeted by identity;
+#          shared 5432 server not targeted). Exit 0. Raw full-gate transcript verbatim below; <repo> = /data/io (privacy).
+#          Lint diagnostics are biome's raw github-reporter output for the same tree (complete: all 9 warnings, one line
+#          per diagnostic, no diagnostics elided; file:line:rule identities match the default-reporter run 1:1).
+$ pnpm run format-check && pnpm run typecheck && pnpm run build && pnpm run lint && pnpm run test
+$ biome format .
+Checked 210 files in 55ms. No fixes applied.
+$ tsc -p tsconfig.json
+$ tsc -p tsconfig.build.json
+$ biome lint .
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=348,endLine=348,col=12,endColumn=47::Forbidden non-null assertion.
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=353,endLine=353,col=12,endColumn=45::Forbidden non-null assertion.
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=379,endLine=379,col=12,endColumn=47::Forbidden non-null assertion.
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=384,endLine=384,col=12,endColumn=45::Forbidden non-null assertion.
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=423,endLine=423,col=12,endColumn=47::Forbidden non-null assertion.
+::warning title=lint/style/noNonNullAssertion,file=packages/app/test/parity.test.ts,line=428,endLine=428,col=12,endColumn=45::Forbidden non-null assertion.
+::warning title=lint/correctness/noUnusedImports,file=packages/app/test/worker-reconcile.test.ts,line=19,endLine=19,col=13,endColumn=44::This import is unused.
+::warning title=lint/correctness/noUnusedFunctionParameters,file=packages/database/test/business-pg-roundtrip.integration.test.ts,line=1125,endLine=1125,col=29,endColumn=31::This parameter tx is unused.
+::warning title=lint/correctness/noUnusedFunctionParameters,file=packages/database/test/business-pg-roundtrip.integration.test.ts,line=1126,endLine=1126,col=29,endColumn=31::This parameter tx is unused.
+Checked 210 files in 109ms. No fixes applied.
+Found 9 warnings.
+$ vitest run
+
+ RUN  v4.1.10 <repo>
+
+
+ Test Files  99 passed | 3 skipped (102)
+      Tests  1378 passed | 6 skipped (1384)
+   Start at  00:19:42
+   Duration  29.35s (transform 782ms, setup 0ms, import 4.84s, tests 14.70s, environment 9ms)

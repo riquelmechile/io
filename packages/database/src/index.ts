@@ -8,6 +8,7 @@
  */
 
 export { PgAuditRepository } from './audit-adapter.js';
+export { acceptWorkAtomically } from './accept-work-flow.js';
 export { PgBusinessEventRepository } from './business-event-adapter.js';
 export { PgBusinessReceiptRepository } from './business-receipt-adapter.js';
 export { PgCompanyRepository } from './company-adapter.js';
