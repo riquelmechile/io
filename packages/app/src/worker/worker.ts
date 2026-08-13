@@ -238,6 +238,9 @@ export async function runClaimedWork(
         attemptId: intent.attemptId,
         fencingToken: work.fencingToken,
         effect,
+        // Failure reconciliation never emits outcomes — carry the selection
+        // (unused here) so the FinalizeInput contract stays uniform.
+        activatedSkills: intent.activatedSkills,
       },
     );
     return { ok: false, reason: reconciled.reason, current: reconciled.current ?? work };
@@ -272,6 +275,10 @@ export async function runClaimedWork(
         // the close back (zombie-writer protection).
         fencingToken: work.fencingToken,
         effect,
+        // The intent-time skill selection, threaded unchanged into T1: the
+        // close appends ONE composite work.skill-outcome from THIS snapshot —
+        // finalize never re-derives it (skill: Captured version is attributed).
+        activatedSkills: intent.activatedSkills,
       },
     );
     if (finalized.ok && 'replayed' in finalized) {

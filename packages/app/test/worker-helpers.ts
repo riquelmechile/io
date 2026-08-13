@@ -179,6 +179,7 @@ export class RecordingJournal implements IdempotencyJournalPort {
 
   async complete(attemptId: string, resultJson: unknown): Promise<void> {
     this.log.push(`complete:${attemptId}`);
+    this.trace?.push(`journal:complete:${attemptId}`);
     return this.inner.complete(attemptId, resultJson);
   }
 
@@ -219,9 +220,12 @@ export class RecordingEvents implements BusinessEventRepository {
   readonly listCalls: string[] = [];
   private readonly inner = new InMemoryBusinessEventRepository();
 
+  constructor(private readonly trace?: string[]) {}
+
   async append(event: BusinessEvent): Promise<Readonly<BusinessEvent>> {
     const saved = await this.inner.append(event);
     this.appends.push(saved);
+    this.trace?.push(`events:append:${event.eventType}`);
     return saved;
   }
 
@@ -282,7 +286,7 @@ export function harness(overrides: Partial<WorkerDeps> = {}): WorkerHarness {
     skills: new RecordingSkills(),
     receipts: new RecordingReceipts(),
     journal: new RecordingJournal(trace),
-    events: new RecordingEvents(),
+    events: new RecordingEvents(trace),
     sandbox: new RecordingSandbox(trace),
     llm: cannedLlm(),
     principals,

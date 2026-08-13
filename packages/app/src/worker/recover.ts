@@ -170,6 +170,10 @@ export async function recoverInFlightWork(
       attemptId: input.attemptId,
       fencingToken,
       effect,
+      // Recovery has NO intent selection (it resumes from the Work row alone)
+      // and never emits outcomes — the empty selection satisfies the shared
+      // FinalizeInput contract; reconcile ignores it.
+      activatedSkills: [],
     },
   );
 }

@@ -229,6 +229,79 @@ describe('prepareIntent (B4)', () => {
   });
 });
 
+describe('prepareIntent — activatedSkills capture (skill-outcome Unit 3)', () => {
+  /** Cohort-matching active skill (scope = the low-risk-documents v2 cohort). */
+  function matchingSkill(overrides: Partial<Skill> = {}): Skill {
+    return {
+      skillId: 'invoice-extraction',
+      companyId: 'acme',
+      name: 'Invoice extraction',
+      version: 1,
+      body: 'Extract vendor and amount fields from invoice documents.',
+      scope: { process: 'low-risk-documents', schemaVersion: 2 },
+      state: 'active',
+      createdAt: 1750000000000,
+      updatedAt: 1750000000000,
+      ...overrides,
+    };
+  }
+
+  it('returns the exact intent-time selection — ordered segment-7 refs when a skill matches, [] when none selected', async () => {
+    const llm = cannedLlm();
+    const delegation = activeDelegation();
+    const work = acceptedWork();
+
+    const intent = await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm,
+      skills: [matchingSkill()],
+      model: 'flash',
+    });
+    expect(intent.ok).toBe(true);
+    if (!intent.ok) return;
+    expect(intent.activatedSkills).toEqual([{ skillId: 'invoice-extraction', version: 1 }]);
+
+    // Empty selection is explicit: no skills in the raw store → [].
+    const none = await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work,
+      delegation,
+      llm,
+      model: 'flash',
+    });
+    expect(none.ok).toBe(true);
+    if (none.ok) expect(none.activatedSkills).toEqual([]);
+  });
+
+  it('version drift after intent leaves the captured selection unchanged — immutable snapshot (skill: Captured version is attributed)', async () => {
+    const llm = cannedLlm();
+    const skills = [matchingSkill()];
+
+    const intent = await prepareIntent({
+      companyId: 'acme',
+      idempotencyKey: 'k',
+      work: acceptedWork(),
+      delegation: activeDelegation(),
+      llm,
+      skills,
+      model: 'flash',
+    });
+
+    expect(intent.ok).toBe(true);
+    if (!intent.ok) return;
+    const captured = intent.activatedSkills;
+    expect(captured).toEqual([{ skillId: 'invoice-extraction', version: 1 }]);
+    // The store publishes v2 AFTER intent — the captured refs stay frozen at v1
+    // (finalization consumes THIS snapshot, never a re-read of the store).
+    skills[0] = matchingSkill({ version: 2 });
+    expect(captured).toEqual([{ skillId: 'invoice-extraction', version: 1 }]);
+  });
+});
+
 describe('cycle intent (WC intent-before-effect)', () => {
   it('work-bearing cycle bypasses the gate: the selected pro tier reaches the LLM request (WC Work-Bearing S1/S2)', async () => {
     const h = harness();

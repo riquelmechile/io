@@ -1,4 +1,5 @@
 import { evidenceId } from '@io/business-domain/src/evidence-id.js';
+import { buildSkillOutcomeEvent, type ActivatedSkillRef } from '@io/business-domain/src/index.js';
 import type { IdempotencyJournalPort } from '@io/business-domain/src/ports/idempotency.js';
 import type {
   BusinessEventRepository,
@@ -120,6 +121,11 @@ export interface FinalizeInput {
   readonly fencingToken: number;
   /** The applied effect + undo handle (undo log = applied SoT, §9.8). */
   readonly effect: EffectRecord;
+  /** The intent-captured skill selection (skill delta): the EXACT `{skillId,
+   * version}` refs `compileContext` surfaced at intent — threaded unchanged and
+   * NEVER re-derived here (finalize reads no Skills and no compiler). An empty
+   * selection still records one composite fact at a verified close. */
+  readonly activatedSkills: readonly ActivatedSkillRef[];
   /** Optional receipt policy/artifact identities; default to the worker
    * policy/artifact constants. */
   readonly policyHash?: string;
@@ -319,6 +325,20 @@ export async function finalizeInFlightWorkAtomically(
       // LLM output. On a CAS loss the throw above aborts the whole
       // transaction, so NO orphan event survives the rollback (R5).
       await events.append(buildWorkCompletedEvent(deps, input, completed, receipt));
+      // ONE deterministic composite `work.skill-outcome` in the SAME transaction
+      // (business-event Atomic Worker Terminal Emission): built ONLY from the
+      // threaded intent-time selection (never re-derived) + terminal-close
+      // facts. A CAS loss before this line — or a journal failure after it —
+      // rolls BOTH events back with the close (no orphan fact, R5).
+      await events.append(
+        buildSkillOutcomeEvent({
+          companyId: input.companyId,
+          workId: completed.workId,
+          attemptId: input.attemptId,
+          occurredAt: deps.now?.() ?? Date.now(),
+          activatedSkills: input.activatedSkills,
+        }),
+      );
       await journal.complete(input.attemptId, completed);
       return { ok: true, work: completed, receipt } as const;
     });

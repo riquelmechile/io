@@ -147,6 +147,9 @@ function reconcileInput(
     // line 118 is version-only here, so the epoch token 0 is the honest value).
     fencingToken: 0,
     effect,
+    // Skill-outcome contract: reconcile never emits outcomes; carry the
+    // empty selection to satisfy the shared FinalizeInput type.
+    activatedSkills: [],
     ...overrides,
   };
 }

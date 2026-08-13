@@ -919,6 +919,9 @@ describe('B11 parity 7 — journal no-effect reconcile: InMemory fake ≡ Pg ada
       attemptId: ATTEMPT,
       fencingToken,
       effect: notApplied,
+      // Skill-outcome contract: reconcile never emits outcomes; carry the
+      // empty selection to satisfy the shared FinalizeInput type.
+      activatedSkills: [],
     };
   }
 
