@@ -248,6 +248,112 @@ describe.skipIf(!reachable)('integration: real PG business_event round-trip (R4,
     });
   });
 
+  describe('work.skill-outcome contract (Unit 4 — v1 payload, duplicate evt:sk: rejection, historical no-backfill)', () => {
+    /** A skill-outcome event shaped exactly like `buildSkillOutcomeEvent`
+     * output: `evt:sk:att:{company}:{key}` id, composite v1 payload. */
+    function sampleSkillOutcome(attemptId: string, companyId = 'acme'): BusinessEvent {
+      return {
+        eventId: `evt:sk:att:${companyId}:${attemptId}`,
+        companyId,
+        aggregateKind: 'work',
+        aggregateId: 'work-1',
+        eventType: 'work.skill-outcome',
+        occurredAt: 1750000000000,
+        payload: {
+          version: 1,
+          activatedSkills: [
+            { skillId: 'invoice-extraction', version: 1 },
+            { skillId: 'ledger-reconcile', version: 2 },
+          ],
+        },
+        source: 'worker',
+      };
+    }
+
+    it('round-trips the v1 skill-outcome payload byte-identically through the guard (evt:sk: namespace)', async () => {
+      const event = sampleSkillOutcome('attempt-1');
+      const appended = await eventsRepo.append(event);
+      expect(appended).toEqual(event);
+
+      const listed = await eventsRepo.listByCompany('acme');
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).toEqual(event);
+      expect(listed[0]?.eventId).toBe('evt:sk:att:acme:attempt-1');
+      expect(listed[0]?.eventType).toBe('work.skill-outcome');
+      expect(listed[0]?.payload).toEqual({
+        version: 1,
+        activatedSkills: [
+          { skillId: 'invoice-extraction', version: 1 },
+          { skillId: 'ledger-reconcile', version: 2 },
+        ],
+      });
+      expect(listed[0]?.source).toBe('worker');
+      expect(listed[0]?.occurredAt).toBe(1750000000000);
+    });
+
+    it('rejects a duplicate evt:sk: event_id via uq_business_event_event_id and preserves the ORIGINAL v1 payload', async () => {
+      const original = sampleSkillOutcome('attempt-1');
+      await eventsRepo.append(original);
+
+      // Same evt:sk: id, DIFFERENT payload: the 006 UNIQUE index must reject —
+      // no upsert, no overwrite (spec "Duplicate throwing append is rejected").
+      const duplicate: BusinessEvent = {
+        ...original,
+        payload: { version: 1, activatedSkills: [{ skillId: 'tampered', version: 9 }] },
+      };
+      await expect(eventsRepo.append(duplicate)).rejects.toThrow(/duplicate key|unique/i);
+
+      const stored = await eventsRepo.listByCompany('acme');
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).toEqual(original);
+      expect(stored[0]?.payload).toEqual(original.payload);
+    });
+
+    it('historical pre-change rows are untouched: a completed replay does not append and no skill-outcome is synthesized (no backfill)', async () => {
+      // GIVEN: pre-change persisted state — a historical `work.completed`
+      // (eventId `evt:att:{company}:{key}`, NO skill-outcome sibling — the
+      // pre-change contract). The skill delta MUST NOT synthesize an outcome
+      // for that Work (skill "Historical Work remains untouched").
+      const historical: BusinessEvent = {
+        eventId: 'evt:att:acme:attempt-historical',
+        companyId: 'acme',
+        aggregateKind: 'work',
+        aggregateId: 'work-historical',
+        eventType: 'work.completed',
+        occurredAt: 1700000000000,
+        payload: {
+          workId: 'work-historical',
+          state: 'completed',
+          receiptId: 'rcpt:att:acme:attempt-historical',
+          terminalState: 'verified',
+          evidenceId: 'evid:acme:attempt-historical',
+          attemptId: 'att:acme:attempt-historical',
+          actor: 'principal-2',
+        },
+        source: 'worker',
+      };
+      await eventsRepo.append(historical);
+
+      // Reading the stream returns EXACTLY the stored historical row — the
+      // adapter never synthesizes a skill-outcome for it (no backfill).
+      const listed = await eventsRepo.listByCompany('acme');
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).toEqual(historical);
+      expect(listed[0]?.eventType).toBe('work.completed');
+      expect(listed.map((entry) => entry.eventType)).not.toContain('work.skill-outcome');
+
+      // A replay of the same attempt (rebuilt identical event) via
+      // appendIfAbsent lands on the SAME event_id → ON CONFLICT DO NOTHING →
+      // exactly ONE original row remains (spec "Completed replay does not
+      // append"; no second worker event).
+      expect(await eventsRepo.appendIfAbsent(historical)).toEqual(historical);
+      const afterReplay = await eventsRepo.listByCompany('acme');
+      expect(afterReplay).toHaveLength(1);
+      expect(afterReplay[0]).toEqual(historical);
+      expect(afterReplay[0]?.occurredAt).toBe(1700000000000);
+    });
+  });
+
   describe('listCompanyIds — read-only distinct company discovery (supervisor-timer)', () => {
     it('returns each company exactly once across interleaved events (DISTINCT)', async () => {
       await eventsRepo.append(sampleEvent('attempt-a1', 'company-a'));

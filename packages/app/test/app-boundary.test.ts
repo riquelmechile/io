@@ -7,12 +7,14 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JournalFakePersistence } from '@io/business-domain/src/ports/fakes.js';
 import { DurableJournalFake } from '@io/business-domain/src/ports/fakes.js';
 import type { JournalEntry } from '@io/business-domain/src/ports/idempotency.js';
+import { MATERIAL_EVENT_TYPES } from '@io/business-domain/src/heartbeat.js';
 import type { DbConnection } from '@io/database/src/connection.js';
 import { InMemoryDbConnection } from '@io/database/test/connection-fake.js';
 import { describe, expect, it } from 'vitest';
@@ -222,5 +224,60 @@ describe('@io/app assembled wiring (SP composition-root, app level)', () => {
       'utf8',
     );
     expect(extractImportSpecifiers(owner)).toContain('openai');
+  });
+
+  it('business-domain declares ZERO runtime dependencies and ZERO @io/* imports package-wide (Pure Deterministic BusinessEvent boundary)', () => {
+    const manifest: { dependencies?: Record<string, string> } = JSON.parse(
+      readFileSync(join(repoRoot, 'packages', 'business-domain', 'package.json'), 'utf8'),
+    );
+    // No `dependencies` key at all — a runtime-dependency-free pure package.
+    expect(manifest.dependencies).toBeUndefined();
+
+    // Package-wide source scan: every business-domain import specifier is
+    // relative (`./`, `../`) or a Node builtin (`node:*`) — never `@io/*` and
+    // never an external package.
+    const offenders: string[] = [];
+    for (const file of listTsFiles(join(repoRoot, 'packages', 'business-domain', 'src'))) {
+      const rel = relative(repoRoot, file);
+      for (const spec of extractImportSpecifiers(readFileSync(file, 'utf8'))) {
+        if (
+          spec.startsWith('@io/') ||
+          (!spec.startsWith('./') && !spec.startsWith('../') && !spec.startsWith('node:'))
+        ) {
+          offenders.push(`${rel}: ${spec}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('the skill-outcome builder has zero @io/* imports — its only import is the local types module (worker-owned, pure)', () => {
+    const builder = readFileSync(
+      join(repoRoot, 'packages', 'business-domain', 'src', 'skill-outcome-event.ts'),
+      'utf8',
+    );
+    const specs = extractImportSpecifiers(builder);
+    expect(specs).toEqual(['./types.js']);
+    expect(specs.some((spec) => spec.startsWith('@io/'))).toBe(false);
+  });
+
+  it('work.skill-outcome is NON-MATERIAL: it stays OUT of MATERIAL_EVENT_TYPES and the declared set is unchanged', () => {
+    // The declared material set is exactly the pre-change contract — the
+    // skill-outcome fact never renews heartbeat novelty (spec: Skill-outcome
+    // identity deterministic AND non-material).
+    expect(MATERIAL_EVENT_TYPES).toEqual(['work.accepted', 'work.completed']);
+    expect(MATERIAL_EVENT_TYPES).not.toContain('work.skill-outcome');
+  });
+
+  it('heartbeat bytes are UNCHANGED: business-domain/src/heartbeat.ts is byte-identical to its committed baseline (non-materiality)', () => {
+    const heartbeatSource = readFileSync(
+      join(repoRoot, 'packages', 'business-domain', 'src', 'heartbeat.ts'),
+      'utf8',
+    );
+    const hash = createHash('sha256').update(heartbeatSource).digest('hex');
+    // The committed baseline hash — any byte drift in the heartbeat module
+    // (the materiality gate, event-type filter, escalation constants) fails
+    // this boundary proof.
+    expect(hash).toBe('04fbb0003ab7d0820424bb0f46e7d93609d1cf6df436d143c8509c3af73a563d');
   });
 });
