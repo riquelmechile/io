@@ -1,4 +1,4 @@
-import type { ModelTier } from '@io/business-domain/src/index.js';
+import type { ActivatedSkillRef, ModelTier } from '@io/business-domain/src/index.js';
 import { evidenceId } from '@io/business-domain/src/evidence-id.js';
 import type { Delegation, Skill, Work } from '@io/business-domain/src/types.js';
 import { parseLlmPlan } from '@io/business-domain/src/validation/llm-plan.js';
@@ -57,7 +57,18 @@ export interface IntentInput {
 }
 
 export type IntentResult =
-  | { ok: true; attemptId: string; evidenceId: string; plan: LlmPlanShape; action: SandboxAction }
+  | {
+      ok: true;
+      attemptId: string;
+      evidenceId: string;
+      plan: LlmPlanShape;
+      action: SandboxAction;
+      /** The intent-captured skill selection (skill-outcome design): the EXACT
+       * `{ skillId, version }` refs `compileContext` surfaced from its single
+       * segment-7 selection. Immutable snapshot — threaded to finalization and
+       * NEVER re-derived (a version bump after intent cannot change it). */
+      activatedSkills: readonly ActivatedSkillRef[];
+    }
   | { ok: false; reason: 'invalid-plan'; detail: string };
 
 export async function prepareIntent(input: IntentInput): Promise<IntentResult> {
@@ -102,6 +113,9 @@ export async function prepareIntent(input: IntentInput): Promise<IntentResult> {
     evidenceId: evidenceId(input.companyId, input.idempotencyKey),
     plan,
     action,
+    // The compiler's single-pass selection, projected verbatim (never
+    // re-selected): the LLM request still carries ONLY `{ messages, user }`.
+    activatedSkills: compiled.activatedSkills,
   };
 }
 

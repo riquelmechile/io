@@ -31,7 +31,7 @@ const PROTECTED_SOURCES: Record<string, string> = {
   'supervisor/supervisor.ts': '9287e0add2c23ce91090cdef9e18f7f4fbb02afc8ae1817a3e20a5c0ee007b62',
   'supervisor/tick.ts': 'e8f9c81a7413a47196e74ff2ad34a67bff99e55fcc9eceaa386a1db9affa81ad',
   'supervisor/types.ts': '887648e0bb58b8e2345ac0da4b787a18f48486a2ec91f33859a3147c3bc85096',
-  'worker/worker.ts': '8fc1bc485048eff15a75eba477ee80e1752dd23726d2088dd7fadf78a615c384',
+  'worker/worker.ts': 'dff6c7097e57d672ad41bda188b958953b7627b8ca31459fe2a16fc6fdede61e',
   'heartbeat/cycle.ts': '9808756b51a37907bfc0b070fbf364c15f028e0ff3e0777abf94af1c90a50e75',
   'heartbeat/evaluate.ts': '56984e32f758e1a17b02937b20658cb91452a016d33331f5b907d806540efbe0',
   'dispatch/dispatch.ts': '7e48fbd734fbd03db92c239354a46e9dde7a51166928800d7677d4efea76a091',
@@ -60,6 +60,18 @@ const RUN_CLAIMED_WORK_COMMENT =
   '  // reconcile → effect → verify → finalize, extracted to runClaimedWork so\n' +
   '  // recovery dispatch can resume designated in_progress Work through the SAME\n' +
   '  // post-claim body without re-claiming.\n';
+
+/**
+ * Strip the Unit-3 skill-outcome threading (the ONLY post-PR4 worker.ts
+ * drift): each block is comment line(s) + the field line at the 8-space
+ * body indent. Restores pre-Unit-3 bytes for the PR2/PR4 normalization proofs.
+ */
+function stripSkillOutcomeThreading(source: string): string {
+  return source.replace(
+    /\n {8}(?:\/\/ [^\n]+\n {8})+activatedSkills: intent\.activatedSkills,\n/g,
+    '\n',
+  );
+}
 
 /** The identity-const preamble the extraction adds at the top of the
  * `runClaimedWork` body (the ONLY edit to the moved steps 2–7 — the body text
@@ -221,7 +233,7 @@ describe('PR2 model-threading identity (WD Wiring S2; ST Seam S2)', () => {
     // #1). The result must be byte-identical to the PR1 single-line-signature
     // baseline.
     const inlined = inlineRunClaimedWork(current);
-    const normalized = inlined
+    const normalized = stripSkillOutcomeThreading(inlined)
       // Remediation: the execute call site stamps the attempt correlation —
       // stripping the key restores the pre-remediation call line.
       .replace(
@@ -298,9 +310,11 @@ describe('PR4 supervisor-recovery identity (work-dispatch "Designated Recovery D
     // arg on the execute call site, verification CRITICAL #1) is the ONLY
     // post-extraction drift — stripping it restores the slice-3 bytes.
     const current = readFileSync(resolve(SRC_ROOT, 'worker/worker.ts'), 'utf8');
-    const stripped = inlineRunClaimedWork(current).replace(
-      'const effect = await executeEffect(deps.sandbox, intent.action, idempotencyKey);',
-      'const effect = await executeEffect(deps.sandbox, intent.action);',
+    const stripped = stripSkillOutcomeThreading(
+      inlineRunClaimedWork(current).replace(
+        'const effect = await executeEffect(deps.sandbox, intent.action, idempotencyKey);',
+        'const effect = await executeEffect(deps.sandbox, intent.action);',
+      ),
     );
     expect(sha256Of(stripped)).toBe(SLICE3_WORKER_BASELINE);
   });
