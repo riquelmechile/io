@@ -119,3 +119,26 @@ Strict TDD; stacked-to-main. Status: **4/25** (1.5 PARTIAL/unchecked).
 | Line count | **395 additions / 5 deletions = 400 total** |
 
 ## Gate findings → fixes (all code + tests): 1. Routing envelope: well-formed `eventType`/`aggregateKind`/`source` or fail closed; well-formed wrong routing = decoy. 2. Exact closed 8-field BusinessEvent envelope: plain proto + `badExtra` rejects injected keys. 3. Full-fact identity: JSON.stringify dropped `undefined` values so `{skillId,version}` collapsed as replay with `{skillId,version,extra:undefined}` — replaced by structural serialization (absent key ≠ present undefined ≠ array hole), order-independent. 4. Compact tables above; 5. budget ≤400 via consolidation; 6. 1.5 unchecked/PARTIAL.
+
+
+# Slice 1E-a (reset) — descriptor-safe unknown-data foundation (work unit `safe-data-foundation`, base 9eb2966) — Status **4/25**; 1.5/1.6 unchecked
+> **Split/reset history (NO delivery claimed):** the earlier oversized Slice 1E attempt (416 add/2 del = 418 total; claimed `parseExplicitPromotionEvidence` with TWO in-attempt gate corrections) was split/reset by the maintainer because it exceeded the 400-line budget. It is superseded and NOT delivered. This slice delivers ONLY the internal descriptor-safe unknown-data foundation; evidence parsers (`parseExplicitPromotionEvidence`/`parseAuthorityEvidence`) are NOT delivered and remain pending.
+### TDD Cycle Evidence
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-------|------------|-----|-------|-------------|----------|
+| 1E-a foundation | Unit | ✅ 16/16 focused (1C/1D at HEAD); full 1450/6 | ✅ **RED 1 file failed / no tests** — module `validation/safe-data.js` missing (import failure) | ✅ **18/18** (focused) | ✅ plain vs null-proto; non-objects/arrays; injected/inherited(custom proto)/hidden/symbol/accessor-no-execute; dense/empty; holes/extra-key/symbol/accessor-index/custom-proto; revoked record+array proxies; fresh output ×2 + no-freeze | ✅ shared `record`/`array` helpers, merged adversarial loops; `pnpm check` GREEN |
+### Work Unit Evidence
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `PATH=/data/node24/bin:$PATH pnpm exec vitest run packages/business-domain/test/safe-data.test.ts` — RED: **1 file failed, no tests** (module not found) → GREEN **18/18** |
+| Runtime harness | N/A — pure descriptor guards; no runtime boundary (no app seam, no PG, no evaluator) |
+| Rollback | drop `src/validation/safe-data.ts` + `test/safe-data.test.ts` + 1.5 note edit + this section — internal module, no consumers, NOT in index exports; 1A–1D untouched |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate | `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1468 passed / 6 skipped** (baseline 1450/6; +18 focused) |
+| Line count | **230 additions / 1 deletion = 231 total** (vs base 9eb2966: safe-data.ts 72, safe-data.test.ts 134, apply-progress 23, tasks.md 1/−1; target ≤240) |
+
+### Notes
+1. `readClosedDataRecord`/`readDenseDataArray` are INTERNAL (`src/validation/safe-data.ts`); intentionally NOT exported from `packages/business-domain/src/index.ts`.
+2. Descriptor-safe contract: plain `Object.prototype`/null records only; own enumerable DATA descriptors only; symbols/hidden/accessors/custom prototypes/injected keys rejected; revoked proxies and any reflection failure return the stable `… is not a safe plain data structure` failure, never throw; fresh containers reconstructed, input never mutated/frozen.
+3. Inherited mandatory fields are rejected because a custom prototype is itself rejected (`… must be a plain object`) — inherited values can never satisfy the closed-record contract.
+4. Superseded oversized Slice 1E attempt (418 lines, claimed parser delivery) preserved as history above and NOT counted as delivered; no `parseExplicitPromotionEvidence`/`ExplicitObservation`/`ExplicitPromotionEvidence` exports or parser tests remain in the worktree (verified: `git diff` vs HEAD touches only the two new files + tasks/apply-progress docs).
