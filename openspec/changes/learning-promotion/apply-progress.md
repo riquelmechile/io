@@ -99,3 +99,23 @@ Strict TDD; stacked-to-main. Status: **4/25** (1.4 complete; 1.5 PARTIAL — che
 - Rollback: drop `src/promotion-evaluation.ts` + `test/promotion-evaluation.test.ts`, remove index.ts/lc export lines, revert 1.4 `[x]` + 1.5 PARTIAL note + this section — no consumers; prior slices 1A/1B untouched.
 - Warnings: **0 introduced** by changed files; **9 pre-existing** remain (parity.test.ts×6, business-pg-roundtrip×2, worker-reconcile×1) — total 9, never claim zero total warnings.
 - Full gate: `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1440 passed / 6 skipped**; line count **397 additions / 3 deletions = 400 total**.
+
+---
+
+# Slice 1D (corrected) — 1.5 `PromotionEvidence` + `aggregateSkillOutcomes` (unit `promotion-outcome-evidence`, token sha256:5692aa1b…, base a9afc73) — gate FAILED → corrected, same attempt
+Strict TDD; stacked-to-main. Status: **4/25** (1.5 PARTIAL/unchecked).
+### TDD Cycle Evidence
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-------|------------|-----|-------|-------------|----------|
+| 1.5 aggregate | Unit | ✅ 6/6 | ✅ original **15F/6P (21)**; gate **2F/15P (17)** (routing-envelope/8-field/full-fact first); final structural fix **1F/15P (16)** (`{skillId,version}` vs `{skillId,version,extra:undefined}` first) | ✅ **16/16** | ✅ 14 groups (gold, boundaries/empty, permutation, replay/conflict incl. divergent decoy/candidate + malformed-undefined, foreign-before-validation, malformed, routing-envelope, 8-field envelope, decoys, composite, sibling, no-evidence, immutability, invalid binding) | ✅ inlined refs loop; structural `factOf`; merged helpers; `pnpm check` GREEN |
+### Work Unit Evidence
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `PATH=/data/node24/bin:$PATH pnpm exec vitest run packages/business-domain/test/promotion-evaluation.test.ts` — correction RED 2F/15P → GREEN 16/16; final fix RED 1F/15P → GREEN **16/16** |
+| Runtime harness | N/A — pure domain aggregator; no runtime boundary (no app seam, no PG, no evaluator) |
+| Rollback | revert aggregate block (`PromotionEvidence`/`aggregateSkillOutcomes`/`structural`/envelope+identity) + index exports + test block + 1.5 note + this section — no consumers; 1A–1C untouched |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate | `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1450 passed / 6 skipped** (baseline 1440) |
+| Line count | **395 additions / 5 deletions = 400 total** |
+
+## Gate findings → fixes (all code + tests): 1. Routing envelope: well-formed `eventType`/`aggregateKind`/`source` or fail closed; well-formed wrong routing = decoy. 2. Exact closed 8-field BusinessEvent envelope: plain proto + `badExtra` rejects injected keys. 3. Full-fact identity: JSON.stringify dropped `undefined` values so `{skillId,version}` collapsed as replay with `{skillId,version,extra:undefined}` — replaced by structural serialization (absent key ≠ present undefined ≠ array hole), order-independent. 4. Compact tables above; 5. budget ≤400 via consolidation; 6. 1.5 unchecked/PARTIAL.

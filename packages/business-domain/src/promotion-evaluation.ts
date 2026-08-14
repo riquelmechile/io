@@ -1,4 +1,8 @@
-import { hasLoneSurrogate, type LearningSubject } from './learning-candidate.js';
+import {
+  hasLoneSurrogate,
+  type LearningSubject,
+  type SkillOutcomeEvidence,
+} from './learning-candidate.js';
 import { VALID_RISK_CLASSES } from './heartbeat.js';
 import type { SkillScope } from './types.js';
 import type { ParseResult } from './validation/command.js';
@@ -210,4 +214,156 @@ export function resolvePromotionPolicy(
       ? policy.effectiveFrom
       : Math.max(policy.effectiveFrom, input.at - policy.observationWindowMs);
   return { kind: 'resolved', policy, windowStart, windowEnd: input.at };
+}
+
+/**
+ * Success-only aggregation result: canonical immutable projection of windowed
+ * `work.skill-outcome` facts for one tenant+subject — UNIQUE accepted events
+ * (deduped by eventId, sorted by `(occurredAt, eventId)`), no harmful
+ * inference (missing is unknown, never harmful). Shape follows the existing
+ * `SkillOutcomeEvidence` contract (evidenceId=eventId, workId=aggregateId).
+ */
+export interface PromotionEvidence {
+  readonly companyId: string;
+  readonly subject: LearningSubject;
+  readonly positiveObservations: readonly SkillOutcomeEvidence[];
+}
+
+const AGG_INPUT_KEYS = new Set(['companyId', 'subject', 'windowStart', 'windowEnd']);
+const PAYLOAD_KEYS = new Set(['version', 'activatedSkills']);
+const ACTIVATED_REF_KEYS = new Set(['skillId', 'version']);
+const EVENT_KEYS = new Set(
+  'eventId,companyId,aggregateKind,aggregateId,eventType,occurredAt,payload,source'.split(','),
+);
+
+const deepFreeze = <T>(value: T): T => {
+  if (typeof value === 'object' && value !== null) {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+  }
+  return value;
+};
+
+/** Structural serialization: distinguishes absent keys, present undefined, and array holes. */
+const structural = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${Array.from(value, (v, i) => (i in value ? structural(v) : '<hole>')).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${structural(value[k])}`).join(',')}}`;
+  }
+  return value === undefined ? 'undefined' : JSON.stringify(value);
+};
+const factOf = (raw: Record<string, unknown>): string =>
+  `${structural([raw.eventType, raw.aggregateKind, raw.aggregateId, raw.source, raw.occurredAt])}${structural(raw.payload)}`;
+
+/**
+ * Deterministic success-only aggregation of `work.skill-outcome` composite
+ * facts (task 1.5): same-tenant `work.skill-outcome`/`work`/`worker` events,
+ * v1 payload, full structural validity, exact subject match, counted once.
+ * Foreign STRING tenant skipped BEFORE local validation; same-tenant envelope
+ * must be a plain object with EXACTLY the eight BusinessEvent fields and
+ * well-formed routing strings (malformed fails closed, well-formed wrong
+ * routing is a decoy). Window `[windowStart, windowEnd)` (empty allowed).
+ * Identity = FULL structural fact (routing, aggregateId, source, occurredAt,
+ * payload; absent key ≠ undefined ≠ hole): exact replay collapses, divergent
+ * reused eventId fails deterministically, order-independent. Output sorted by
+ * `(occurredAt, eventId)`, deep-copied/frozen; inputs never mutated/frozen.
+ * No hidden defaults.
+ */
+export function aggregateSkillOutcomes(
+  events: readonly unknown[],
+  input: { companyId: string; subject: LearningSubject; windowStart: number; windowEnd: number },
+): ParseResult<PromotionEvidence> {
+  if (!Array.isArray(events)) return fail('events must be an array');
+  if (!isRecord(input)) return fail('input must be an object');
+  const badInput = badExtra(input, AGG_INPUT_KEYS, 'input');
+  if (badInput) return fail(badInput);
+  if (!okString(input.companyId))
+    return fail('input.companyId must be a non-empty, well-formed string');
+  const subject = parseSubject(input.subject, 'input.subject');
+  if (!subject.ok) return subject;
+  if (!okFinite(input.windowStart)) return fail('input.windowStart must be a finite number');
+  if (!okFinite(input.windowEnd)) return fail('input.windowEnd must be a finite number');
+  if (input.windowStart > input.windowEnd)
+    return fail('input.windowStart must not exceed input.windowEnd');
+
+  const observations: SkillOutcomeEvidence[] = [];
+  const identities = new Map<string, string>();
+  for (let i = 0; i < events.length; i += 1) {
+    const raw = events[i];
+    if (!isRecord(raw)) return fail(`events[${i}] must be an object`);
+    // Identifiable foreign string tenant: skipped BEFORE local validation.
+    if (typeof raw.companyId === 'string' && raw.companyId !== input.companyId) continue;
+    if (raw.companyId !== input.companyId)
+      return fail(`events[${i}].companyId must equal input.companyId`);
+    // Same-tenant envelope: plain object with EXACTLY the eight BusinessEvent fields.
+    if (![Object.prototype, null].includes(Object.getPrototypeOf(raw)))
+      return fail(`events[${i}] must be a plain object`);
+    const badEnvelope = badExtra(raw, EVENT_KEYS, `events[${i}]`);
+    if (badEnvelope) return fail(badEnvelope);
+    // Routing fields: well-formed strings or fail closed — well-formed wrong values are decoys.
+    if (!okString(raw.eventType) || !okString(raw.aggregateKind) || !okString(raw.source))
+      return fail(`events[${i}].eventType, aggregateKind, and source must be well-formed strings`);
+    if (!okString(raw.eventId) || !okString(raw.aggregateId))
+      return fail(`events[${i}].eventId and aggregateId must be well-formed strings`);
+    if (!okFinite(raw.occurredAt)) return fail(`events[${i}].occurredAt must be a finite number`);
+    if (!isRecord(raw.payload)) return fail(`events[${i}].payload must be an object`);
+    // Full canonical fact: routing, aggregateId, source, occurredAt, payload.
+    const fact = factOf(raw);
+    const priorFact = identities.get(raw.eventId);
+    if (priorFact !== undefined) {
+      if (priorFact !== fact)
+        return fail(`duplicate eventId "${raw.eventId}" with conflicting canonical facts`);
+      continue; // exact structural replay — collapse
+    }
+    identities.set(raw.eventId, fact);
+    // Well-formed wrong routing values are decoys.
+    if (raw.eventType !== 'work.skill-outcome') continue;
+    if (raw.aggregateKind !== 'work') continue;
+    if (raw.source !== 'worker') continue;
+    const badPayload = badExtra(raw.payload, PAYLOAD_KEYS, `events[${i}].payload`);
+    if (badPayload) return fail(badPayload);
+    if (raw.payload.version !== 1) return fail(`events[${i}].payload.version must be exactly 1`);
+    const activated = raw.payload.activatedSkills;
+    if (!Array.isArray(activated))
+      return fail(`events[${i}].payload.activatedSkills must be an array`);
+    let matchesSubject = false;
+    for (let r = 0; r < activated.length; r += 1) {
+      const ref = activated[r];
+      const refPath = `events[${i}].payload.activatedSkills[${r}]`;
+      if (!isRecord(ref)) return fail(`${refPath} must be an object`);
+      const bad = badExtra(ref, ACTIVATED_REF_KEYS, refPath);
+      if (bad) return fail(bad);
+      if (!okString(ref.skillId))
+        return fail(`${refPath}.skillId must be a non-empty, well-formed string`);
+      if (!okInt(ref.version)) return fail(`${refPath}.version must be a positive integer`);
+      if (ref.skillId === subject.value.skillId && ref.version === subject.value.skillVersion)
+        matchesSubject = true;
+    }
+    if (!matchesSubject) continue; // same-tenant decoy: no exact subject ref
+    if (raw.occurredAt < input.windowStart || raw.occurredAt >= input.windowEnd) continue;
+    observations.push({
+      evidenceId: raw.eventId,
+      eventId: raw.eventId,
+      companyId: input.companyId,
+      subject: { skillId: subject.value.skillId, skillVersion: subject.value.skillVersion },
+      occurredAt: raw.occurredAt,
+      workId: raw.aggregateId,
+    });
+  }
+
+  const positiveObservations = observations.sort(
+    (a, b) =>
+      a.occurredAt - b.occurredAt || (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0),
+  );
+  return {
+    ok: true,
+    value: deepFreeze({
+      companyId: input.companyId,
+      subject: { skillId: subject.value.skillId, skillVersion: subject.value.skillVersion },
+      positiveObservations,
+    }),
+  };
 }
