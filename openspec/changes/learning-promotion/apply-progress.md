@@ -188,3 +188,17 @@ Strict TDD; stacked-to-main. Status: **4/25** (1.5 PARTIAL/unchecked).
 ### Notes (corrective)
 1. Null-prototype record outputs preserve ALL documented reader/clone expectations: `toEqual` is prototype-agnostic, outputs stay fresh containers, mutation/freeze/isolation tests unchanged and passing.
 2. `SafeData`/`ReadonlySafeData` are module-local exports (NOT package index); the `@ts-expect-error` line is the permanent compile-time contract that no caller-selected shape may be asserted.
+
+# Slice 1E-b1-v2 (gate-corrected) — internal bound promotion-observation foundation v2 (base f316921) — Status **4/25**; 1.5/1.6 unchecked
+> Native token `sha256:8a6aacdb6b0f8aae32a832b2f70b32b064a8453c0353f53596d02b2b4107aee7` (max 400); no settle/commit/push/review. Strict TDD; hybrid; stacked-to-main. Rebuilds v1 semantics atop MERGED `cloneAndFreezeSafeData` (PR #79): successful callback values cloned+frozen by the merged helper (recursively readonly). Internal: NOT in package index; no `parseExplicitPromotionEvidence`/`parseAuthorityEvidence`.
+## TDD Cycle Evidence
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 1.6a v2 | `test/promotion-observation.test.ts` | Unit | ✅ 48/48 focused; full 1482/6 | ✅ RED: 1 file failed / no tests; gate RED: subject getter executed + revoked proxy threw `TypeError`; 3rd gate RED: malformed identities silently skipped in list | ✅ **4/4** | ✅ binding/category/foreign-before-content/throw/clone-freeze/sort/dense + descriptor-safe subject probe + `@ts-expect-error` ReadonlyDeep contract + malformed-identity tables | ✅ shared `MALFORMED_SUBJECTS`/`MALFORMED_COMPANIES`, foreignReason reuses `parseSubject`; `pnpm check` GREEN |
+## Work Unit Evidence
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `pnpm exec vitest run packages/business-domain/test/promotion-observation.test.ts` — RED → GREEN **4/4** (three rounds). Runtime harness: N/A — pure descriptor-safe domain foundation; no runtime boundary |
+| Rollback | drop `src/validation/promotion-observation.ts` + test + 1.6 note + this section — internal, no consumers, not in index |
+| Full gate | `pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1486 passed / 6 skipped**. Warnings: **0 introduced** (9 pre-existing) |
+| Notes | Internal; NOT in package index; no parser. EXACT live count vs f316921: source 182 + test 202 + tasks 1/−1 + this section 14 = **399 additions / 1 deletion = 400 total ≤ 400 hard**. Foreign-before-content: only WELL-FORMED differing identities are foreign (skip in list / fail with binding reason in single); malformed identities (empty, wrong-type, invalid Unicode, nonpositive version) fail as malformed in BOTH single and list — never silently skipped. Descriptor-safe probes (own DATA reads; getters never run; revoked nested proxies fail stable). Shared evidenceId uniqueness applies to ACCEPTED observations only; canonical `(observedAt, evidenceId)` sort; dense arrays only; fresh frozen output, input mutable/unfrozen. Value typed `ReadonlyDeep<T>` (recursively readonly — nested mutation compile-time rejected via `@ts-expect-error` contract); throwing `ObservationValueParser` callbacks return the stable failure `… could not be parsed`, never escape. |
