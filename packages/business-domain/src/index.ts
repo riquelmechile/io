@@ -13,12 +13,17 @@ export type {
   SkillOutcomeEventInput,
   SkillOutcomePayload,
 } from './skill-outcome-event.js';
-export { candidateIdFor, InvalidCandidateIdComponentError } from './learning-candidate.js';
+export {
+  candidateIdFor,
+  createLearningCandidate,
+  InvalidCandidateIdComponentError,
+} from './learning-candidate.js';
 export type {
   CreateCandidateCommand,
   LearningCandidate,
   LearningCandidateState,
   LearningSubject,
+  ParseResult,
   SkillOutcomeEvidence,
   TransitionEvidence,
 } from './learning-candidate.js';

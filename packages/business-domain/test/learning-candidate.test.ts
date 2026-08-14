@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import { candidateIdFor, InvalidCandidateIdComponentError } from '../src/index.js';
+import * as learningCandidateApi from '../src/index.js';
 import type {
   CreateCandidateCommand,
   LearningCandidate,
@@ -11,6 +12,7 @@ import type {
   SkillOutcomeEvidence,
   TransitionEvidence,
 } from '../src/index.js';
+import type { ParseResult } from '../src/validation/command.js';
 
 /**
  * RED/GREEN domain unit tests for the pure learning-candidate contracts
@@ -29,6 +31,27 @@ import type {
 const subject = (skillId = 'sdlc-review', skillVersion = 3): LearningSubject => ({
   skillId,
   skillVersion,
+});
+
+/** One validated skill-outcome evidence item (task 1.3 fixtures). */
+const evidence = (overrides: Partial<SkillOutcomeEvidence> = {}): SkillOutcomeEvidence => ({
+  evidenceId: 'ev-1',
+  eventId: 'evt:sk:att:acme:attempt-1',
+  companyId: 'acme',
+  subject: subject(),
+  occurredAt: 1750000000000,
+  workId: 'work-1',
+  ...overrides,
+});
+
+/** A valid create command (task 1.3 fixtures). */
+const command = (overrides: Partial<CreateCandidateCommand> = {}): CreateCandidateCommand => ({
+  companyId: 'acme',
+  subject: subject(),
+  scope: { process: 'sdlc-review', schemaVersion: 1 },
+  outcomes: [evidence()],
+  createdAt: 1750000000000,
+  ...overrides,
 });
 
 describe('candidateIdFor — canonical length-prefixed identity shape', () => {
@@ -192,10 +215,185 @@ describe('learning-candidate domain types (task 1.2)', () => {
 });
 
 describe('learning-candidate.ts — pure dependency surface (zero @io/*)', () => {
-  it('imports only the local types module and never any @io/* package', () => {
+  it('imports only LOCAL modules and never any @io/* package', () => {
     const source = readFileSync(new URL('../src/learning-candidate.ts', import.meta.url), 'utf8');
-    const imported = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((match) => match[1]);
-    expect(imported).toEqual(['./types.js']);
+    const imported = [...source.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(
+      (match) => match[1] ?? '',
+    );
+    expect(imported.every((path) => path.startsWith('./'))).toBe(true);
+    expect(imported).not.toContain('@io/');
     expect(source).not.toMatch(/import\s+[^;]*@io\//);
+  });
+});
+
+const deepFreeze = <T>(value: T): T => {
+  if (typeof value === 'object' && value !== null) {
+    Object.freeze(value);
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+  }
+  return value;
+};
+
+const corrupt = (patch: Record<string, unknown>): CreateCandidateCommand =>
+  ({ ...command(), ...patch }) as unknown as CreateCandidateCommand;
+
+const two = (patch: Partial<SkillOutcomeEvidence>): CreateCandidateCommand =>
+  command({ outcomes: [evidence(), evidence({ evidenceId: 'ev-2', eventId: 'evt-2', ...patch })] });
+const o = (patch: Record<string, unknown>): CreateCandidateCommand =>
+  corrupt({ outcomes: [{ ...evidence(), ...patch }] });
+
+const rejects = (cmd: CreateCandidateCommand, needle: string): void => {
+  const result = learningCandidateApi.createLearningCandidate(cmd);
+  expect(result.ok).toBe(false);
+  if (result.ok === false) expect(result.reason).toContain(needle);
+};
+
+describe('createLearningCandidate — canonical creation (task 1.3)', () => {
+  it('builds the candidate root: state candidate, revision 1, no parent, caller createdAt', () => {
+    const result = learningCandidateApi.createLearningCandidate(command());
+    expect(result).toEqual({
+      ok: true,
+      value: {
+        companyId: 'acme',
+        candidateId: candidateIdFor('acme', subject()),
+        revision: 1,
+        subject: subject(),
+        scope: { process: 'sdlc-review', schemaVersion: 1 },
+        state: 'candidate',
+        outcomeEvidence: [evidence()],
+        linkedOutcomeIds: ['evt:sk:att:acme:attempt-1'],
+        createdAt: 1750000000000,
+      },
+    });
+    expectTypeOf(result).toEqualTypeOf<ParseResult<LearningCandidate>>();
+  });
+
+  it('canonically sorts by (occurredAt, eventId) and derives unique linkedOutcomeIds', () => {
+    const result = learningCandidateApi.createLearningCandidate(
+      command({
+        outcomes: [
+          evidence({ evidenceId: 'ev-3', eventId: 'evt-3', occurredAt: 3000 }),
+          evidence({ evidenceId: 'ev-1', eventId: 'evt-1', occurredAt: 1000 }),
+          evidence({ evidenceId: 'ev-2', eventId: 'evt-2a', occurredAt: 2000 }),
+          evidence({ evidenceId: 'ev-2b', eventId: 'evt-2', occurredAt: 2000 }),
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.outcomeEvidence.map((o) => o.evidenceId)).toEqual([
+        'ev-1',
+        'ev-2b',
+        'ev-2',
+        'ev-3',
+      ]);
+      expect(result.value.linkedOutcomeIds).toEqual(['evt-1', 'evt-2', 'evt-2a', 'evt-3']);
+    }
+  });
+
+  it('deep-copies every nested object — caller input stays unfrozen/mutable, output frozen & independent', () => {
+    const input = command({
+      outcomes: [
+        evidence(),
+        evidence({ evidenceId: 'ev-2', eventId: 'evt:sk:att:acme:attempt-2' }),
+      ],
+    });
+    const result = learningCandidateApi.createLearningCandidate(input);
+    expect(result.ok).toBe(true);
+    const raw = input as unknown as {
+      companyId: string;
+      subject: { skillId: string };
+      scope: { process: string };
+      outcomes: Array<{ occurredAt: number; subject: { skillId: string } }>;
+    };
+    const firstOutcome = raw.outcomes[0];
+    if (!firstOutcome) throw new Error('test setup: outcomes[0] is required');
+    for (const obj of [input.subject, input.scope, firstOutcome, firstOutcome.subject]) {
+      expect(Object.isFrozen(obj)).toBe(false); // input unfrozen + mutable after creation
+    }
+    raw.companyId = 'evil';
+    raw.subject.skillId = 'hacked';
+    raw.scope.process = 'hacked';
+    firstOutcome.occurredAt = 999999;
+    firstOutcome.subject.skillId = 'hacked';
+
+    if (result.ok) {
+      expect(result.value.companyId).toBe('acme');
+      expect(result.value.subject).toEqual(subject());
+      expect(result.value.scope).toEqual({ process: 'sdlc-review', schemaVersion: 1 });
+      expect(result.value.outcomeEvidence.map((o) => o.evidenceId)).toEqual(['ev-1', 'ev-2']);
+      expect(result.value.outcomeEvidence[0]?.occurredAt).toBe(1750000000000);
+      expect(result.value.outcomeEvidence[0]?.subject).toEqual(subject());
+      expect(result.value.outcomeEvidence[0]).not.toBe(input.outcomes[0]);
+      for (const frozen of [
+        result.value,
+        result.value.subject,
+        result.value.scope,
+        result.value.outcomeEvidence,
+        result.value.outcomeEvidence[0]?.subject,
+        result.value.linkedOutcomeIds,
+      ]) {
+        expect(Object.isFrozen(frozen)).toBe(true);
+      }
+    }
+  });
+});
+describe('createLearningCandidate — rejects invalid input with a typed result (task 1.3)', () => {
+  it('rejects malformed, misbound, extra-key, and ill-formed input everywhere', () => {
+    const cases: Array<[CreateCandidateCommand, string]> = [
+      [null as unknown as CreateCandidateCommand, 'command must be an object'],
+      [undefined as unknown as CreateCandidateCommand, 'command must be an object'],
+      ['cmd' as unknown as CreateCandidateCommand, 'command must be an object'],
+      [42 as unknown as CreateCandidateCommand, 'command must be an object'],
+      [['acme'] as unknown as CreateCandidateCommand, 'command must be an object'],
+      [corrupt({ companyId: 42 }), 'companyId'],
+      [corrupt({ companyId: '' }), 'companyId'],
+      [corrupt({ companyId: 'ac\uD800me' }), 'companyId'],
+      [corrupt({ subject: { skillId: '', skillVersion: 3 } }), 'skillId'],
+      [corrupt({ subject: { skillId: 'sd\uD800l', skillVersion: 3 } }), 'skillId'],
+      [corrupt({ subject: { skillId: 'x', skillVersion: 0 } }), 'skillVersion'],
+      [corrupt({ subject: { skillId: 'x', skillVersion: 1.5 } }), 'skillVersion'],
+      [corrupt({ scope: undefined }), 'scope'],
+      [corrupt({ scope: { process: '', schemaVersion: 1 } }), 'process'],
+      [corrupt({ scope: { process: 'sd\uD800l', schemaVersion: 1 } }), 'process'],
+      [corrupt({ scope: { process: 'x', schemaVersion: 0 } }), 'schemaVersion'],
+      [corrupt({ outcomes: [] }), 'outcomes'],
+      [corrupt({ createdAt: NaN }), 'createdAt'],
+      [o({ occurredAt: NaN }), 'occurredAt'],
+      [o({ evidenceId: '' }), 'evidenceId'],
+      [o({ evidenceId: 'ev\uD800' }), 'evidenceId'],
+      [o({ eventId: 'ev\uD800' }), 'eventId'],
+      [o({ workId: 'wo\uD800' }), 'workId'],
+      [o({ subject: { skillId: 'sd\uD800l', skillVersion: 3 } }), 'skillId'],
+      [corrupt({ subject: { skillId: 'x', skillVersion: 1, extra: 1 } }), 'injected'],
+      [corrupt({ scope: { process: 'x', schemaVersion: 1, extra: 1 } }), 'injected'],
+      [o({ extra: 1 }), 'injected'],
+      [o({ subject: { skillId: 'x', skillVersion: 1, extra: 1 } }), 'injected'],
+      [two({ companyId: 'other' }), 'companyId'],
+      [two({ subject: { skillId: 'other', skillVersion: 3 } }), 'subject'],
+      [two({ subject: { skillId: 'sdlc-review', skillVersion: 9 } }), 'subject'],
+      [command({ outcomes: [evidence(), evidence({ eventId: 'evt-2' })] }), 'evidenceId'],
+      [command({ outcomes: [evidence(), evidence({ evidenceId: 'ev-2' })] }), 'eventId'],
+      [corrupt({ candidateId: 'x' }), 'candidateId'],
+      [corrupt({ state: 'x' }), 'state'],
+      [corrupt({ revision: 1 }), 'revision'],
+      [corrupt({ supersedesRevision: 1 }), 'supersedesRevision'],
+      [corrupt({ transition: {} }), 'transition'],
+      [corrupt({ parent: 'x' }), 'parent'],
+      [corrupt({ parentRevision: 1 }), 'parentRevision'],
+      [corrupt({ supersedes: 'x' }), 'supersedes'],
+      [corrupt({ linkedOutcomeIds: [] }), 'linkedOutcomeIds'],
+      [corrupt({ outcomeEvidence: [] }), 'outcomeEvidence'],
+    ];
+    for (const [cmd, needle] of cases) rejects(cmd, needle);
+  });
+
+  it('handles deeply frozen commands without mutating them (valid accepted, invalid rejected)', () => {
+    expect(learningCandidateApi.createLearningCandidate(deepFreeze(command())).ok).toBe(true);
+    const frozenInvalid = deepFreeze(
+      command({ outcomes: [evidence(), evidence({ eventId: 'evt-2' })] }),
+    );
+    expect(() => learningCandidateApi.createLearningCandidate(frozenInvalid)).not.toThrow();
+    rejects(frozenInvalid, 'evidenceId');
   });
 });
