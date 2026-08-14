@@ -91,3 +91,11 @@ Runtime token: `sha256:00b2ab5a…`; clean worktree from `50744e3`; diff = chang
 ## Line count (Slice 1B corrected + final warning pass, vs clean 50744e3)
 
 Source 147 + test 201/3 + index 6/1 + tasks 1/1 + this section 37/1 = **392 additions / 6 deletions = 398 total**, within the 400-line budget. Covers ONLY task 1.3 (pure domain); 1.4–1.8 remain the next stacked slice.
+# Slice 1C — 1.4 RED + 1.5 policy-resolution (unit `promotion-policy-resolution`, token 1681819584…, base 5de9a15) — prior evidence preserved
+Strict TDD; stacked-to-main. Status: **4/25** (1.4 complete; 1.5 PARTIAL — checkbox unchecked). No commit/push — parent gate decides next. Budget: NET additions+deletions = **397/3 = 400 ≤ 400**.
+- Focused cmd (`PATH=/data/node24/bin:$PATH pnpm exec vitest run packages/business-domain/test/promotion-evaluation.test.ts`): original RED **11 failed / 0 passed** (`resolvePromotionPolicy is not a function`) → GREEN **7/7** (full gate 1441 passed / 6 skipped); corrective (independent gate FAILED) RED **3 failed / 10 passed** — rate rules rejected; bounds unenforced; foreign malformed identity poisoned → GREEN **6/6** (full gate 1440 passed / 6 skipped).
+- REFACTOR: ✅ tests green after every step; consolidated to budget: loop-based explicit reconstruction, table-driven its, explicit helpers kept (generic parsePair/parseIdentity merges reverted — biome net losses).
+- Runtime harness: N/A — pure domain resolver `resolvePromotionPolicy`; no runtime boundary (no app seam, no PG, no evaluator in this slice).
+- Rollback: drop `src/promotion-evaluation.ts` + `test/promotion-evaluation.test.ts`, remove index.ts/lc export lines, revert 1.4 `[x]` + 1.5 PARTIAL note + this section — no consumers; prior slices 1A/1B untouched.
+- Warnings: **0 introduced** by changed files; **9 pre-existing** remain (parity.test.ts×6, business-pg-roundtrip×2, worker-reconcile×1) — total 9, never claim zero total warnings.
+- Full gate: `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1440 passed / 6 skipped**; line count **397 additions / 3 deletions = 400 total**.

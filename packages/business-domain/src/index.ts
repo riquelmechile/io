@@ -27,6 +27,13 @@ export type {
   SkillOutcomeEvidence,
   TransitionEvidence,
 } from './learning-candidate.js';
+export { resolvePromotionPolicy } from './promotion-evaluation.js';
+export type {
+  PolicyRef,
+  PolicyResolution,
+  PromotionPolicy,
+  RiskClass,
+} from './promotion-evaluation.js';
 export { buildWorkAcceptedEvent } from './work-accepted-event.js';
 export type { JournalFakePersistence } from './ports/fakes.js';
 export {
