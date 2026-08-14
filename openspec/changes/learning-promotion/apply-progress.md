@@ -142,3 +142,49 @@ Strict TDD; stacked-to-main. Status: **4/25** (1.5 PARTIAL/unchecked).
 2. Descriptor-safe contract: plain `Object.prototype`/null records only; own enumerable DATA descriptors only; symbols/hidden/accessors/custom prototypes/injected keys rejected; revoked proxies and any reflection failure return the stable `… is not a safe plain data structure` failure, never throw; fresh containers reconstructed, input never mutated/frozen.
 3. Inherited mandatory fields are rejected because a custom prototype is itself rejected (`… must be a plain object`) — inherited values can never satisfy the closed-record contract.
 4. Superseded oversized Slice 1E attempt (418 lines, claimed parser delivery) preserved as history above and NOT counted as delivered; no `parseExplicitPromotionEvidence`/`ExplicitObservation`/`ExplicitPromotionEvidence` exports or parser tests remain in the worktree (verified: `git diff` vs HEAD touches only the two new files + tasks/apply-progress docs).
+
+# Slice 1E-b — internal safe-data recursive clone/freeze (`cloneAndFreezeSafeData`, base d1815bd, branch `feat/safe-data-clone-freeze`) — Status **4/25**; 1.5/1.6 unchecked
+> Native runtime attempt token: `sha256:627d2fadfeb6ad6f63dea1cdd605e39ea0d16f3e364b0db425db265a0cf4019e`; a passing settle later remediates `sha256:e487cc4afc893c14c32eb2db5f5b13dd7ce4b10f00241ec34aaa3227539a2168`. Strict TDD; hybrid (OpenSpec canonical + Engram progress). This slice delivers ONLY the internal recursive clone/freeze foundation; no observation/parser code, no package-index exports.
+### TDD Cycle Evidence
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-------|------------|-----|-------|-------------|----------|
+| 1E-b clone/freeze | Unit | ✅ 18/18 focused (1E-a at HEAD); full 1468/6 | ✅ **RED 11 failed / 18 passed (29)** — `cloneAndFreezeSafeData is not a function` (module export missing) | ✅ **29/29** (focused) | ✅ scalars×7 + nested/null-proto + freeze×5 containers + isolation both directions + accessors×2 + unsupported×7 + adversarial×5 + revoked×2 + cycles×2 | ✅ merged accessor cases (1 test), shared `rejects` loop, `Sample` alias; consolidated 29→**28/28**; `pnpm check` GREEN |
+### Work Unit Evidence
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `PATH=/data/node24/bin:$PATH pnpm exec vitest run packages/business-domain/test/safe-data.test.ts` — RED: **11 failed / 18 passed (29)** → GREEN **29/29** → REFACTOR consolidation **28/28** |
+| Runtime harness | N/A — pure descriptor clone/freeze helper; no runtime boundary (no app seam, no PG, no evaluator) |
+| Rollback | revert `cloneAndFreezeSafeData`/`ReadonlyDeep`/`isSupportedScalar`/`clone` from `src/validation/safe-data.ts` + 10 test blocks from `test/safe-data.test.ts` + 1.5 note edit + this section — internal module, no consumers, NOT in index exports; 1A–1E-a untouched |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate | `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1478 passed / 6 skipped** (baseline 1468/6; +10 focused) |
+| Line count | net additions+deletions vs clean d1815bd: safe-data.ts +69, safe-data.test.ts +105/−1, tasks.md +1/−1, apply-progress.md +22 = **197 additions / 2 deletions = 199 total ≤ 200 target / 400 hard** |
+
+### Notes
+1. Supported-scalar semantics (documented, suitable for validated parser values): finite `number` (rejects `NaN`/`±Infinity`), `string`, `boolean`, `null`; rejects `undefined`, `symbol`, `function`, `bigint`.
+2. Reuses the 1E-a descriptor guards (`isData`, `readDenseDataArray`) — every read is descriptor-based (getters never execute); reflection failures (revoked proxies) return the stable `… is not a safe plain data structure`, never throw.
+3. Cycle detection tracks the ancestor chain (`seen` add/delete in `finally`): shared non-cyclic refs clone per occurrence; true cycles fail with `… must not contain a cycle`.
+4. Fresh containers are `Object.freeze`d at every level; input is never mutated/frozen. `ReadonlyDeep<T>` is a local module type; callers get `ParseResult<ReadonlyDeep<T>>`. NOT exported from the package index.
+
+# Slice 1E-b (corrected, same token) — independent gate FAILED → fixed; no settle
+> Same active native token `sha256:627d2fadfeb6ad6f63dea1cdd605e39ea0d16f3e364b0db425db265a0cf4019e`; passing settle later remediates `sha256:e487cc4afc893c14c32eb2db5f5b13dd7ce4b10f00241ec34aaa3227539a2168`. Strict TDD; authentic RED→GREEN below. Prior 1E-b section above is preserved as history.
+### Gate findings → fixes
+1. **`__proto__`/`constructor`/`prototype` reconstruction unsafe in BOTH `readClosedDataRecord` and the recursive clone record path**: outputs were plain `{}`, so `out['__proto__'] = value` invoked the inherited `__proto__` setter → output prototype became attacker-controlled (`{marker:true}`) and inherited values (`marker`, `toString`) leaked. Fix: **null-prototype outputs** (`Object.create(null)`) in both record paths — own special data fields stay own data, output prototype can never be attacker-driven, zero inherited leakage. Dense-array outputs are unaffected (index-only keys).
+2. **Unconstrained caller-selected generic `<T>` unsound**: `cloneAndFreezeSafeData<T>` let callers assert arbitrary shapes without validation. Fix: replaced with the concrete recursive unions `SafeData` (mutable) / `ReadonlySafeData` (readonly) and signature `cloneAndFreezeSafeData(raw, path): ParseResult<ReadonlySafeData>` — callers narrow with explicit category checks + casts before treating values as domain types (future observation foundation). `ReadonlyDeep<T>` removed.
+### TDD Cycle Evidence (corrective)
+| Task | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-------|------------|-----|-------|-------------|----------|
+| 1E-b special keys (reader + clone, top-level + nested) | Unit | ✅ 28/28 focused; full 1478/6 | ✅ **RED 3 failed / 29 passed (32)** — tests written first; output prototype polluted (`__proto__` setter), own-data descriptor missing, inherited `marker`/`toString` leak | ✅ **32/32** (focused) | ✅ reader + clone top-level + clone nested × own `__proto__`/`constructor`/`prototype` data fields + proto-null + no-leak assertions | ✅ `Object.create(null)` in both record paths; docs updated; `pnpm check` GREEN |
+| 1E-b concrete return type | Type | same | ✅ **typecheck RED: `TS2578 Unused '@ts-expect-error'`** — `cloneAndFreezeSafeData<{nope:string}>` accepted under generic (directive unused) | ✅ typecheck GREEN (TS2558 consumed by directive) | ✅ `@ts-expect-error` contract test + runtime frozen-union assertion | ✅ `SafeData`/`ReadonlySafeData` unions replace `ReadonlyDeep<T>` |
+### Work Unit Evidence (corrective)
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `PATH=/data/node24/bin:$PATH pnpm exec vitest run packages/business-domain/test/safe-data.test.ts` — RED: **3 failed / 29 passed (32)** → GREEN **32/32**; `pnpm run typecheck` RED `TS2578` → GREEN |
+| Runtime harness | N/A — pure descriptor clone/freeze helper; no runtime boundary |
+| Rollback | revert the 4 corrective tests + null-proto outputs + union types from the two safe-data files + this section — internal module, no consumers, no index exports; prior behavior preserved |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate | `PATH=/data/node24/bin:$PATH pnpm check` GREEN — format ✓ typecheck ✓ build ✓ lint ✓ — test **1482 passed / 6 skipped** (baseline 1478/6; +4 corrective) |
+| Line count | cumulative vs clean d1815bd: safe-data.ts +84/−2, safe-data.test.ts +203/−1, tasks.md +1/−1, apply-progress.md +46 = **334 additions / 4 deletions = 338 total ≤ 400 hard** |
+
+### Notes (corrective)
+1. Null-prototype record outputs preserve ALL documented reader/clone expectations: `toEqual` is prototype-agnostic, outputs stay fresh containers, mutation/freeze/isolation tests unchanged and passing.
+2. `SafeData`/`ReadonlySafeData` are module-local exports (NOT package index); the `@ts-expect-error` line is the permanent compile-time contract that no caller-selected shape may be asserted.

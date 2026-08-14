@@ -6,7 +6,11 @@ import type { ParseResult } from './command.js';
  * descriptors — never by property reads — so getters never execute, prototypes
  * are never consulted, and adversarial values (symbols, hidden fields,
  * accessors, custom prototypes, revoked proxies) are failures, never throws.
- * Both reconstruct fresh containers and never mutate or freeze the input.
+ * Both reconstruct fresh containers and never mutate or freeze the input;
+ * record outputs are null-prototype so own `__proto__`/`constructor` data
+ * fields stay own data with zero inherited leakage.
+ * Slice 1E-b: `cloneAndFreezeSafeData` recursively clones safe JSON-like values
+ * into a fresh, deeply frozen copy; caller value stays mutable/isolated.
  * Internal module: NOT exported from the package index.
  */
 
@@ -30,7 +34,9 @@ export function readClosedDataRecord(
     if (typeof raw !== 'object' || raw === null) return fail(`${path} must be a plain object`);
     const proto = Object.getPrototypeOf(raw);
     if (proto !== Object.prototype && proto !== null) return fail(`${path} must be a plain object`);
-    const out: Record<string, unknown> = {};
+    // Null-prototype output: own `__proto__`/`constructor` data fields stay own
+    // data and no inherited Object.prototype value can ever leak through.
+    const out: Record<string, unknown> = Object.create(null);
     for (const key of Reflect.ownKeys(raw)) {
       if (typeof key !== 'string') return fail(`${path} must not carry symbol fields`);
       if (!allowedKeys.has(key)) return fail(`${path} must not carry injected field "${key}"`);
@@ -68,5 +74,81 @@ export function readDenseDataArray(raw: unknown, path: string): ParseResult<unkn
     return { ok: true, value: out };
   } catch {
     return fail(`${path} is not a safe plain data structure`);
+  }
+}
+
+/** Safe JSON-like data union (mutable form; runtime values carry no getters/custom prototypes). */
+export type SafeData = string | number | boolean | null | SafeData[] | { [key: string]: SafeData };
+
+/** Recursively readonly variant of `SafeData` — exactly the shape of fresh frozen clones. */
+export type ReadonlySafeData =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly ReadonlySafeData[]
+  | { readonly [key: string]: ReadonlySafeData };
+
+/**
+ * Descriptor-safe recursive clone + deep freeze of a JSON-like value: finite
+ * numbers, strings, booleans, null, plain/null-proto records, dense arrays.
+ * Undefined/non-finite/symbol/function/bigint, accessors, hidden fields,
+ * custom prototypes, holes, revoked proxies, cycles → failure, never throw,
+ * getters never execute. Output fresh + deeply frozen (null-proto records, no
+ * inherited leakage); input never mutated. Returns the concrete
+ * `ReadonlySafeData` union — no caller-selected generic T: callers narrow with
+ * explicit checks (category checks + casts) before treating values as domain
+ * types.
+ */
+export function cloneAndFreezeSafeData(raw: unknown, path: string): ParseResult<ReadonlySafeData> {
+  const cloned = clone(raw, path, new Set<object>());
+  if (!cloned.ok) return cloned;
+  return { ok: true, value: cloned.value as ReadonlySafeData };
+}
+
+/** Supported scalar: finite number, string, boolean, or null (canonical JSON-like values). */
+const isSupportedScalar = (v: unknown): v is number | string | boolean | null =>
+  v === null ||
+  typeof v === 'string' ||
+  typeof v === 'boolean' ||
+  (typeof v === 'number' && Number.isFinite(v));
+
+function clone(raw: unknown, path: string, seen: Set<object>): ParseResult<unknown> {
+  if (isSupportedScalar(raw)) return { ok: true, value: raw };
+  if (typeof raw !== 'object' || raw === null)
+    return fail(`${path} must be a supported JSON-like value`);
+  if (seen.has(raw)) return fail(`${path} must not contain a cycle`);
+  seen.add(raw);
+  try {
+    const proto = Object.getPrototypeOf(raw);
+    if (proto === Array.prototype) {
+      const dense = readDenseDataArray(raw, path);
+      if (!dense.ok) return dense;
+      const out: unknown[] = [];
+      for (const item of dense.value) {
+        const child = clone(item, `${path}[${out.length}]`, seen);
+        if (!child.ok) return child;
+        out.push(child.value);
+      }
+      return { ok: true, value: Object.freeze(out) };
+    }
+    if (proto !== Object.prototype && proto !== null)
+      return fail(`${path} must be a plain object or dense array`);
+    // Null-prototype output: own `__proto__`/`constructor`/`prototype` data
+    // fields stay own data; the output prototype can never be attacker-driven.
+    const out: Record<string, unknown> = Object.create(null);
+    for (const key of Reflect.ownKeys(raw)) {
+      if (typeof key !== 'string') return fail(`${path} must not carry symbol fields`);
+      const d = Object.getOwnPropertyDescriptor(raw, key);
+      if (!isData(d)) return fail(`${path} must expose only own enumerable data fields`);
+      const child = clone(d.value, `${path}.${key}`, seen);
+      if (!child.ok) return child;
+      out[key] = child.value;
+    }
+    return { ok: true, value: Object.freeze(out) };
+  } catch {
+    return fail(`${path} is not a safe plain data structure`);
+  } finally {
+    seen.delete(raw);
   }
 }
