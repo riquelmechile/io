@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="io-map-light-title io-map-light-desc">
+  <title id="io-map-light-title">Mapa operativo de IO</title>
+  <desc id="io-map-light-desc">Mapa claro del sistema IO: la empresa produce eventos, el heartbeat determinístico decide si existe novedad; sin novedad se gastan cero tokens, con novedad se despacha trabajo hacia worker y sandbox, y el resultado vuelve como evidencia y aprendizaje.</desc>
+  <defs>
+    <linearGradient id="io-map-light-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="1" stop-color="#f4f1ff"/>
+    </linearGradient>
+    <marker id="io-map-light-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#708198"/>
+    </marker>
+    <linearGradient id="io-map-light-accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0891b2"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="520" rx="28" fill="url(#io-map-light-bg)"/>
+  <text x="60" y="66" fill="#10233f" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="800">Una empresa que despierta sólo cuando hay trabajo real</text>
+  <text x="60" y="96" fill="#66778d" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">El LLM aparece después de una decisión determinística, no antes.</text>
+
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <rect x="56" y="172" width="176" height="112" rx="20" fill="#e9f8fb" stroke="#8fc7d1" stroke-width="2"/>
+    <text x="78" y="205" fill="#0e7490" font-size="12" font-weight="800" letter-spacing="1.4">01 · EMPRESA</text>
+    <text x="78" y="237" fill="#10233f" font-size="21" font-weight="750">Estrategia</text>
+    <text x="78" y="264" fill="#66778d" font-size="14">procesos · puestos</text>
+
+    <rect x="282" y="172" width="176" height="112" rx="20" fill="#edf4ff" stroke="#a4b9d7" stroke-width="2"/>
+    <text x="304" y="205" fill="#2563a6" font-size="12" font-weight="800" letter-spacing="1.4">02 · EVENTOS</text>
+    <text x="304" y="237" fill="#10233f" font-size="21" font-weight="750">PostgreSQL</text>
+    <text x="304" y="264" fill="#66778d" font-size="14">stream append-only</text>
+
+    <path d="M538 228 L610 166 L682 228 L610 290 Z" fill="#f1ecff" stroke="url(#io-map-light-accent)" stroke-width="2.5"/>
+    <text x="610" y="212" text-anchor="middle" fill="#6d28d9" font-size="12" font-weight="800" letter-spacing="1.2">03 · GATE</text>
+    <text x="610" y="239" text-anchor="middle" fill="#10233f" font-size="18" font-weight="750">¿Novedad?</text>
+    <text x="610" y="261" text-anchor="middle" fill="#66778d" font-size="12">heartbeat puro</text>
+
+    <rect x="760" y="172" width="176" height="112" rx="20" fill="#f0ecff" stroke="#b5a6df" stroke-width="2"/>
+    <text x="782" y="205" fill="#6d28d9" font-size="12" font-weight="800" letter-spacing="1.4">04 · TRABAJO</text>
+    <text x="782" y="237" fill="#10233f" font-size="21" font-weight="750">Supervisor</text>
+    <text x="782" y="264" fill="#66778d" font-size="14">dispatch de Work</text>
+
+    <rect x="986" y="172" width="158" height="112" rx="20" fill="#edf5ff" stroke="#9db7d5" stroke-width="2"/>
+    <text x="1008" y="205" fill="#2563a6" font-size="12" font-weight="800" letter-spacing="1.4">05 · WORKER</text>
+    <text x="1008" y="237" fill="#10233f" font-size="21" font-weight="750">LLM + sandbox</text>
+    <text x="1008" y="264" fill="#66778d" font-size="14">ejecución reversible</text>
+  </g>
+
+  <g fill="none" stroke="#708198" stroke-width="2.5" marker-end="url(#io-map-light-arrow)">
+    <path d="M232 228 H282"/>
+    <path d="M458 228 H534"/>
+    <path d="M686 228 H760"/>
+    <path d="M936 228 H986"/>
+  </g>
+
+  <text x="712" y="210" fill="#5b55c5" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="800">SÍ</text>
+
+  <path d="M610 291 V350 H382" fill="none" stroke="#0891b2" stroke-width="2.5" marker-end="url(#io-map-light-arrow)"/>
+  <text x="623" y="328" fill="#0e7490" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="800">NO</text>
+  <rect x="160" y="334" width="220" height="92" rx="18" fill="#e8f8fb" stroke="#82c4cf" stroke-width="2"/>
+  <text x="184" y="367" fill="#0e7490" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="800" letter-spacing="1.3">SILENCIO ÚTIL</text>
+  <text x="184" y="397" fill="#10233f" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="22" font-weight="800">0 tokens</text>
+  <text x="184" y="418" fill="#66778d" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12">no-llm-heartbeat</text>
+
+  <path d="M1066 284 V380 H820" fill="none" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#io-map-light-arrow)"/>
+  <rect x="520" y="334" width="300" height="112" rx="20" fill="#f0ecff" stroke="#b5a6df" stroke-width="2"/>
+  <text x="548" y="370" fill="#6d28d9" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="800" letter-spacing="1.3">06 · CIERRE VERIFICABLE</text>
+  <text x="548" y="402" fill="#10233f" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="21" font-weight="800">Receipts + journal</text>
+  <text x="548" y="428" fill="#66778d" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="14">evidencia → aprendizaje → siguiente evento</text>
+
+  <path d="M520 390 H458 C412 390 370 364 370 318 V286" fill="none" stroke="#8a98aa" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#io-map-light-arrow)"/>
+  <text x="60" y="488" fill="#718198" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" letter-spacing="1">AUTORIDAD HUMANA · PRESUPUESTO · EVIDENCIA · RECUPERACIÓN</text>
+</svg>
