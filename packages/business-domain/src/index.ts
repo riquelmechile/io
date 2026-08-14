@@ -13,6 +13,15 @@ export type {
   SkillOutcomeEventInput,
   SkillOutcomePayload,
 } from './skill-outcome-event.js';
+export { candidateIdFor, InvalidCandidateIdComponentError } from './learning-candidate.js';
+export type {
+  CreateCandidateCommand,
+  LearningCandidate,
+  LearningCandidateState,
+  LearningSubject,
+  SkillOutcomeEvidence,
+  TransitionEvidence,
+} from './learning-candidate.js';
 export { buildWorkAcceptedEvent } from './work-accepted-event.js';
 export type { JournalFakePersistence } from './ports/fakes.js';
 export {
