@@ -70,7 +70,7 @@ export class InvalidCandidateIdComponentError extends RangeError {
   }
 }
 
-function hasLoneSurrogate(value: string): boolean {
+export function hasLoneSurrogate(value: string): boolean {
   for (let i = 0; i < value.length; i += 1) {
     const code = value.charCodeAt(i);
     if (code >= 0xd800 && code <= 0xdbff) {
