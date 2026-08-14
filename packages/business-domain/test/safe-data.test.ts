@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { readClosedDataRecord, readDenseDataArray } from '../src/validation/safe-data.js';
+import {
+  cloneAndFreezeSafeData,
+  readClosedDataRecord,
+  readDenseDataArray,
+} from '../src/validation/safe-data.js';
 
 const ALLOWED = new Set(['companyId', 'subject', 'value']);
 const record = (raw: unknown) => readClosedDataRecord(raw, 'ev', ALLOWED);
 const array = (raw: unknown) => readDenseDataArray(raw, 'ev');
+const clone = (raw: unknown, path = 'ev') => cloneAndFreezeSafeData(raw, path);
+const rejects = (raws: readonly unknown[]) => {
+  for (const raw of raws) expect(clone(raw).ok).toBe(false);
+};
+type Sample = { a: { b: { c: number } }; list: Array<{ c: number }> };
 
 describe('readClosedDataRecord — plain and null-prototype records', () => {
   it('accepts a plain object whose own enumerable data fields are all allowed', () => {
@@ -130,5 +139,198 @@ describe('output independence — fresh containers, input untouched', () => {
     record(raw);
     expect(Object.isFrozen(raw)).toBe(false);
     expect(raw).toEqual({ companyId: 'acme' });
+  });
+});
+
+describe('cloneAndFreezeSafeData — scalars and nested structures', () => {
+  it('accepts JSON-like scalars (finite number, string, boolean, null)', () => {
+    for (const scalar of [0, -2.5, 1e3, 's', true, false, null]) {
+      expect(clone(scalar)).toEqual({ ok: true, value: scalar });
+    }
+  });
+  it('deep-clones nested records and dense arrays', () => {
+    const raw = { a: { b: [1, { c: null }], d: [], e: {} } };
+    expect(clone(raw)).toEqual({ ok: true, value: raw });
+  });
+  it('accepts null-prototype records recursively', () => {
+    const raw = { value: Object.assign(Object.create(null), { n: [1, { x: null }] }) };
+    expect(clone(raw)).toEqual({ ok: true, value: raw });
+  });
+});
+
+describe('cloneAndFreezeSafeData — fresh references, deep freeze, mutation isolation', () => {
+  it('returns fresh, deeply frozen containers', () => {
+    const raw = { a: { b: { c: 1 } }, list: [{ c: 2 }] };
+    const result = cloneAndFreezeSafeData(raw, 'ev');
+    if (!result.ok) throw new Error('expected ok');
+    const out = result.value as Sample;
+    const [first] = out.list;
+    if (!first) throw new Error('test setup: list[0] is required');
+    for (const node of [out, out.a, out.a.b, out.list, first])
+      expect(Object.isFrozen(node)).toBe(true);
+    expect(out).not.toBe(raw);
+    expect(out.a).not.toBe(raw.a);
+    expect(out.list).not.toBe(raw.list);
+  });
+  it('isolation: caller stays mutable, output frozen and independent', () => {
+    const raw = { a: { b: { c: 1 } }, list: [{ c: 2 }] };
+    const result = cloneAndFreezeSafeData(raw, 'ev');
+    if (!result.ok) throw new Error('expected ok');
+    const out = result.value as Sample;
+    raw.a.b.c = 99;
+    raw.list.push({ c: 3 });
+    expect(out.a.b.c).toBe(1);
+    expect(out.list).toHaveLength(1);
+    expect(Object.isFrozen(raw)).toBe(false);
+    expect(raw).toEqual({ a: { b: { c: 99 } }, list: [{ c: 2 }, { c: 3 }] });
+  });
+});
+
+describe('cloneAndFreezeSafeData — accessors are rejected without execution', () => {
+  it('rejects record field and array index getters without executing them', () => {
+    let executed = 0;
+    const getter = () => {
+      executed += 1;
+      return 'boom';
+    };
+    const raw: Record<string, unknown> = { safe: 1 };
+    Object.defineProperty(raw, 'trap', { enumerable: true, get: getter });
+    expect(clone(raw).ok).toBe(false);
+    const arr: unknown[] = [1];
+    Object.defineProperty(arr, 1, { enumerable: true, get: getter });
+    expect(clone(arr).ok).toBe(false);
+    expect(executed).toBe(0);
+  });
+});
+
+describe('cloneAndFreezeSafeData — adversarial and unsupported values', () => {
+  it('rejects unsupported scalars: undefined, non-finite numbers, symbol, function, bigint', () => {
+    rejects([undefined, NaN, Infinity, -Infinity, Symbol('s'), () => 1, 42n]);
+  });
+  it('rejects custom prototypes, hidden/symbol fields, holes, and extra array keys', () => {
+    const hidden: Record<string, unknown> = {};
+    Object.defineProperty(hidden, 'x', { value: 1, enumerable: false });
+    const sym: Record<string, unknown> = {};
+    Object.defineProperty(sym, Symbol('k'), { value: 1, enumerable: true });
+    const holey: unknown[] = [];
+    holey.length = 2;
+    const extra: unknown[] = [1];
+    Object.assign(extra, { extra: 2 });
+    rejects([new Date(0), hidden, sym, holey, extra]);
+  });
+  it('rejects revoked record and array proxies without throwing', () => {
+    const reason = 'ev is not a safe plain data structure';
+    const rec = Proxy.revocable({ a: 1 }, {});
+    rec.revoke();
+    expect(clone(rec.proxy)).toEqual({ ok: false, reason });
+    const arr = Proxy.revocable([1], {});
+    arr.revoke();
+    expect(clone(arr.proxy)).toEqual({ ok: false, reason });
+  });
+  it('rejects cycles in records and arrays', () => {
+    const rec: Record<string, unknown> = {};
+    rec.self = rec;
+    expect(clone(rec).ok).toBe(false);
+    const arr: unknown[] = [];
+    arr.push(arr);
+    expect(clone(arr).ok).toBe(false);
+  });
+});
+
+describe('readClosedDataRecord — special keys (__proto__, constructor, prototype)', () => {
+  const special = (raw: unknown) =>
+    readClosedDataRecord(raw, 'ev', new Set(['__proto__', 'constructor', 'prototype']));
+  it('keeps own special data fields as own data with a safe null-prototype output', () => {
+    const raw: Record<string, unknown> = {};
+    Object.defineProperty(raw, '__proto__', {
+      value: { marker: true },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(raw, 'constructor', {
+      value: 'ctor',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(raw, 'prototype', {
+      value: 'proto',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const result = special(raw);
+    if (!result.ok) throw new Error('expected ok');
+    expect(Object.getPrototypeOf(result.value)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(result.value, '__proto__')).toMatchObject({
+      value: { marker: true },
+      enumerable: true,
+    });
+    expect(result.value.constructor).toBe('ctor');
+    expect(result.value.prototype).toBe('proto');
+    expect(result.value.toString).toBeUndefined();
+    expect(result.value.marker).toBeUndefined();
+  });
+});
+
+describe('cloneAndFreezeSafeData — concrete ReadonlySafeData return type', () => {
+  it('returns the concrete ReadonlySafeData union — callers cannot select an arbitrary shape', () => {
+    // @ts-expect-error — no caller-selected generic T: callers narrow after validation
+    cloneAndFreezeSafeData<{ nope: string }>({ nope: 'x' }, 'ev');
+    const result = cloneAndFreezeSafeData({ nested: [{ ok: true }] }, 'ev');
+    if (!result.ok) throw new Error('expected ok');
+    expect(Object.isFrozen(result.value)).toBe(true);
+  });
+  it('clone: keeps top-level __proto__/constructor/prototype own data with a safe prototype', () => {
+    const raw: Record<string, unknown> = {};
+    Object.defineProperty(raw, '__proto__', {
+      value: { marker: true },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(raw, 'constructor', {
+      value: 'ctor',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(raw, 'prototype', {
+      value: 'proto',
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const result = clone(raw);
+    if (!result.ok) throw new Error('expected ok');
+    const out = result.value as Record<string, unknown>;
+    expect(Object.getPrototypeOf(out)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(out, '__proto__')).toMatchObject({
+      value: { marker: true },
+      enumerable: true,
+    });
+    expect(out.constructor).toBe('ctor');
+    expect(out.prototype).toBe('proto');
+    expect(out.marker).toBeUndefined();
+  });
+  it('clone: preserves nested special keys and keeps nested output prototypes safe', () => {
+    const inner: Record<string, unknown> = {};
+    Object.defineProperty(inner, '__proto__', {
+      value: { x: 1 },
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+    const raw = { nested: inner };
+    const result = clone(raw);
+    if (!result.ok) throw new Error('expected ok');
+    const nested = (result.value as { nested: Record<string, unknown> }).nested;
+    expect(Object.getPrototypeOf(nested)).toBe(null);
+    expect(Object.getOwnPropertyDescriptor(nested, '__proto__')).toMatchObject({
+      value: { x: 1 },
+      enumerable: true,
+    });
+    expect(nested.x).toBeUndefined();
   });
 });
