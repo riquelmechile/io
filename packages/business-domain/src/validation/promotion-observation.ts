@@ -1,7 +1,7 @@
 import { hasLoneSurrogate, type LearningSubject } from '../learning-candidate.js';
 import type { ParseResult } from './command.js';
 import { cloneAndFreezeSafeData, readClosedDataRecord, readDenseDataArray } from './safe-data.js';
-/** Internal bound promotion-observation foundation (Slice 1E-b1): descriptor-safe bindings/observations, foreign detected BEFORE content via own-data probes, values cloned+frozen (recursively readonly). */
+/** Bound promotion-observation foundation (Slice 1E-b1) + public explicit-evidence envelope (task 1.6): descriptor-safe bindings/observations, foreign detected BEFORE content via own-data probes, values cloned+frozen (recursively readonly). */
 const fail = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
 const okString = (v: unknown): v is string =>
   typeof v === 'string' && v !== '' && !hasLoneSurrogate(v);
@@ -180,3 +180,111 @@ export const parseConflictValue: ObservationValueParser<ConflictValue> = (raw, p
   ) as ParseResult<ConflictValue>;
 export const parseVetoValue: ObservationValueParser<VetoValue> = (raw, path) =>
   twoField(raw, path, 'triggered', 'description', BOOL_MSG, DESC_MSG) as ParseResult<VetoValue>;
+
+/** Public observation alias: a validated observation whose value is recursively readonly (matches frozen clones). */
+export type ExplicitObservation<T> = BoundPromotionObservation<T>;
+/** Public explicit-evidence envelope: required conflict/veto lists plus optional confidence/authority/rate categories. */
+export interface ExplicitPromotionEvidence {
+  readonly confidence?: ExplicitObservation<number>;
+  readonly sourceAuthority?: ExplicitObservation<string>;
+  readonly rateObservations?: readonly ExplicitObservation<RateValue>[];
+  readonly conflicts: readonly ExplicitObservation<ConflictValue>[];
+  readonly catastrophicVetoes: readonly ExplicitObservation<VetoValue>[];
+}
+const ENVELOPE_KEYS = new Set(
+  'confidence,sourceAuthority,rateObservations,conflicts,catastrophicVetoes'.split(','),
+);
+const REQUIRED_ENVELOPE_KEYS = new Set(['conflicts', 'catastrophicVetoes']);
+const parseEnvelopeSingle = <T>(
+  raw: unknown,
+  binding: PromotionEvidenceBinding,
+  parseValue: ObservationValueParser<T>,
+  path: string,
+  ids: Set<string>,
+): ParseResult<ExplicitObservation<T> | undefined> => {
+  const probe = readClosedDataRecord(raw, path, OBS_KEYS);
+  if (!probe.ok) return probe;
+  if (foreignReason(probe.value, binding, path)) return { ok: true, value: undefined };
+  const parsed = parseBoundPromotionObservation(raw, binding, parseValue, path);
+  if (!parsed.ok) return parsed;
+  if (ids.has(parsed.value.evidenceId))
+    return fail(`${path}.evidenceId must be unique across envelope categories`);
+  ids.add(parsed.value.evidenceId);
+  return { ok: true, value: parsed.value };
+};
+const parseEnvelopeList = <T>(
+  raw: unknown,
+  binding: PromotionEvidenceBinding,
+  parseValue: ObservationValueParser<T>,
+  path: string,
+  ids: Set<string>,
+): ParseResult<readonly ExplicitObservation<T>[]> => {
+  const parsed = parseBoundPromotionObservationList(raw, binding, parseValue, path);
+  if (!parsed.ok) return parsed;
+  for (const obs of parsed.value) {
+    if (ids.has(obs.evidenceId))
+      return fail(`${path}.evidenceId must be unique across envelope categories`);
+    ids.add(obs.evidenceId);
+  }
+  return parsed;
+};
+/**
+ * Public explicit-promotion evidence envelope (task 1.6): descriptor-safe closed
+ * record; required conflicts/catastrophicVetoes; optional confidence/
+ * sourceAuthority/rateObservations absent when the key is absent, malformed when
+ * present `undefined`; ONE shared evidenceId set across categories; foreign
+ * single omitted, foreign list items skipped; canonical list order; deeply
+ * frozen fresh output, caller input untouched; category errors propagate.
+ */
+export function parseExplicitPromotionEvidence(
+  raw: unknown,
+  binding: PromotionEvidenceBinding,
+): ParseResult<ExplicitPromotionEvidence> {
+  const rec = readClosedDataRecord(raw, 'envelope', ENVELOPE_KEYS);
+  if (!rec.ok) return rec;
+  const ids = new Set<string>();
+  const out: Record<string, unknown> = {};
+  for (const key of REQUIRED_ENVELOPE_KEYS) {
+    if (!(key in rec.value)) return fail(`envelope.${key} must be present`);
+    const parser = (
+      key === 'conflicts' ? parseConflictValue : parseVetoValue
+    ) as ObservationValueParser<ConflictValue | VetoValue>;
+    const list = parseEnvelopeList(rec.value[key], binding, parser, `envelope.${key}`, ids);
+    if (!list.ok) return list;
+    out[key] = list.value;
+  }
+  if ('confidence' in rec.value) {
+    const single = parseEnvelopeSingle(
+      rec.value.confidence,
+      binding,
+      parseConfidenceValue,
+      'envelope.confidence',
+      ids,
+    );
+    if (!single.ok) return single;
+    if (single.value !== undefined) out.confidence = single.value;
+  }
+  if ('sourceAuthority' in rec.value) {
+    const single = parseEnvelopeSingle(
+      rec.value.sourceAuthority,
+      binding,
+      parseSourceAuthorityValue,
+      'envelope.sourceAuthority',
+      ids,
+    );
+    if (!single.ok) return single;
+    if (single.value !== undefined) out.sourceAuthority = single.value;
+  }
+  if ('rateObservations' in rec.value) {
+    const list = parseEnvelopeList(
+      rec.value.rateObservations,
+      binding,
+      parseRateValue,
+      'envelope.rateObservations',
+      ids,
+    );
+    if (!list.ok) return list;
+    out.rateObservations = list.value;
+  }
+  return { ok: true, value: Object.freeze(out) as unknown as ExplicitPromotionEvidence };
+}

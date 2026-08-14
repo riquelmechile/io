@@ -35,6 +35,11 @@ export type {
   PromotionPolicy,
   RiskClass,
 } from './promotion-evaluation.js';
+export { parseExplicitPromotionEvidence } from './validation/promotion-observation.js';
+export type {
+  ExplicitObservation,
+  ExplicitPromotionEvidence,
+} from './validation/promotion-observation.js';
 export { buildWorkAcceptedEvent } from './work-accepted-event.js';
 export type { JournalFakePersistence } from './ports/fakes.js';
 export {
