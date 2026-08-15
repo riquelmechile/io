@@ -1,66 +1,65 @@
 # Tasks: Learning promotion (stages 2+3)
 
-> Prereq: `nvm use` (Node 24.18.1, `.nvmrc`) before every command. Canonical repo contract = **400 changed lines / review unit** — the 800 session target does NOT override it. TDD strict (RED→GREEN→REFACTOR); tests ship WITH behavior in the same slice. No operator numeric policy values — tests use fixture values solely to prove behavior. No Skill/worker/T1/event/`MATERIAL_EVENT_TYPES`/Stage-4 changes. Threat matrix **N/A** (no routing/shell/process boundary) — omitted per skill rules.
+> `nvm use`; 400 lines/unit; TDD; no numeric defaults; no Skill/worker-T1/event/`MATERIAL_EVENT_TYPES`/Stage-4 change; threats N/A; authority = repository-resolved proof.
 
-## Review Workload Forecast
-
-| Field | Value |
-|-------|-------|
-| Estimated changed lines | ~1050–1150 total |
-| 400-line budget risk | High (total); Medium per unit |
-| Chained PRs recommended | Yes |
-| Suggested split | PR1 domain → PR2 app+fake → PR3 PG/concurrency |
-| Delivery strategy | auto-chain |
-| Chain strategy | stacked-to-main |
+Estimate ~1700–2000; ≤400/unit. Delivery strategy: auto-chain.
 
 Decision needed before apply: No
 Chained PRs recommended: Yes
 Chain strategy: stacked-to-main
 400-line budget risk: High
 
-### Suggested Work Units
+### Work Units (stacked-to-main, autonomous, no size:exception)
 
-| Unit | Goal | Likely PR | Focused test command | Runtime harness | Rollback boundary |
-|------|------|-----------|----------------------|-----------------|-------------------|
-| 1 | Pure domain: candidate contracts + promotion evaluator + repo port | PR1 | `pnpm exec vitest run packages/business-domain/test/learning-candidate.test.ts packages/business-domain/test/promotion-evaluation.test.ts` | N/A — pure unit (no runtime boundary) | drop `learning-candidate.ts`,`promotion-evaluation.ts` + port/index exports; no consumers |
-| 2 | App read-only seam + append-only in-memory fake repo | PR2 | `pnpm exec vitest run packages/app/test/learning/evaluate.test.ts packages/business-domain/test/learning-candidate-fake.test.ts` | N/A — pure unit | drop `packages/app/src/learning/` + `InMemoryLearningCandidateRepository` |
-| 3 | PG migration + row guards + INSERT-only adapter + concurrency + parity + E2E wiring | PR3 | `docker compose up -d && pnpm exec vitest run packages/database/test/learning-candidate-roundtrip.integration.test.ts packages/database/test/sql-migrations.test.ts` | `docker compose up -d` (PG 18.4) + `IO_REQUIRE_PG=1 pnpm check` (sequential, never silent-skip) | `DROP learning_candidate_revision` + remove adapter/row-guard/exports + remove `012` from E2E `MIGRATIONS` |
+| # | Tasks | Focused test command | Runtime harness | Rollback |
+|---|---|---|---|---|
+| 1 | 1.11–1.12 | `pnpm exec vitest run packages/business-domain/test/authority-evidence.test.ts packages/business-domain/test/promotion-scope.test.ts` | N/A | authority code+tests |
+| 2 | 1.5r, 1.7–1.9 | `pnpm exec vitest run packages/business-domain/test/promotion-evaluation.test.ts` | N/A | evaluator/port exports |
+| 3 | 2.1–2.6 | `pnpm exec vitest run packages/app/test/learning/evaluate.test.ts packages/business-domain/test/learning-candidate-fake.test.ts` | N/A | learning/, verify hook, fakes |
+| 4 | 3.1–3.5 | `docker compose up -d && pnpm exec vitest run packages/database/test/sql-migrations.test.ts` | `docker compose up -d` (PG 18.4) | 012 table+adapter |
+| 5 | 3.9–3.11 | `docker compose up -d && pnpm exec vitest run packages/database/test/promotion-authority.test.ts` | `docker compose up -d` | 013 table+adapter |
+| 6 | 3.6–3.8, 4.x | `IO_REQUIRE_PG=1 pnpm exec vitest run packages/database/test/learning-candidate-roundtrip.integration.test.ts` | `IO_REQUIRE_PG=1 pnpm check` | E2E `MIGRATIONS` |
 
-**Auto-chain contingency (no human decision):** if a unit crosses 400 changed lines at apply, auto-split along its named sub-boundary (stacked-to-main, each child targets the prior slice branch): PR1 → `candidate-contracts+port` | `evaluator+quality-corpus`; PR2 → `app-seam` | `in-memory-fake`; PR3 → `schema+row-guard+adapter-reads+basic-integration` | `transition-concurrency+fake↔PG-parity`.
+## Phase 1: Domain
 
-## Phase 1: Pure domain — candidate contracts + promotion evaluator (PR1)
+- [x] 1.1 `candidateIdFor` (1A).
+- [x] 1.2 `learning-candidate.ts` types (1A).
+- [x] 1.3 `createLearningCandidate` (1B).
+- [x] 1.4 RED `resolvePromotionPolicy` (1C).
+- [ ] 1.5 PARTIAL: 1C policy-resolution + 1D aggregation + 1E safe-data foundations (`safe-data.ts`, unexported) delivered; parsers/evaluator pending → 1.7.
+- [x] 1.6 PARTIAL→DONE: 1E-b1-v2 observation foundation (sha256:8a6aacdb…) + 1F public `parseExplicitPromotionEvidence` envelope (sha256:47d06b31…, 12/12) + 1.11 `parseAuthorityEvidence` delivered; 1.6 complete.
+- [x] 1.11 RED+GREEN `parseAuthorityEvidence`: closed `{companyId,subject,sourceRef}` envelope; missing/malformed/foreign → typed unavailable; export; completes 1.6.
+- [x] 1.12 RED+GREEN `promotionScopeFor`/`parsePromotionScope`: canonical `learning.promote:<companyUtf8Bytes>:<companyId>:<skillUtf8Bytes>:<skillId>:v<positiveVersion>`; reject malformed/trailing/non-positive; byte-exact re-encode.
+- [ ] 1.7 GREEN `evaluatePromotion`: outcomes+reasons; conflict/reserved/unresolved-risk/veto → needs-review BEFORE thresholds; veto never averaged; authority unavailable → needs-review, never promote.
+- [ ] 1.8 RED corpus: gold→promote; decoy/reorder-identical/missing-not-harmful/veto-any-count/absent-or-revoked-authority/retired-policy-fail-closed; `SkillState`/`MATERIAL_EVENT_TYPES` unchanged.
+- [ ] 1.9 GREEN `ports/repositories.ts`: candidate port (4 ops, typed results) + `PromotionAuthorityRepository` (`appendProof`/`resolve`) + authority types; export.
+- [ ] 1.10 `pnpm check` green.
 
-- [x] 1.1 RED `learning-candidate.test.ts`: `candidateIdFor` = length-prefixed `lc:<clen>:<co>:<slen>:<skill>:v<ver>` deterministic + collision-free across tenants/subjects/versions.
-- [x] 1.2 GREEN `learning-candidate.ts`: types `LearningSubject`,`LearningCandidateState`,`LearningCandidate`,`CreateCandidateCommand`,`SkillOutcomeEvidence`,`TransitionEvidence` + `candidateIdFor`.
-- [x] 1.3 RED+GREEN `createLearningCandidate`: require non-empty tenant/subject, exact resolved scope, ≥1 validated matching outcome, canonical evidence sorted `(occurredAt,eventId)`, unique derived `linkedOutcomeIds`, `revision:1`,`state:'candidate'`, caller `createdAt`; invalid identity/state/revision/dup-id/tenant → `ParseResult` fail, NO mutation.
-- [x] 1.4 RED `promotion-evaluation.test.ts` `resolvePromotionPolicy`: 0→`policy-not-found`; malformed→`policy-invalid`; >1 applicable→`policy-ambiguous`; exactly-1 valid; `effectiveFrom<=at<effectiveUntil`; company+scope+(optional)exact-subject match; window `[max(from,at-win),at)`; no event read/mutation; no numeric defaults.
-- [ ] 1.5 GREEN `promotion-evaluation.ts`: types `PromotionPolicy`,`PolicyResolution`,`PromotionEvidence`,`ExplicitPromotionEvidence`,`AuthorityEvidence`,`PromotionResult`,`PolicyRef`,`PromotionReason` + `resolvePromotionPolicy` + `aggregateSkillOutcomes` (same-tenant `work.skill-outcome`,`aggregateKind:'work'`,`source:'worker'`,payload `{version:1,activatedSkills:[…]}`+matching subject; dedupe eventId; sort `(occurredAt,eventId)`; foreign excluded; missing ≠ harmful; read-only). — PARTIAL: policy-resolution + aggregation sub-slices delivered (`PromotionPolicy`,`PolicyResolution`,`PolicyRef`,`RiskClass` + `resolvePromotionPolicy` in 1C; `PromotionEvidence` + `aggregateSkillOutcomes` in 1D); Slice 1E delivered ONLY internal descriptor-safe foundations in `src/validation/safe-data.ts` (not exported): 1E-a `readClosedDataRecord`/`readDenseDataArray`, 1E-b `cloneAndFreezeSafeData` recursive deep clone/freeze — evidence parsers NOT delivered; authority parser, `evaluatePromotion` pending.
-- [ ] 1.6 PARTIAL 1.6a (non-counting note, checkbox NOT added): Slice 1E-b1-v2 (gate-corrected, SAME token sha256:8a6aacdb6b0f8aae32a832b2f70b32b064a8453c0353f53596d02b2b4107aee7, no settle) delivered ONLY the internal bound promotion-observation foundation v2 (`parsePromotionEvidenceBinding`/`parseBoundPromotionObservation`/`parseBoundPromotionObservationList` + confidence/source-authority/rate/conflict/veto value parsers in `src/validation/promotion-observation.ts` + `test/promotion-observation.test.ts`, base f316921, EXACT 400 total = 182 source + 202 test + 14 apply-progress + 1/−1 tasks, full gate 1486/6, 0 introduced warnings) — rebuilt atop the merged `cloneAndFreezeSafeData`; gate fixes: descriptor-safe foreign probe (getters never execute; revoked nested proxies fail stable), value typed `ReadonlyDeep<T>` (recursively readonly, `@ts-expect-error` contract, no `as T` mutable overclaim). Slice 1F (this worktree, token sha256:47d06b31…, base 59cb543, full gate 1498/6, 0 introduced warnings) delivered the complete PUBLIC `parseExplicitPromotionEvidence` envelope + `ExplicitObservation`/`ExplicitPromotionEvidence` types (design-exact) exported from the package index (only parser+2 types; no internal helpers/value aliases) with envelope-level tests (gold/minimal/types/top-closed/required-optional/global-duplicates/foreign-single/order/repeat/freeze/revoked/category-malformed; 12/12 focused). `parseAuthorityEvidence` still NOT delivered.
-- [ ] 1.7 RED+GREEN `evaluatePromotion`: outcomes `promote`|`remain-candidate`|`needs-review` + typed reasons + `policyRef` + `outcomeIds`; ANY conflict / unresolved-risk / reserved-category / triggered-veto → `needs-review` BEFORE thresholds; veto never averaged away; insufficient non-conflicting → `remain-candidate`.
-- [ ] 1.8 RED quality corpus (Req 7): gold→`promote`; decoy→remain/needs-review; semantically-equivalent reorder→identical result; missing→not harmful; catastrophic veto→`needs-review` regardless of count; retired policy→fail closed while history intact; assert `SkillState`,`MATERIAL_EVENT_TYPES` unchanged.
-- [ ] 1.9 GREEN `ports/repositories.ts`: `LearningCandidateRepository` port (`appendInitial`|`appendTransition`|`getCurrent`|`listRevisions`) + typed results `appended`|`replayed`|`stale`|`conflict`|`idempotency-collision`; export all new symbols from `business-domain/src/index.ts`.
-- [ ] 1.10 `nvm use && pnpm check` green (format→typecheck→build→lint→test).
+## Phase 2: App + fakes
 
-## Phase 2: App read-only seam + append-only in-memory fake repository (PR2)
+- [ ] 2.1 GREEN `app/src/learning/evaluate.ts`: Skill → unique policy → one read → aggregate → parse explicit+authority → scope → resolve authority (trusted actor/principal) → evaluate; tenant guard.
+- [ ] 2.2 RED tests: one read/zero writes/tenant scoping/fail-closed policy/typed authority failures.
+- [ ] 2.3 GREEN `ports/fakes.ts`: in-memory candidate + authority repos (append-only, current-leaf, revocation); INSERT-only; export.
+- [ ] 2.4 RED fake tests: candidate replay/collision/stale/concurrency; authority current/superseded/revoked.
+- [ ] 2.6 RED+GREEN atomic verifyWork+proof owner (`app/src/worker/verify.ts`): one transaction = `completed→verified` win + proof append (verifier, fresh Delegation, policy); revocation supersede; no partial write.
+- [ ] 2.5 `pnpm check` green.
 
-- [ ] 2.1 GREEN `packages/app/src/learning/evaluate.ts` `evaluateLearningPromotionForCompany`: resolve exact tenant Skill version via `skills.listByCompany`→its `{process,schemaVersion}` scope; resolve one policy at caller `at`; ONE read-only `events.listByCompany`; validate payload + match activated subject; filter `[windowStart,at)`; aggregate; runtime-validate explicit/authority evidence after policy resolution; evaluate; reject empty tenant BEFORE any read; carry NO clock/write (mirrors `heartbeat/evaluate.ts`).
-- [ ] 2.2 RED app `learning/evaluate.test.ts`: exactly one `listByCompany`, zero writes/mutations; tenant scoping (foreign facts excluded); zero/invalid/ambiguous policy → fail closed / typed-escalate, NO nearest-policy selection; no Skill/worker/T1/event/materiality change.
-- [ ] 2.3 GREEN `ports/fakes.ts` `InMemoryLearningCandidateRepository`: one serialized critical section mirroring every PG check; INSERT-only surface; NO update/delete; export from `business-domain/src/index.ts`.
-- [ ] 2.4 RED fake repo test: identical command/policy/evidence bytes+digest →`replayed`; reused digest w/ unequal bytes →`idempotency-collision`; stale/superseded →`stale` (no transition); equal-revision concurrent → exactly one `appended` winner, rest `conflict`; replay converges; losing/stale attempts cause NO mutation.
-- [ ] 2.5 `nvm use && pnpm check` green.
+## Phase 3: PostgreSQL
 
-## Phase 3: PostgreSQL migration + INSERT-only adapter + concurrency + parity (PR3)
+- [ ] 3.1 GREEN `sql/012_learning_candidates.sql`: PK/self-FK/CHECK/parent-claim/digest/guarded JSONB/`IF NOT EXISTS`.
+- [ ] 3.2 RED+GREEN migration tests assert 012.
+- [ ] 3.9 GREEN `sql/013_promotion_authority_proofs.sql`: append-only `promotion_authority_proof` PK `(company_id,proof_id,proof_revision)`; UNIQUE transition identity; self-FK supersede + parent claim; time CHECK; JSON guards; tenant index; current = `NOT EXISTS` child; no UPDATE/DELETE.
+- [ ] 3.10 RED+GREEN migration tests assert 013 + idempotency.
+- [ ] 3.3 GREEN `row-guards.ts` `parseLearningCandidateRow` (columns+JSONB).
+- [ ] 3.4 GREEN candidate adapter: `ON CONFLICT DO NOTHING` replay/collision; transactional `INSERT…SELECT`, parent-claim winner; no UPDATE/DELETE.
+- [ ] 3.11 GREEN `promotion-authority-adapter.ts` `PgPromotionAuthorityRepository`: `resolve` = `sourceRef`→proof leaves + Delegation re-read; 0 rows→missing, >1→ambiguous; validates actor/principal/policy/command/capability/scope/grant/window/revocation; INSERT-only; row guard+fake.
+- [ ] 3.5 Extend `connection-fake.ts` (candidate SQL).
+- [ ] 3.6 E2E wiring: `012`+`013` in `packages/app/test/e2e/harness.ts` `MIGRATIONS`; export adapters+guards.
+- [ ] 3.7 RED integration/parity (live PG, `skipIf(!reachable)`, TRUNCATE, sequential): authority leaf-counts/superseded/revoked/expired/mismatch/forged/atomic-write; candidate replay/concurrency/isolation/malformed; fake↔PG parity+rescoring.
+- [ ] 3.8 `IO_REQUIRE_PG=1 pnpm check` green (live PG).
 
-- [ ] 3.1 GREEN `sql/012_learning_candidates.sql`: `learning_candidate_revision` PK `(company_id,candidate_id,revision)`; composite self-FK `(company_id,candidate_id,parent_revision)`→PK; root/successor CHECK; UNIQUE partial parent claim; UNIQUE `command_digest`; immutable guarded JSONB (subject/scope, canonical full `outcomeEvidence`+derived ids, policy snapshot, explicit+authority snapshots, result/reasons, lineage, digest); idempotent `IF NOT EXISTS` on every statement.
-- [ ] 3.2 RED+GREEN extend `packages/database/test/sql-migrations.test.ts`: ship 012; assert table/PK/self-FK/CHECK/parent-claim/`command_digest` uniqueness + `IF NOT EXISTS` per statement.
-- [ ] 3.3 GREEN `row-guards.ts` `parseLearningCandidateRow`: validate every column + JSONB snapshots; reject malformed without cross-tenant disclosure; export from `database/src/index.ts`.
-- [ ] 3.4 GREEN `learning-candidate-adapter.ts` `PgLearningCandidateRepository`: `appendInitial` = `INSERT…ON CONFLICT DO NOTHING` + fetch + compare canonical creation bytes/digest (replay vs `idempotency-collision`); `appendTransition` = one transaction `INSERT…SELECT` from expected tenant/candidate/revision where parent eligible AND `NOT EXISTS` child, `revision=parent+1`, unique parent claim picks single winner; `getCurrent` = leaf via `NOT EXISTS` child; `listRevisions`; every read tenant-predicated; empty `companyId` rejected BEFORE any SQL; no UPDATE/DELETE.
-- [ ] 3.5 GREEN extend `packages/database/test/connection-fake.ts` for new adapter SQL (`ON CONFLICT DO NOTHING`; `INSERT…SELECT`/subquery only if a unit test exercises it).
-- [ ] 3.6 GREEN E2E wiring: append `012_learning_candidates.sql` to `packages/app/test/e2e/harness.ts` `MIGRATIONS`; export `PgLearningCandidateRepository`+`parseLearningCandidateRow` from `database/src/index.ts`.
-- [ ] 3.7 RED `learning-candidate-roundtrip.integration.test.ts` (live PG; `describe.skipIf(!reachable)`; `beforeEach` TRUNCATE; sequential via `fileParallelism:false`): round-trip survives `parseLearningCandidateRow`; replay converges; reused-digest collision; stale/superseded → no transition; concurrent equal revisions → one winner; cross-tenant isolation; malformed row rejected; stored evidence reproduces evaluation + rescoring under its policy snapshot; fake↔PG parity vectors over EVERY branch.
-- [ ] 3.8 `nvm use && docker compose up -d && IO_REQUIRE_PG=1 pnpm check` green (live PG 18.4 sequential proof; CI never silently skips).
+## Phase 4: Verification
 
-## Phase 4: Cross-slice verification
-
-- [ ] 4.1 Boundary: confirm `SkillState`,`MATERIAL_EVENT_TYPES`,T1,Skill registry,worker cycle unchanged (grep/tests green); no Stage-4 Skill creation/update introduced.
-- [ ] 4.2 Full `nvm use && pnpm check` green end-to-end across business-domain + app + database.
+- [ ] 4.1 Boundary unchanged: `SkillState`,`MATERIAL_EVENT_TYPES`,T1,registry,worker.
+- [ ] 4.2 Full `pnpm check` green.
+- [ ] 4.3 Rollback: 012/013 removable; retired policy fails closed.

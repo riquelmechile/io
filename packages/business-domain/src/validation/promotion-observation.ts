@@ -288,3 +288,47 @@ export function parseExplicitPromotionEvidence(
   }
   return { ok: true, value: Object.freeze(out) as unknown as ExplicitPromotionEvidence };
 }
+
+/** Authority reference envelope (task 1.11, completes 1.6): caller supplies only a closed descriptor-safe `{companyId,subject,sourceRef}` envelope; missing/malformed/foreign input maps to its typed reason. Repository resolution, never this envelope, establishes authority (design). */
+export type AuthorityUnavailableReason =
+  | 'authority-missing'
+  | 'authority-malformed'
+  | 'authority-foreign'
+  | 'authority-stale'
+  | 'authority-revoked'
+  | 'authority-ambiguous'
+  | 'authority-source-unresolvable'
+  | 'authority-command-mismatch'
+  | 'authority-principal-mismatch'
+  | 'authority-policy-mismatch'
+  | 'authority-proof-unavailable';
+export interface AuthorityEvidence {
+  readonly companyId: string;
+  readonly subject: LearningSubject;
+  readonly sourceRef: string;
+}
+export type AuthorityEvidenceParse =
+  | { readonly kind: 'parsed'; readonly value: AuthorityEvidence }
+  | { readonly kind: 'unavailable'; readonly reason: AuthorityUnavailableReason };
+export function parseAuthorityEvidence(
+  raw: unknown,
+  binding: PromotionEvidenceBinding,
+  path: string,
+): AuthorityEvidenceParse {
+  if (raw === undefined || raw === null)
+    return { kind: 'unavailable', reason: 'authority-missing' };
+  const rec = readClosedDataRecord(raw, path, new Set(['companyId', 'subject', 'sourceRef']));
+  if (!rec.ok) return { kind: 'unavailable', reason: 'authority-malformed' };
+  const { companyId, sourceRef } = rec.value;
+  if (!okString(companyId) || !okString(sourceRef))
+    return { kind: 'unavailable', reason: 'authority-malformed' };
+  const subject = parseSubject(rec.value.subject, `${path}.subject`);
+  if (!subject.ok) return { kind: 'unavailable', reason: 'authority-malformed' };
+  const value = Object.freeze({ companyId, subject: subject.value, sourceRef });
+  const foreign =
+    value.companyId !== binding.companyId ||
+    value.subject.skillId !== binding.subject.skillId ||
+    value.subject.skillVersion !== binding.subject.skillVersion;
+  if (foreign) return { kind: 'unavailable', reason: 'authority-foreign' };
+  return { kind: 'parsed', value };
+}

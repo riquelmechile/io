@@ -35,8 +35,14 @@ export type {
   PromotionPolicy,
   RiskClass,
 } from './promotion-evaluation.js';
+export { parsePromotionScope, promotionScopeFor } from './promotion-scope.js';
+export type { PromotionScopeValue } from './promotion-scope.js';
 export { parseExplicitPromotionEvidence } from './validation/promotion-observation.js';
+export { parseAuthorityEvidence } from './validation/promotion-observation.js';
 export type {
+  AuthorityEvidence,
+  AuthorityEvidenceParse,
+  AuthorityUnavailableReason,
   ExplicitObservation,
   ExplicitPromotionEvidence,
 } from './validation/promotion-observation.js';
