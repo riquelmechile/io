@@ -1,4 +1,11 @@
 import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
+import type {
+  LearningCandidate,
+  LearningSubject,
+  TransitionEvidence,
+} from '../learning-candidate.js';
+import type { PolicyRef } from '../promotion-evaluation.js';
+import type { AuthorityUnavailableReason } from '../validation/promotion-observation.js';
 
 /**
  * Async, driver-free repository port interfaces for the four business-domain
@@ -173,4 +180,96 @@ export interface SkillRepository {
   get(companyId: string, skillId: string): Promise<Skill | undefined>;
   /** All persisted versions for the tenant, ordered by insertion. */
   listByCompany(companyId: string): Promise<readonly Skill[]>;
+}
+
+/**
+ * Append-only LearningCandidate revision store (learning design "INSERT-only
+ * persistence and concurrency"): deterministic append of the initial revision
+ * and of superseding transitions; typed results
+ * `appended|replayed|stale|conflict|idempotency-collision`; tenant-scoped
+ * current-leaf read and full revision listing. NO update or delete exists.
+ */
+export type LearningCandidateAppendResult =
+  | 'appended'
+  | 'replayed'
+  | 'stale'
+  | 'conflict'
+  | 'idempotency-collision';
+
+export interface LearningCandidateTransition {
+  readonly companyId: string;
+  readonly candidateId: string;
+  /** The exact parent revision this transition supersedes. */
+  readonly expectedRevision: number;
+  readonly transition: TransitionEvidence;
+}
+
+export interface LearningCandidateRepository {
+  appendInitial(
+    candidate: LearningCandidate,
+    commandDigest: string,
+  ): Promise<LearningCandidateAppendResult>;
+  appendTransition(
+    item: LearningCandidateTransition,
+    commandDigest: string,
+  ): Promise<LearningCandidateAppendResult>;
+  getCurrent(companyId: string, candidateId: string): Promise<LearningCandidate | undefined>;
+  listRevisions(companyId: string, candidateId: string): Promise<readonly LearningCandidate[]>;
+}
+
+/**
+ * Current verification proof for the `learning.promote` command (learning
+ * design "Authority contract and durable source"): one current leaf bound to
+ * tenant, subject, principals, delegation, policy, scope, and validity window.
+ * Repository-resolved — a caller never supplies it directly.
+ */
+export interface AuthorityTransitionProof {
+  readonly proofId: string;
+  readonly proofRevision: number;
+  readonly transitionId: string;
+  readonly transitionRevision: number;
+  readonly supersedesProofRevision?: number;
+  readonly current: true;
+  readonly kind: 'verification';
+  readonly companyId: string;
+  readonly subject: LearningSubject;
+  readonly actorId: string;
+  readonly principalId: string;
+  readonly delegationId: string;
+  readonly grantId: string;
+  readonly command: 'learning.promote';
+  readonly capability: 'learning.promote';
+  readonly scope: string;
+  readonly policyRef: PolicyRef;
+  readonly issuedAt: number;
+  readonly effectiveFrom: number;
+  readonly expiry: number;
+  readonly revoked: boolean;
+  readonly revocationVersion: number;
+}
+
+export type PromotionAuthorityAppendResult = 'appended' | 'replayed' | 'conflict';
+
+export interface PromotionAuthorityResolutionInput {
+  readonly sourceRef: string;
+  readonly companyId: string;
+  readonly subject: LearningSubject;
+  readonly policyRef: PolicyRef;
+  readonly at: number;
+  readonly expectedPrincipalId: string;
+  readonly expectedActorId: string;
+  readonly command: 'learning.promote';
+  readonly capability: 'learning.promote';
+  readonly scope: string;
+}
+
+export type PromotionAuthorityResolution =
+  | { readonly kind: 'resolved'; readonly value: AuthorityTransitionProof }
+  | { readonly kind: 'unavailable'; readonly reason: AuthorityUnavailableReason };
+
+export interface PromotionAuthorityRepository {
+  appendProof(
+    proof: Omit<AuthorityTransitionProof, 'current'>,
+  ): Promise<PromotionAuthorityAppendResult>;
+  resolve(input: PromotionAuthorityResolutionInput): Promise<PromotionAuthorityResolution>;
 }
