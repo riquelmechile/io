@@ -197,8 +197,8 @@ IO se construye por incrementos verificables: cada incremento debe funcionar y p
 
 | Estado | Qué |
 |---|---|
-| **Completado** | Fundación de desarrollo root-only ([ADR-0004](docs/adr/README.md)), dominio (Work, receipts, eventos y heartbeat), trust kernel, persistencia PostgreSQL, cliente DeepSeek con E2E en vivo, compilador de contexto, activación por heartbeat, supervisor timer y work dispatch, daemon durable, heartbeat decision events, escalada Flash→Pro, fencing tokens, supervisor recovery (Scope B), cold-start discovery y Skill outcome BusinessEvents. |
-| **Siguiente** | Incremento 8 — Learning/promotion: ciclo de promoción de Skill `candidate → active`, trazado en [pasos siguientes](docs/PASOS_SIGUIENTES_INCREMENTO_4.md). |
+| **Completado** | Fundación de desarrollo root-only ([ADR-0004](docs/adr/README.md)), dominio (Work, receipts, eventos y heartbeat), trust kernel, persistencia PostgreSQL, cliente DeepSeek con E2E en vivo, compilador de contexto, activación por heartbeat, supervisor timer y work dispatch, daemon durable, heartbeat decision events, escalada Flash→Pro, fencing tokens, supervisor recovery (Scope B), cold-start discovery, Skill outcome BusinessEvents y la fundación de evidencia de Learning/promotion (contratos de candidatos, políticas, agregación de outcomes, validación descriptor-safe de evidencia, observaciones, evidencia explícita y referencias y alcances de autoridad). |
+| **Siguiente** | Incremento 8 — Learning/promotion: evaluador de promociones y puertos de candidatos y autoridad sobre la fundación de evidencia ya entregada; luego capa app y persistencia PostgreSQL para completar el ciclo `candidate → active`, trazado en [pasos siguientes](docs/PASOS_SIGUIENTES_INCREMENTO_4.md). |
 
 Todo el trabajo se entrega bajo Spec-Driven Development. El historial verificable está en [`openspec/changes/archive/`](openspec/changes/archive/).
 
@@ -218,7 +218,7 @@ Todo el trabajo se entrega bajo Spec-Driven Development. El historial verificabl
 <details>
 <summary><strong>Compatibilidad de los visuales</strong></summary>
 
-GitHub selecciona automáticamente los pares dark/light del hero, mapa y flujo mediante `<picture>`. El asset estable [`docs/assets/io-operating-model.svg`](docs/assets/io-operating-model.svg) se conserva sin cambios para enlaces o renderizadores existentes que dependan de esa ruta.
+GitHub selecciona automáticamente los pares dark/light del hero, mapa y flujo mediante `<picture>`. [`docs/assets/io-operating-model.svg`](docs/assets/io-operating-model.svg) aporta una vista estable del modelo operativo, independiente del tema, para enlaces o renderizadores que necesiten una única ruta fija.
 
 </details>
 
