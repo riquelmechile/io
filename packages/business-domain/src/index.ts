@@ -79,6 +79,16 @@ export type {
   SkillRepository,
   WorkRepository,
 } from './ports/repositories.js';
+export type {
+  AuthorityTransitionProof,
+  LearningCandidateAppendResult,
+  LearningCandidateRepository,
+  LearningCandidateTransition,
+  PromotionAuthorityAppendResult,
+  PromotionAuthorityRepository,
+  PromotionAuthorityResolution,
+  PromotionAuthorityResolutionInput,
+} from './ports/repositories.js';
 export type { SkillCohort } from './skill-activation.js';
 export {
   activeSkillsFor,
