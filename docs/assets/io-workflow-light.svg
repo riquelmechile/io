@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 430" role="img" aria-labelledby="io-flow-light-title io-flow-light-desc">
+  <title id="io-flow-light-title">Flujo de activación verificable de IO</title>
+  <desc id="io-flow-light-desc">Flujo claro de IO desde un evento material hasta el cierre verificable: detectar, decidir, activar, ejecutar, probar y aprender, bajo autoridad humana y presupuesto explícito.</desc>
+  <defs>
+    <linearGradient id="io-flow-light-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfdff"/>
+      <stop offset="1" stop-color="#f5f2ff"/>
+    </linearGradient>
+    <marker id="io-flow-light-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#708198"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="430" rx="28" fill="url(#io-flow-light-bg)"/>
+  <text x="58" y="62" fill="#10233f" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="28" font-weight="800">Una activación debe ganarse cada paso</text>
+  <text x="58" y="92" fill="#66778d" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15">La autonomía crece con la evidencia; la autoridad humana conserva los límites irreversibles.</text>
+
+  <rect x="58" y="122" width="1084" height="42" rx="14" fill="#eaf7fb" stroke="#9bc7d1"/>
+  <text x="78" y="149" fill="#0e7490" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" font-weight="800" letter-spacing="1.2">LÍMITE HUMANO</text>
+  <text x="206" y="149" fill="#40536d" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13">finalidad · capital · presupuesto · autoridad · acciones irreversibles</text>
+
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <g>
+      <circle cx="116" cy="244" r="38" fill="#e8f8fb" stroke="#82c4cf" stroke-width="2"/>
+      <text x="116" y="251" text-anchor="middle" fill="#0e7490" font-size="24" font-weight="800">1</text>
+      <text x="116" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Detectar</text>
+      <text x="116" y="329" text-anchor="middle" fill="#66778d" font-size="12">evento material</text>
+    </g>
+    <g>
+      <circle cx="310" cy="244" r="38" fill="#edf4ff" stroke="#9fb7d3" stroke-width="2"/>
+      <text x="310" y="251" text-anchor="middle" fill="#2563a6" font-size="24" font-weight="800">2</text>
+      <text x="310" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Decidir</text>
+      <text x="310" y="329" text-anchor="middle" fill="#66778d" font-size="12">heartbeat puro</text>
+    </g>
+    <g>
+      <circle cx="504" cy="244" r="38" fill="#f0ecff" stroke="#b5a6df" stroke-width="2"/>
+      <text x="504" y="251" text-anchor="middle" fill="#6d28d9" font-size="24" font-weight="800">3</text>
+      <text x="504" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Activar</text>
+      <text x="504" y="329" text-anchor="middle" fill="#66778d" font-size="12">supervisor + Work</text>
+    </g>
+    <g>
+      <circle cx="698" cy="244" r="38" fill="#f0ecff" stroke="#b5a6df" stroke-width="2"/>
+      <text x="698" y="251" text-anchor="middle" fill="#6d28d9" font-size="24" font-weight="800">4</text>
+      <text x="698" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Ejecutar</text>
+      <text x="698" y="329" text-anchor="middle" fill="#66778d" font-size="12">LLM + sandbox</text>
+    </g>
+    <g>
+      <circle cx="892" cy="244" r="38" fill="#edf4ff" stroke="#9fb7d3" stroke-width="2"/>
+      <text x="892" y="251" text-anchor="middle" fill="#2563a6" font-size="24" font-weight="800">5</text>
+      <text x="892" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Probar</text>
+      <text x="892" y="329" text-anchor="middle" fill="#66778d" font-size="12">receipts + journal</text>
+    </g>
+    <g>
+      <circle cx="1086" cy="244" r="38" fill="#e8f8fb" stroke="#82c4cf" stroke-width="2"/>
+      <text x="1086" y="251" text-anchor="middle" fill="#0e7490" font-size="24" font-weight="800">6</text>
+      <text x="1086" y="306" text-anchor="middle" fill="#10233f" font-size="17" font-weight="800">Aprender</text>
+      <text x="1086" y="329" text-anchor="middle" fill="#66778d" font-size="12">resultado comprobado</text>
+    </g>
+  </g>
+
+  <g fill="none" stroke="#708198" stroke-width="2.5" marker-end="url(#io-flow-light-arrow)">
+    <path d="M155 244 H270"/>
+    <path d="M349 244 H464"/>
+    <path d="M543 244 H658"/>
+    <path d="M737 244 H852"/>
+    <path d="M931 244 H1046"/>
+  </g>
+
+  <path d="M1086 352 C1086 392 892 392 698 392 C504 392 310 392 116 392 V346" fill="none" stroke="#8a98aa" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#io-flow-light-arrow)"/>
+  <text x="600" y="386" text-anchor="middle" fill="#718198" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" font-weight="700" letter-spacing="1.1">EL APRENDIZAJE VUELVE AL SISTEMA COMO EVIDENCIA, NO COMO RECUERDO INFORMAL</text>
+</svg>

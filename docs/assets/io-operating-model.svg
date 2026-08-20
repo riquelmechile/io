@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" role="img" aria-labelledby="io-model-title io-model-desc">
+  <title id="io-model-title">Modelo operativo de IO</title>
+  <desc id="io-model-desc">Diagrama del ciclo de IO: la empresa emite eventos, un heartbeat determinístico decide si existe novedad, el trabajo útil produce evidencia y aprendizaje, mientras el silencio cuesta cero tokens.</desc>
+
+  <defs>
+    <linearGradient id="io-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="1" stop-color="#111c33"/>
+    </linearGradient>
+    <linearGradient id="io-core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#818cf8"/>
+    </linearGradient>
+    <filter id="io-glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="io-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="520" rx="28" fill="url(#io-bg)"/>
+  <circle cx="600" cy="260" r="112" fill="#12203a" stroke="#334155" stroke-width="2"/>
+  <circle cx="600" cy="260" r="76" fill="none" stroke="url(#io-core)" stroke-width="3" opacity="0.9" filter="url(#io-glow)"/>
+
+  <text x="600" y="247" text-anchor="middle" fill="#f8fafc" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="56" font-weight="800" letter-spacing="6">IO</text>
+  <text x="600" y="282" text-anchor="middle" fill="#94a3b8" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15" font-weight="600" letter-spacing="2">EMPRESA AGÉNTICA</text>
+  <text x="600" y="309" text-anchor="middle" fill="#cbd5e1" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13">costo · autoridad · evidencia</text>
+
+  <g font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <rect x="72" y="82" width="250" height="106" rx="18" fill="#101b30" stroke="#334155"/>
+    <text x="96" y="116" fill="#67e8f9" font-size="13" font-weight="700" letter-spacing="1.5">01 · EMPRESA</text>
+    <text x="96" y="146" fill="#f8fafc" font-size="20" font-weight="700">Estrategia y eventos</text>
+    <text x="96" y="171" fill="#94a3b8" font-size="14">La empresa decide qué importa.</text>
+
+    <rect x="72" y="330" width="250" height="106" rx="18" fill="#101b30" stroke="#334155"/>
+    <text x="96" y="364" fill="#a5b4fc" font-size="13" font-weight="700" letter-spacing="1.5">02 · HEARTBEAT</text>
+    <text x="96" y="394" fill="#f8fafc" font-size="20" font-weight="700">Gate determinístico</text>
+    <text x="96" y="419" fill="#94a3b8" font-size="14">Primero decide sin llamar al LLM.</text>
+
+    <rect x="878" y="82" width="250" height="106" rx="18" fill="#101b30" stroke="#334155"/>
+    <text x="902" y="116" fill="#67e8f9" font-size="13" font-weight="700" letter-spacing="1.5">03 · TRABAJO</text>
+    <text x="902" y="146" fill="#f8fafc" font-size="20" font-weight="700">Ejecución útil</text>
+    <text x="902" y="171" fill="#94a3b8" font-size="14">Plan → sandbox → resultado.</text>
+
+    <rect x="878" y="330" width="250" height="106" rx="18" fill="#101b30" stroke="#334155"/>
+    <text x="902" y="364" fill="#a5b4fc" font-size="13" font-weight="700" letter-spacing="1.5">04 · EVIDENCIA</text>
+    <text x="902" y="394" fill="#f8fafc" font-size="20" font-weight="700">Receipts y aprendizaje</text>
+    <text x="902" y="419" fill="#94a3b8" font-size="14">Lo terminado alimenta lo siguiente.</text>
+  </g>
+
+  <path d="M 322 135 C 420 135, 440 180, 496 215" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#io-arrow)"/>
+  <path d="M 322 383 C 420 383, 440 340, 496 305" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#io-arrow)"/>
+  <path d="M 704 215 C 760 180, 780 135, 878 135" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#io-arrow)"/>
+  <path d="M 704 305 C 760 340, 780 383, 878 383" fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#io-arrow)"/>
+
+  <rect x="438" y="34" width="324" height="54" rx="27" fill="#0f2a32" stroke="#164e63"/>
+  <circle cx="468" cy="61" r="8" fill="#22d3ee"/>
+  <text x="490" y="66" fill="#cffafe" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="15" font-weight="700">sin novedad → 0 tokens</text>
+
+  <path d="M 200 330 C 140 272, 140 246, 200 188" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 8" marker-end="url(#io-arrow)"/>
+  <text x="86" y="264" fill="#64748b" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" transform="rotate(-90 86 264)">silencio operativo</text>
+
+  <path d="M 1003 188 C 1063 246, 1063 272, 1003 330" fill="none" stroke="#475569" stroke-width="2" stroke-dasharray="6 8" marker-end="url(#io-arrow)"/>
+  <text x="1112" y="264" fill="#64748b" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="12" transform="rotate(90 1112 264)">ciclo de aprendizaje</text>
+
+  <text x="600" y="488" text-anchor="middle" fill="#64748b" font-family="system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" font-size="13" letter-spacing="1">DISPONIBLE 24/7 ≠ LLAMAR AL MODELO 24/7</text>
+</svg>
