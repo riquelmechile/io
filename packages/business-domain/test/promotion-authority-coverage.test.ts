@@ -98,11 +98,15 @@ describe('InMemoryPromotionAuthorityRepository — typed unavailability matrix',
   it('authority-foreign for a mismatched subject binding or non-canonical scope', async () => {
     const repo = new InMemoryPromotionAuthorityRepository();
     await repo.appendProof(proofOver());
-    expect(await repo.resolve(resolveInput({ subject: { skillId: 'other', skillVersion: 3 } }))).toEqual({
+    expect(
+      await repo.resolve(resolveInput({ subject: { skillId: 'other', skillVersion: 3 } })),
+    ).toEqual({
       kind: 'unavailable',
       reason: 'authority-foreign',
     });
-    await repo.appendProof(proofOver({ proofId: 'proof-2', transitionId: 'tr-2', scope: 'forged:scope' }));
+    await repo.appendProof(
+      proofOver({ proofId: 'proof-2', transitionId: 'tr-2', scope: 'forged:scope' }),
+    );
     expect(await repo.resolve(resolveInput({ sourceRef: 'proof-2' }))).toEqual({
       kind: 'unavailable',
       reason: 'authority-foreign',
@@ -125,7 +129,9 @@ describe('InMemoryPromotionAuthorityRepository — typed unavailability matrix',
   it('authority-policy-mismatch for a stale policy reference', async () => {
     const repo = new InMemoryPromotionAuthorityRepository();
     await repo.appendProof(proofOver());
-    expect(await repo.resolve(resolveInput({ policyRef: { policyId: 'pol-2', version: 2 } }))).toEqual({
+    expect(
+      await repo.resolve(resolveInput({ policyRef: { policyId: 'pol-2', version: 2 } })),
+    ).toEqual({
       kind: 'unavailable',
       reason: 'authority-policy-mismatch',
     });
@@ -133,7 +139,9 @@ describe('InMemoryPromotionAuthorityRepository — typed unavailability matrix',
 
   it('authority-command-mismatch for a forged row command', async () => {
     const repo = new InMemoryPromotionAuthorityRepository();
-    await repo.appendProof(proofOver({ command: 'skill.activate' as unknown as 'learning.promote' }));
+    await repo.appendProof(
+      proofOver({ command: 'skill.activate' as unknown as 'learning.promote' }),
+    );
     expect(await repo.resolve(resolveInput())).toEqual({
       kind: 'unavailable',
       reason: 'authority-command-mismatch',
