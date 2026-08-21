@@ -587,3 +587,69 @@ describe('evaluatePromotion — insufficient evidence remains candidate', () => 
       });
   });
 });
+
+describe('evaluatePromotion — explicit observations are candidate-bound (R3-001)', () => {
+  const foreign = (id: string, value: unknown): ExplicitObservation<never> => ({
+    ...observation(id, value),
+    companyId: 'other',
+  });
+  it('foreign unresolved conflict is ignored; gold still promotes', () => {
+    const result = evaluate({
+      exp: explicit({
+        conflicts: [
+          foreign('c-f', { unresolved: true, description: 'foreign' }),
+          {
+            ...observation('c-s', { unresolved: true, description: 'other skill' }),
+            subject: subject('other', 7),
+          },
+        ],
+      }),
+    });
+    expect(result.outcome).toBe('promote');
+  });
+  it('foreign triggered veto is ignored', () => {
+    const result = evaluate({
+      pol: policy({ catastrophicVetoEnabled: true }),
+      exp: explicit({
+        catastrophicVetoes: [foreign('v-f', { triggered: true, description: 'x' })],
+      }),
+    });
+    expect(result.outcome).toBe('promote');
+  });
+  it('foreign rate observations are excluded from rate gates', () => {
+    const rates = [foreign('r-f', { positive: true, harmful: true })];
+    expect(
+      evaluate({
+        pol: policy({ successRate: { threshold: 0.8 } }),
+        exp: explicit({ rateObservations: rates }),
+      }).reasons,
+    ).toEqual(['success-rate-unavailable']);
+    expect(
+      evaluate({
+        pol: policy({ harmfulCap: { threshold: 0.1 } }),
+        exp: explicit({ rateObservations: rates }),
+      }).reasons,
+    ).toEqual(['harmful-evidence-unavailable']);
+    expect(evaluate({ exp: explicit({ rateObservations: rates }) }).outcome).toBe('promote');
+  });
+  it('foreign confidence and source authority become unavailable, never binding', () => {
+    expect(
+      evaluate({
+        pol: policy({ minConfidence: 0.9 }),
+        exp: explicit({ confidence: foreign('cf-f', 1) }),
+      }).reasons,
+    ).toEqual(['confidence-unavailable']);
+    expect(
+      evaluate({
+        pol: policy({ allowedSourceAuthorities: ['hq'] }),
+        exp: explicit({ sourceAuthority: foreign('s-f', 'hq') }),
+      }).reasons,
+    ).toEqual(['source-authority-unavailable']);
+    const unallowed = evaluate({
+      pol: policy({ allowedSourceAuthorities: ['hq'] }),
+      exp: explicit({ sourceAuthority: foreign('s-f', 'field-bot') }),
+    });
+    expect(unallowed.outcome).toBe('remain-candidate');
+    expect(unallowed.reasons).toEqual(['source-authority-unavailable']);
+  });
+});

@@ -419,8 +419,8 @@ const matchOutcomes = (
     )
     .sort(sortOutcomes);
 
-const hasHarmful = (explicit: ExplicitPromotionEvidence): boolean =>
-  (explicit.rateObservations ?? []).some((item) => item.value.harmful === true);
+const hasHarmful = (observations: readonly { readonly value: RateValue }[]): boolean =>
+  observations.some((item) => item.value.harmful === true);
 
 const rateOf = (
   observations: readonly { readonly value: RateValue }[],
@@ -484,18 +484,36 @@ export function evaluatePromotion(
   if (policy.active !== true)
     return result('needs-review', ['policy-inactive'], policyRef, outcomeIds);
 
+  // Exact-bound evidence only: explicit observations must bind to the candidate
+  // (tenant + subject); foreign ones are ignored — never binding, never escalated.
+  const boundTo = (item: { companyId: string; subject: LearningSubject }): boolean =>
+    item.companyId === candidate.companyId &&
+    item.subject.skillId === candidate.subject.skillId &&
+    item.subject.skillVersion === candidate.subject.skillVersion;
+  const conflicts = explicit.conflicts.filter(boundTo);
+  const catastrophicVetoes = explicit.catastrophicVetoes.filter(boundTo);
+  const rateObservations = (explicit.rateObservations ?? []).filter(boundTo);
+  const confidence =
+    explicit.confidence !== undefined && boundTo(explicit.confidence)
+      ? explicit.confidence
+      : undefined;
+  const sourceAuthority =
+    explicit.sourceAuthority !== undefined && boundTo(explicit.sourceAuthority)
+      ? explicit.sourceAuthority
+      : undefined;
+
   const escalations: PromotionReason[] = [];
-  if (explicit.conflicts.some((item) => item.value.unresolved))
-    escalations.push('conflict-unresolved');
+  if (conflicts.some((item) => item.value.unresolved)) escalations.push('conflict-unresolved');
   if (
     policy.catastrophicVetoEnabled === true &&
-    explicit.catastrophicVetoes.some((item) => item.value.triggered)
+    catastrophicVetoes.some((item) => item.value.triggered)
   )
     escalations.push('veto-triggered');
-  if (policy.harmfulCap === undefined && hasHarmful(explicit)) escalations.push('risk-undelegated');
+  if (policy.harmfulCap === undefined && hasHarmful(rateObservations))
+    escalations.push('risk-undelegated');
   if ((policy.delegatedRiskClasses as readonly string[]).includes(RESERVED_RISK_CLASS))
     escalations.push('risk-reserved');
-  const source = explicit.sourceAuthority?.value;
+  const source = sourceAuthority?.value;
   if (source !== undefined && !(policy.allowedSourceAuthorities ?? []).includes(source))
     escalations.push('source-authority-not-allowed');
   const proofFailure = authorityFailure(authority, candidate, policyRef);
@@ -511,13 +529,11 @@ export function evaluatePromotion(
     : matched.length;
   if (linked < policy.minLinkedOutcomes) return insufficient('insufficient-linked-outcomes');
   if (policy.minConfidence !== undefined) {
-    const confidence = explicit.confidence;
     if (confidence === undefined) return insufficient('confidence-unavailable');
     if (confidence.value < policy.minConfidence) return insufficient('insufficient-confidence');
   }
-  if (policy.allowedSourceAuthorities !== undefined && explicit.sourceAuthority === undefined)
+  if (policy.allowedSourceAuthorities !== undefined && sourceAuthority === undefined)
     return insufficient('source-authority-unavailable');
-  const rateObservations = explicit.rateObservations ?? [];
   if (policy.successRate !== undefined) {
     if (rateObservations.length === 0) return insufficient('success-rate-unavailable');
     if (rateOf(rateObservations, (value) => value.positive) < policy.successRate.threshold)
