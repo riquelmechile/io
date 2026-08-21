@@ -62,6 +62,7 @@ export {
   InMemoryDelegationRepository,
   InMemoryHeartbeatCursorStore,
   InMemoryIdempotencyJournalRepository,
+  InMemoryLearningCandidateRepository,
   InMemorySkillRepository,
   InMemoryWorkRepository,
 } from './ports/fakes.js';

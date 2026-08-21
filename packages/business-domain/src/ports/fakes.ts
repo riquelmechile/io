@@ -1,5 +1,6 @@
 import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work } from '../types.js';
 import type { HeartbeatCursor } from '../heartbeat.js';
+import type { LearningCandidate } from '../learning-candidate.js';
 import { ACTIONABLE_WORK_STATES } from '../transitions.js';
 import type { HeartbeatCursorStore } from './cursors.js';
 import type {
@@ -17,6 +18,8 @@ import type {
   CompanyRepository,
   DelegationRepository,
   FencingDirective,
+  LearningCandidateRepository,
+  LearningCandidateTransition,
   SkillRepository,
   WorkRepository,
 } from './repositories.js';
@@ -366,6 +369,98 @@ export class InMemorySkillRepository implements SkillRepository {
   async listByCompany(companyId: string): Promise<readonly Skill[]> {
     requireCompanyId(companyId);
     return this.entries.filter((entry) => entry.companyId === companyId);
+  }
+}
+
+type StoredLearningCandidate = Readonly<{ candidate: LearningCandidate; digest: string }>;
+
+/**
+ * In-memory fake for the LearningCandidate revision store (learning design
+ * "INSERT-only persistence and concurrency"): mirrors the PostgreSQL
+ * INSERT … SELECT semantics in one serialized critical section (the decision
+ * block performs NO `await`, so racing callers never interleave inside it).
+ *
+ * - `appendInitial`: deterministic candidate identity + `ON CONFLICT DO
+ *   NOTHING` — an equal digest replays; a divergent digest under a reused
+ *   identity is an `idempotency-collision` that preserves the original.
+ * - `appendTransition`: `INSERT … SELECT` from the expected revision with
+ *   `NOT EXISTS` child — a parent that does not exist (or an over-advanced
+ *   expected revision) is `stale`; an occupied parent claim with an equal
+ *   digest replays; an occupied parent claim with a divergent digest is a
+ *   `conflict` (the unique parent claim keeps ONE concurrent winner current).
+ * - Reads return the current leaf (`getCurrent`) or every revision in
+ *   ascending order (`listRevisions`); all operations are tenant-scoped and
+ *   reject an empty `companyId` (ADR-0002/R8). INSERT-only: no update/delete.
+ */
+export class InMemoryLearningCandidateRepository implements LearningCandidateRepository {
+  private readonly rows = new Map<string, StoredLearningCandidate[]>();
+
+  private keyOf(companyId: string, candidateId: string): string {
+    return `${companyId}\u0001${candidateId}`;
+  }
+
+  async appendInitial(
+    candidate: LearningCandidate,
+    commandDigest: string,
+  ): Promise<'appended' | 'replayed' | 'idempotency-collision'> {
+    requireCompanyId(candidate.companyId);
+    if (candidate.revision !== 1) {
+      throw new Error('appendInitial requires a revision-1 candidate');
+    }
+    if (!commandDigest) throw new Error('a non-empty command digest is required');
+    const key = this.keyOf(candidate.companyId, candidate.candidateId);
+    const revisions = this.rows.get(key);
+    if (revisions === undefined) {
+      this.rows.set(key, [{ candidate, digest: commandDigest }]);
+      return 'appended';
+    }
+    const stored = revisions[0];
+    return stored !== undefined && stored.digest === commandDigest
+      ? 'replayed'
+      : 'idempotency-collision';
+  }
+
+  async appendTransition(
+    item: LearningCandidateTransition,
+    commandDigest: string,
+  ): Promise<'appended' | 'replayed' | 'stale' | 'conflict'> {
+    requireCompanyId(item.companyId);
+    if (!commandDigest) throw new Error('a non-empty command digest is required');
+    const revisions = this.rows.get(this.keyOf(item.companyId, item.candidateId));
+    if (revisions === undefined) return 'stale';
+    if (item.expectedRevision < 1 || item.expectedRevision > revisions.length) return 'stale';
+    const child = revisions[item.expectedRevision];
+    if (item.expectedRevision < revisions.length) {
+      // A child of the expected parent already exists: an equal digest replays
+      // the converged transition; a divergent digest lost the parent claim.
+      return child !== undefined && child.digest === commandDigest ? 'replayed' : 'conflict';
+    }
+    const parent = revisions[item.expectedRevision - 1]?.candidate;
+    if (parent === undefined) return 'stale';
+    const next: LearningCandidate = {
+      ...parent,
+      revision: parent.revision + 1,
+      state: item.transition.toState,
+      supersedesRevision: parent.revision,
+      transition: { ...item.transition },
+    };
+    revisions.push({ candidate: next, digest: commandDigest });
+    return 'appended';
+  }
+
+  async getCurrent(companyId: string, candidateId: string): Promise<LearningCandidate | undefined> {
+    requireCompanyId(companyId);
+    const revisions = this.rows.get(this.keyOf(companyId, candidateId));
+    return revisions?.at(-1)?.candidate;
+  }
+
+  async listRevisions(
+    companyId: string,
+    candidateId: string,
+  ): Promise<readonly LearningCandidate[]> {
+    requireCompanyId(companyId);
+    const revisions = this.rows.get(this.keyOf(companyId, candidateId));
+    return (revisions ?? []).map((entry) => entry.candidate);
   }
 }
 
