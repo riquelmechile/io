@@ -37,7 +37,7 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: App + fakes
 
-- [ ] 2.1 GREEN `app/src/learning/evaluate.ts`: Skill → unique policy → one read → aggregate → parse explicit+authority → scope → resolve authority (trusted actor/principal) → evaluate; tenant guard.
+- [x] 2.1 GREEN `app/src/learning/evaluate.ts`: Skill → unique policy → one read → aggregate → parse explicit+authority → scope → resolve authority (trusted actor/principal) → evaluate; tenant guard.
 - [ ] 2.2 RED tests: one read/zero writes/tenant scoping/fail-closed policy/typed authority failures.
 - [x] 2.3 GREEN `ports/fakes.ts`: in-memory candidate + authority repos (append-only, current-leaf, revocation); INSERT-only; export. (W3A candidate fake + W3B1 authority fake; W3B2 coverage tests.)
 - [x] 2.4 RED fake tests: candidate replay/collision/stale/concurrency; authority current/superseded/revoked. (W3A 11/11 candidate; W3B1 8/8 core + W3B2 10/10 coverage.)
