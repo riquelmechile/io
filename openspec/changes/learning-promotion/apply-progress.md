@@ -293,3 +293,24 @@ Line count (vs d2dc757, code+tests+planning): 392 additions / 3 deletions = **39
 | Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
 | Full gate (task 1.10) | `pnpm check` — **exit 0**: format ✓ typecheck ✓ build ✓ lint ✓ (9 pre-existing warnings) → test **1532 passed / 6 skipped** (baseline 1524/6 + 8 corpus) |
 | Line count (vs 34528a7) | corpus 281 + tasks.md 2 (net) + this section 45 = **328 additions ≤ 400** |
+
+# Slice W3A (work-unit-3 child 1) — 2.3 candidate fake + 2.4 candidate tests (unit `learning-candidate-fake`, base 7003f50)
+> Work unit 3 (2.1–2.6) crossed 400 at apply (uncut candidate ≈1350): auto-split per tasks.md contingency along named sub-boundaries (fakes, learning/, verify hook) — and because the "fakes" sub-boundary alone (candidate+authority) ≈650, it splits further into W3A (candidate fake) + W3B (authority fake). Stacked-to-main; each child targets main after its predecessor merges. Strict TDD; hybrid.
+## TDD Cycle Evidence
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 2.3 candidate fake | `test/learning-candidate-fake.test.ts` | Unit | ✅ 1532/6 full baseline | ✅ **11 failed / 11** (`InMemoryLearningCandidateRepository` not exported) | ✅ **11/11** | ✅ replay/collision/stale/conflict/races ×2/tenant/INSERT-only | ✅ biome format (1 pass); `pnpm check` GREEN |
+## Work Unit Evidence
+| Evidence | Value |
+|----------|-------|
+| Focused cmd + exact result | `pnpm exec vitest run packages/business-domain/test/learning-candidate-fake.test.ts` — RED 11F/11 → GREEN **11/11** |
+| Runtime harness | N/A — pure in-memory fake; no runtime boundary (no PG/daemon/adapters in this child) |
+| Rollback | revert `InMemoryLearningCandidateRepository` from `ports/fakes.ts` + index export + drop `test/learning-candidate-fake.test.ts` + this section — no consumers (authority fake, app seam, PG adapter not implemented) |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate | `pnpm check` — exit 0: format ✓ typecheck ✓ build ✓ lint ✓ → test **1543 passed / 6 skipped** (baseline 1532/6; +11) |
+| Line count (vs 7003f50) | fakes.ts +95, index.ts +1, test +264, this section +15 = **375 additions ≤ 400** |
+### Semantics (locked for W3B/3.x parity)
+1. appendInitial: revision-1 candidate only (else throw); ON CONFLICT DO NOTHING — equal digest 'replayed', divergent digest 'idempotency-collision', original preserved.
+2. appendTransition: parent missing / expectedRevision 0 or > leaf → 'stale'; occupied parent claim equal digest → 'replayed'; divergent digest → 'conflict' (one winner current); parent == leaf → append revision+1 with state/toState, supersedesRevision, transition copied; subject/scope/outcomes carried from parent.
+3. Serialized critical section = synchronous decision block (no internal awaits); concurrent identical appends → exactly one appended; concurrent divergent transitions → exactly one winner.
+4. Tenant guard on EVERY operation (empty companyId throws); foreign tenant resolves undefined/empty; INSERT-only (no update/delete surface, compile-time proven).
