@@ -42,7 +42,7 @@ Chain strategy: stacked-to-main
 - [x] 2.3 GREEN `ports/fakes.ts`: in-memory candidate + authority repos (append-only, current-leaf, revocation); INSERT-only; export. (W3A candidate fake + W3B1 authority fake; W3B2 coverage tests.)
 - [x] 2.4 RED fake tests: candidate replay/collision/stale/concurrency; authority current/superseded/revoked. (W3A 11/11 candidate; W3B1 8/8 core + W3B2 10/10 coverage.)
 - [ ] 2.6 RED+GREEN atomic verifyWork+proof owner (`app/src/worker/verify.ts`): one transaction = `completed→verified` win + proof append (verifier, fresh Delegation, policy); revocation supersede; no partial write.
-- [ ] 2.5 `pnpm check` green.
+- [x] 2.5 `pnpm check` green. (1582 passed / 6 skipped on the full work-unit-3 stack; 9 pre-existing warnings.)
 
 ## Phase 3: PostgreSQL
 
