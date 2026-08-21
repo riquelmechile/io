@@ -273,3 +273,23 @@ Out: 1.8 exhaustive corpus and 1.10 final gate remain CHILD 2C (unchecked; 1.5r 
 Line count (vs d2dc757, code+tests+planning): 392 additions / 3 deletions = **395 ≤ 400**.
 
 ### Correction pass (R3-001, bounded 96-line budget): `evaluatePromotion` now binds EVERY explicit observation to the candidate (companyId + subject equality) BEFORE escalation/threshold logic — foreign conflicts/vetoes/rate observations ignored; foreign confidence/sourceAuthority become typed `*-unavailable` (never binding, never escalated); missing stays unknown/never-harmful. Strict TDD: RED **4F/22P** → GREEN **26/26**; full gate **1524/6**; 0 new warnings (9 pre-existing); no ports/index/corpus changes.
+
+# Slice 2C (work-unit-2 child FINAL) — task 1.8 promotion quality corpus + 1.10 full gate (unit `promotion-quality-corpus`, base 34528a7)
+> Work unit 2 stacked chain: 2A ports (merged) → 2B evaluator (merged PR #87) → **2C FINAL child** targets `main`. Strict TDD; hybrid; 400-line budget. No production-code edits in this child — corpus characterizes the MERGED `evaluatePromotion` against locked semantics (Engram #6863 evaluator-semantics + #6867 R3-001 binding).
+## Status: 12/32 (1.1–1.4, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12 complete; 1.5 closed via 1.5r in 2B). Work unit 2 (1.5r, 1.7–1.10) COMPLETE.
+## HONEST TDD evidence (corpus vs pre-merged evaluator)
+- RED: **n/a by construction** — `evaluatePromotion` merged at 34528a7 (PR #87) before this slice. The corpus is a behavioral characterization of the locked contracts (escalation-before-thresholds, candidate-bound explicit evidence, typed `*-unavailable` reasons). No RED fabricated; the STOP-condition (corpus case failing against the merged evaluator) did NOT trigger.
+- First observed run (corpus written → focused runner): `pnpm exec vitest run packages/business-domain/test/promotion-quality-corpus.test.ts` → **8 passed (8) immediately**. No patch to evaluator/ports/index in this child; zero production lines changed.
+## TDD Cycle Evidence (2C)
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 1.8 | `test/promotion-quality-corpus.test.ts` | Unit | ✅ 1524/6 full suite (merged main baseline) | ➖ n/a — production pre-merged (characterization corpus) | ✅ **8/8** first run | ✅ 8 table-driven families: gold(×2 incl. all optional gates), decoy, reorder-identical, missing-never-harmful(×4 reasons), veto-count 1/5, absent+revoked authority, retired+history-intact, Stage-4 boundary | ✅ biome format (1 file); full gate GREEN |
+## Work Unit Evidence (2C)
+| Evidence | Value |
+|----------|-------|
+| Focused command + exact result | `pnpm exec vitest run packages/business-domain/test/promotion-quality-corpus.test.ts` — **8 passed / 8** (first run; no failures observed) |
+| Runtime harness | N/A — pure domain corpus over the pure evaluator; no runtime boundary (no app seam, no PG in this slice) |
+| Rollback boundary | Drop `packages/business-domain/test/promotion-quality-corpus.test.ts`, revert the two tasks.md checkboxes + this section — zero production files touched; 2A/2B and all prior slices untouched |
+| Warnings | **0 introduced**; **9 pre-existing** (parity×6, business-pg-roundtrip×2, worker-reconcile×1) |
+| Full gate (task 1.10) | `pnpm check` — **exit 0**: format ✓ typecheck ✓ build ✓ lint ✓ (9 pre-existing warnings) → test **1532 passed / 6 skipped** (baseline 1524/6 + 8 corpus) |
+| Line count (vs 34528a7) | corpus 281 + tasks.md 2 (net) + this section 45 = **328 additions ≤ 400** |

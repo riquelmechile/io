@@ -31,9 +31,9 @@ Chain strategy: stacked-to-main
 - [x] 1.11 RED+GREEN `parseAuthorityEvidence`: closed `{companyId,subject,sourceRef}` envelope; missing/malformed/foreign → typed unavailable; export; completes 1.6.
 - [x] 1.12 RED+GREEN `promotionScopeFor`/`parsePromotionScope`: canonical `learning.promote:<companyUtf8Bytes>:<companyId>:<skillUtf8Bytes>:<skillId>:v<positiveVersion>`; reject malformed/trailing/non-positive; byte-exact re-encode.
 - [x] 1.7 GREEN `evaluatePromotion` (2B): outcomes+reasons; conflict/reserved/unresolved-risk/veto → needs-review BEFORE thresholds; veto never averaged; authority unavailable → needs-review, never promote.
-- [ ] 1.8 RED corpus: gold→promote; decoy/reorder-identical/missing-not-harmful/veto-any-count/absent-or-revoked-authority/retired-policy-fail-closed; `SkillState`/`MATERIAL_EVENT_TYPES` unchanged.
+- [x] 1.8 RED corpus: gold→promote; decoy/reorder-identical/missing-not-harmful/veto-any-count/absent-or-revoked-authority/retired-policy-fail-closed; `SkillState`/`MATERIAL_EVENT_TYPES` unchanged. (2C: `promotion-quality-corpus.test.ts`, honest n/a-RED vs merged evaluator.)
 - [x] 1.9 GREEN `ports/repositories.ts`: candidate port (4 ops, typed results) + `PromotionAuthorityRepository` (`appendProof`/`resolve`) + authority types; export (2A).
-- [ ] 1.10 `pnpm check` green.
+- [x] 1.10 `pnpm check` green. (2C: exit 0 — 1532 passed / 6 skipped.)
 
 ## Phase 2: App + fakes
 
