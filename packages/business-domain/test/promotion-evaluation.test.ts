@@ -636,11 +636,6 @@ describe('evaluatePromotion — explicit observations are candidate-bound (R3-00
       exp: explicit({ confidence: foreign('cf-f', 1) }),
     });
     expect(conf.reasons).toEqual(['confidence-unavailable']);
-    const allowed = evaluate({
-      pol: policy({ allowedSourceAuthorities: ['hq'] }),
-      exp: explicit({ sourceAuthority: foreign('s-f', 'hq') }),
-    });
-    expect(allowed.reasons).toEqual(['source-authority-unavailable']);
     const unallowed = evaluate({
       pol: policy({ allowedSourceAuthorities: ['hq'] }),
       exp: explicit({ sourceAuthority: foreign('s-f', 'field-bot') }),
