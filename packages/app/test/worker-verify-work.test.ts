@@ -275,4 +275,19 @@ describe('verifyWorkWithProofAtomically — no partial writes', () => {
       reason: 'authority-missing',
     });
   });
+
+  it('refuses self-approval: proposer === verifier is rejected with zero writes', async () => {
+    const stores = await freshStores({ proposer: 'actor-verifier' });
+    const result = await run(stores);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'verifier-not-distinct',
+      current: completedWork({ proposer: 'actor-verifier' }),
+    });
+    expect((await stores.work.get('acme', 'work-1'))?.state).toBe('completed');
+    expect(await stores.authority.resolve(resolveInput())).toEqual({
+      kind: 'unavailable',
+      reason: 'authority-missing',
+    });
+  });
 });

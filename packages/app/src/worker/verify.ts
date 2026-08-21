@@ -86,12 +86,14 @@ export async function verifyEffect(deps: VerifyDeps, ctx: VerifyContext): Promis
 /**
  * Learning promotion verify hook (task 2.6): ONE transaction owns BOTH writes —
  * the `completed → verified` CAS win AND the append-only verification proof
- * (DISTINCT verifier, fresh active Delegation, policy reference). Failures
- * abort + roll BOTH back and return as typed VALUES (finalize twin pattern).
+ * (DISTINCT verifier — enforced against the work proposer, fresh active
+ * Delegation, policy reference). Failures abort + roll BOTH back and return
+ * as typed VALUES (finalize twin pattern).
  */
 export type VerifyWorkFailureReason =
   | 'work-not-found'
   | 'invalid-work-state'
+  | 'verifier-not-distinct'
   | 'version-conflict'
   | 'delegation-unavailable'
   | 'proof-conflict';
@@ -143,6 +145,8 @@ export async function verifyWorkWithProofAtomically(
       if (current === undefined) throw new VerifyWorkAbortError('work-not-found');
       if (current.state !== 'completed')
         throw new VerifyWorkAbortError('invalid-work-state', current);
+      if (deps.verifier === current.proposer)
+        throw new VerifyWorkAbortError('verifier-not-distinct', current);
       const freshDelegation = await delegation.get(input.companyId, current.delegationId);
       if (freshDelegation === undefined) throw new VerifyWorkAbortError('delegation-unavailable');
       if (freshDelegation.state !== 'active')
