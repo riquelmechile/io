@@ -618,33 +618,29 @@ describe('evaluatePromotion — explicit observations are candidate-bound (R3-00
   });
   it('foreign rate observations are excluded from rate gates', () => {
     const rates = [foreign('r-f', { positive: true, harmful: true })];
-    expect(
-      evaluate({
-        pol: policy({ successRate: { threshold: 0.8 } }),
-        exp: explicit({ rateObservations: rates }),
-      }).reasons,
-    ).toEqual(['success-rate-unavailable']);
-    expect(
-      evaluate({
-        pol: policy({ harmfulCap: { threshold: 0.1 } }),
-        exp: explicit({ rateObservations: rates }),
-      }).reasons,
-    ).toEqual(['harmful-evidence-unavailable']);
+    const success = evaluate({
+      pol: policy({ successRate: { threshold: 0.8 } }),
+      exp: explicit({ rateObservations: rates }),
+    });
+    expect(success.reasons).toEqual(['success-rate-unavailable']);
+    const harmful = evaluate({
+      pol: policy({ harmfulCap: { threshold: 0.1 } }),
+      exp: explicit({ rateObservations: rates }),
+    });
+    expect(harmful.reasons).toEqual(['harmful-evidence-unavailable']);
     expect(evaluate({ exp: explicit({ rateObservations: rates }) }).outcome).toBe('promote');
   });
   it('foreign confidence and source authority become unavailable, never binding', () => {
-    expect(
-      evaluate({
-        pol: policy({ minConfidence: 0.9 }),
-        exp: explicit({ confidence: foreign('cf-f', 1) }),
-      }).reasons,
-    ).toEqual(['confidence-unavailable']);
-    expect(
-      evaluate({
-        pol: policy({ allowedSourceAuthorities: ['hq'] }),
-        exp: explicit({ sourceAuthority: foreign('s-f', 'hq') }),
-      }).reasons,
-    ).toEqual(['source-authority-unavailable']);
+    const conf = evaluate({
+      pol: policy({ minConfidence: 0.9 }),
+      exp: explicit({ confidence: foreign('cf-f', 1) }),
+    });
+    expect(conf.reasons).toEqual(['confidence-unavailable']);
+    const allowed = evaluate({
+      pol: policy({ allowedSourceAuthorities: ['hq'] }),
+      exp: explicit({ sourceAuthority: foreign('s-f', 'hq') }),
+    });
+    expect(allowed.reasons).toEqual(['source-authority-unavailable']);
     const unallowed = evaluate({
       pol: policy({ allowedSourceAuthorities: ['hq'] }),
       exp: explicit({ sourceAuthority: foreign('s-f', 'field-bot') }),

@@ -484,8 +484,7 @@ export function evaluatePromotion(
   if (policy.active !== true)
     return result('needs-review', ['policy-inactive'], policyRef, outcomeIds);
 
-  // Exact-bound evidence only: explicit observations must bind to the candidate
-  // (tenant + subject); foreign ones are ignored — never binding, never escalated.
+  // Candidate-bound evidence only: foreign explicit observations are ignored.
   const boundTo = (item: { companyId: string; subject: LearningSubject }): boolean =>
     item.companyId === candidate.companyId &&
     item.subject.skillId === candidate.subject.skillId &&
