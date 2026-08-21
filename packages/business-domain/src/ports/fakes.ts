@@ -2,6 +2,7 @@ import type { BusinessEvent, BusinessReceipt, Company, Delegation, Skill, Work }
 import type { HeartbeatCursor } from '../heartbeat.js';
 import type { LearningCandidate } from '../learning-candidate.js';
 import { ACTIONABLE_WORK_STATES } from '../transitions.js';
+import type { AuthorityUnavailableReason } from '../validation/promotion-observation.js';
 import type { HeartbeatCursorStore } from './cursors.js';
 import type {
   IdempotencyJournalPort,
@@ -12,6 +13,7 @@ import type {
 } from './idempotency.js';
 import { isUnresolvedJournalResult } from './idempotency.js';
 import type {
+  AuthorityTransitionProof,
   BusinessEventRepository,
   BusinessReceiptRepository,
   CasResult,
@@ -20,6 +22,9 @@ import type {
   FencingDirective,
   LearningCandidateRepository,
   LearningCandidateTransition,
+  PromotionAuthorityRepository,
+  PromotionAuthorityResolution,
+  PromotionAuthorityResolutionInput,
   SkillRepository,
   WorkRepository,
 } from './repositories.js';
@@ -676,5 +681,206 @@ export class DurableJournalFake implements IdempotencyJournalPort {
 
   private persist(): void {
     this.persistence.save(this.delegate.snapshot());
+  }
+}
+type StoredAuthorityProof = Omit<AuthorityTransitionProof, 'current'>;
+
+/** Serializable snapshot of one authority-fake instance (DurableJournalFake
+ * precedent): used to simulate restarts and transactional rollback recovery. */
+export interface PromotionAuthorityFakeSnapshot {
+  readonly rows: readonly {
+    readonly companyId: string;
+    readonly proofId: string;
+    readonly proofRevision: number;
+    readonly proof: StoredAuthorityProof;
+  }[];
+}
+
+const PROOF_STRING_FIELDS = [
+  'proofId',
+  'transitionId',
+  'actorId',
+  'principalId',
+  'delegationId',
+  'grantId',
+  'scope',
+] as const;
+
+function sameProof(a: StoredAuthorityProof, b: StoredAuthorityProof): boolean {
+  const scalars = [
+    a.proofRevision === b.proofRevision,
+    a.transitionRevision === b.transitionRevision,
+    a.companyId === b.companyId,
+    a.issuedAt === b.issuedAt,
+    a.effectiveFrom === b.effectiveFrom,
+    a.expiry === b.expiry,
+    a.revoked === b.revoked,
+    a.revocationVersion === b.revocationVersion,
+    a.command === b.command,
+    a.capability === b.capability,
+    a.kind === b.kind,
+    a.subject.skillId === b.subject.skillId,
+    a.subject.skillVersion === b.subject.skillVersion,
+    a.policyRef.policyId === b.policyRef.policyId,
+    a.policyRef.version === b.policyRef.version,
+    (a.supersedesProofRevision ?? 0) === (b.supersedesProofRevision ?? 0),
+  ];
+  return scalars.every(Boolean) && PROOF_STRING_FIELDS.every((field) => a[field] === b[field]);
+}
+
+function proofFieldGuards(p: StoredAuthorityProof): string | undefined {
+  if (PROOF_STRING_FIELDS.some((field) => typeof p[field] !== 'string' || p[field] === ''))
+    return 'identity fields must be non-empty strings';
+  if (typeof p.subject?.skillId !== 'string' || p.subject.skillId === '')
+    return 'subject.skillId must be a non-empty string';
+  if (!Number.isInteger(p.subject?.skillVersion) || p.subject.skillVersion < 1)
+    return 'subject.skillVersion must be a positive integer';
+  return undefined;
+}
+
+/**
+ * In-memory fake for the PromotionAuthority repository (learning design
+ * "Authority contract and durable source"): append-only proof store — PK
+ * `(companyId, proofId, proofRevision)` plus a per-tenant UNIQUE transition
+ * identity (a superseding revision of the SAME proof chain is exempt — self-FK
+ * supersede); revocation is a superseding revision with `revoked: true`.
+ * `resolve` derives current leaves, then validates in order: binding
+ * (_foreign), revocation (_revoked), command/capability (_command-mismatch),
+ * actor/principal (_principal-mismatch), policy (_policy-mismatch), canonical
+ * scope (_foreign), issuedAt (_stale), and the fresh active Delegation
+ * (grant/delegate/action/scope/window clamp; _proof-unavailable for an
+ * unresolvable backing). Zero rows → _missing; several leaves → _ambiguous.
+ * Fail closed without a delegation backing. INSERT-only.
+ */
+export class InMemoryPromotionAuthorityRepository implements PromotionAuthorityRepository {
+  private readonly rows = new Map<string, Map<number, StoredAuthorityProof>>();
+
+  constructor(private readonly options: { readonly delegation?: DelegationRepository } = {}) {}
+
+  private keyOf(companyId: string, proofId: string): string {
+    return `${companyId}\u0001${proofId}`;
+  }
+
+  async appendProof(proof: StoredAuthorityProof): Promise<'appended' | 'replayed' | 'conflict'> {
+    requireCompanyId(proof.companyId);
+    const guard = proofFieldGuards(proof);
+    if (guard !== undefined) throw new Error(`appendProof: ${guard}`);
+    if (!Number.isInteger(proof.proofRevision) || proof.proofRevision < 1)
+      throw new Error('appendProof: proofRevision must be a positive integer');
+    if (!Number.isInteger(proof.transitionRevision) || proof.transitionRevision < 1)
+      throw new Error('appendProof: transitionRevision must be a positive integer');
+    if (
+      !Number.isFinite(proof.issuedAt) ||
+      !Number.isFinite(proof.effectiveFrom) ||
+      !Number.isFinite(proof.expiry)
+    )
+      throw new Error('appendProof: times must be finite');
+    if (proof.effectiveFrom >= proof.expiry)
+      throw new Error('appendProof: effectiveFrom must precede expiry');
+    if (typeof proof.revoked !== 'boolean')
+      throw new Error('appendProof: revoked must be a boolean');
+    if (!Number.isInteger(proof.revocationVersion) || proof.revocationVersion < 0)
+      throw new Error('appendProof: revocationVersion must be a non-negative integer');
+    if (!Number.isInteger(proof.policyRef?.version) || proof.policyRef.version < 1)
+      throw new Error('appendProof: policyRef.version must be a positive integer');
+    const supersedes = proof.supersedesProofRevision;
+    if (supersedes !== undefined) {
+      if (!Number.isInteger(supersedes) || supersedes < 1 || supersedes >= proof.proofRevision)
+        throw new Error('appendProof: supersedesProofRevision must be a positive earlier revision');
+      const chain = this.rows.get(this.keyOf(proof.companyId, proof.proofId));
+      if (chain === undefined || !chain.has(supersedes))
+        throw new Error('appendProof: supersedes target revision does not exist');
+    }
+    const key = this.keyOf(proof.companyId, proof.proofId);
+    const chain = this.rows.get(key) ?? new Map<number, StoredAuthorityProof>();
+    const existing = chain.get(proof.proofRevision);
+    if (existing !== undefined) return sameProof(existing, proof) ? 'replayed' : 'conflict';
+    for (const [otherKey, otherChain] of this.rows) {
+      if (otherKey.split('\u0001')[0] !== proof.companyId) continue;
+      // Superseding revisions of the SAME proof chain share the transition
+      // identity (self-FK supersede); only a DIFFERENT proof claim conflicts.
+      if (otherKey.split('\u0001')[1] === proof.proofId) continue;
+      for (const other of otherChain.values()) {
+        if (
+          other.transitionId === proof.transitionId &&
+          other.transitionRevision === proof.transitionRevision
+        )
+          return 'conflict';
+      }
+    }
+    chain.set(proof.proofRevision, proof);
+    this.rows.set(key, chain);
+    return 'appended';
+  }
+
+  async resolve(input: PromotionAuthorityResolutionInput): Promise<PromotionAuthorityResolution> {
+    requireCompanyId(input.companyId);
+    const chain = this.rows.get(this.keyOf(input.companyId, input.sourceRef));
+    if (chain === undefined) return { kind: 'unavailable', reason: 'authority-missing' };
+    const leaves = [...chain.values()].filter(
+      (row) =>
+        ![...chain.values()].some((other) => other.supersedesProofRevision === row.proofRevision),
+    );
+    if (leaves.length !== 1) return { kind: 'unavailable', reason: 'authority-ambiguous' };
+    const leaf = leaves[0];
+    if (leaf === undefined) return { kind: 'unavailable', reason: 'authority-missing' };
+    const fail = (reason: AuthorityUnavailableReason): PromotionAuthorityResolution => ({
+      kind: 'unavailable',
+      reason,
+    });
+    if (
+      leaf.companyId !== input.companyId ||
+      leaf.subject.skillId !== input.subject.skillId ||
+      leaf.subject.skillVersion !== input.subject.skillVersion
+    )
+      return fail('authority-foreign');
+    if (leaf.revoked) return fail('authority-revoked');
+    if (leaf.command !== input.command || leaf.capability !== input.capability)
+      return fail('authority-command-mismatch');
+    if (leaf.actorId !== input.expectedActorId || leaf.principalId !== input.expectedPrincipalId)
+      return fail('authority-principal-mismatch');
+    if (
+      leaf.policyRef.policyId !== input.policyRef.policyId ||
+      leaf.policyRef.version !== input.policyRef.version
+    )
+      return fail('authority-policy-mismatch');
+    if (leaf.scope !== input.scope) return fail('authority-foreign');
+    if (leaf.issuedAt > input.at) return fail('authority-stale');
+    if (input.at < leaf.effectiveFrom || input.at >= leaf.expiry) return fail('authority-stale');
+    const delegationRepository = this.options.delegation;
+    if (delegationRepository === undefined) return fail('authority-proof-unavailable');
+    const delegation = await delegationRepository.get(input.companyId, leaf.delegationId);
+    if (delegation === undefined) return fail('authority-proof-unavailable');
+    if (leaf.grantId !== delegation.delegationId) return fail('authority-proof-unavailable');
+    if (delegation.state !== 'active') return fail('authority-proof-unavailable');
+    if (leaf.principalId !== delegation.delegate) return fail('authority-principal-mismatch');
+    if (!delegation.authorityScope.actions.includes('learning.promote'))
+      return fail('authority-command-mismatch');
+    if (delegation.authorityScope.scope !== leaf.scope) return fail('authority-foreign');
+    const effectiveFrom = Math.max(leaf.effectiveFrom, delegation.validFrom);
+    const expiry = Math.min(leaf.expiry, delegation.validUntil);
+    if (input.at < effectiveFrom || input.at >= expiry) return fail('authority-stale');
+    return { kind: 'resolved', value: { ...leaf, current: true } };
+  }
+
+  takeSnapshot(): PromotionAuthorityFakeSnapshot {
+    const rows: PromotionAuthorityFakeSnapshot['rows'][number][] = [];
+    for (const [key, chain] of this.rows) {
+      const [companyId, proofId] = key.split('\u0001');
+      for (const [proofRevision, proof] of chain) {
+        rows.push({ companyId: companyId ?? '', proofId: proofId ?? '', proofRevision, proof });
+      }
+    }
+    return { rows };
+  }
+
+  restoreSnapshot(snapshot: PromotionAuthorityFakeSnapshot): void {
+    this.rows.clear();
+    for (const row of snapshot.rows) {
+      const key = this.keyOf(row.companyId, row.proofId);
+      const chain = this.rows.get(key) ?? new Map<number, StoredAuthorityProof>();
+      chain.set(row.proofRevision, row.proof);
+      this.rows.set(key, chain);
+    }
   }
 }

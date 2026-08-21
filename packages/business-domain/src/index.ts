@@ -53,7 +53,7 @@ export type {
   ExplicitPromotionEvidence,
 } from './validation/promotion-observation.js';
 export { buildWorkAcceptedEvent } from './work-accepted-event.js';
-export type { JournalFakePersistence } from './ports/fakes.js';
+export type { JournalFakePersistence, PromotionAuthorityFakeSnapshot } from './ports/fakes.js';
 export {
   DurableJournalFake,
   InMemoryBusinessEventRepository,
@@ -63,6 +63,7 @@ export {
   InMemoryHeartbeatCursorStore,
   InMemoryIdempotencyJournalRepository,
   InMemoryLearningCandidateRepository,
+  InMemoryPromotionAuthorityRepository,
   InMemorySkillRepository,
   InMemoryWorkRepository,
 } from './ports/fakes.js';
