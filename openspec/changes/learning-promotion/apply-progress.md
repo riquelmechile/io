@@ -321,3 +321,10 @@ TDD: `test/promotion-authority-fake.test.ts` (Unit) — safety ✅ baseline 1532
 Focused: `pnpm exec vitest run packages/business-domain/test/promotion-authority-fake.test.ts` → **8/8**. Runtime harness: N/A — pure in-memory fake (no PG/daemon/adapters). Warnings: 0 introduced; 9 pre-existing. Full gate: `pnpm check` exit 0 → **1540/6**.
 Line count (vs 7003f50): fakes.ts +205, index.ts 3/−1, core test +181, this section +9 = **397 ≤ 400**.
 Semantics (locked, Engram mirror): PK (companyId, proofId, proofRevision); per-tenant UNIQUE transition identity with SAME-proof-chain exempt (self-FK supersede); supersede target MUST exist; revocation = superseding revoked revision; resolve order = binding→revoked→command→principal→policy→scope→issuedAt→proof-own window→delegation backing (missing/absent→proof-unavailable; grant/delegate/action/scope/states trap) →clamped window; 0 rows→missing; >1 leaves→ambiguous; fail closed without delegation backing.
+
+# Slice W3B2 (work-unit-3 child 2b) — 2.4 authority extended coverage (unit `promotion-authority-coverage`, base 7003f50)
+> Completes the 2.3/2.4 delivery together with W3A + W3B1. Strict TDD; hybrid. Test-only child (2C corpus precedent): behavior already merged W3B1; extended matrix characterizes locked fake semantics.
+TDD: `test/promotion-authority-coverage.test.ts` (Unit) — RED ✅ **10F** on main-base (import failure, honest — W3B1 not merged) → GREEN ✅ **10/10** on the combined tree (18/18 with core). Families: ambiguous×1, foreign×2, principal×2, policy×1, forged-command×1, stale×3, delegation backing×3 (absent/missing-row/revoked/delegate/clamped-window), transition identity, PK tenant isolation.
+Focused: `pnpm exec vitest run packages/business-domain/test/promotion-authority-coverage.test.ts` — RED 10F (main-base) → GREEN **10/10** (W3B1+W3B2 tree). Runtime harness: N/A (pure fake). Warnings: 0 new; 9 pre-existing.
+Rollback: drop the coverage test file + revert the two tasks.md checkboxes + this section (no production files touched in this child).
+Line count (vs 7003f50): coverage test +222, tasks.md 2/−2, this section +7 = **231 ≤ 400**.
