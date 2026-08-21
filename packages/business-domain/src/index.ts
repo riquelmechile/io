@@ -27,12 +27,18 @@ export type {
   SkillOutcomeEvidence,
   TransitionEvidence,
 } from './learning-candidate.js';
-export { aggregateSkillOutcomes, resolvePromotionPolicy } from './promotion-evaluation.js';
+export {
+  aggregateSkillOutcomes,
+  evaluatePromotion,
+  resolvePromotionPolicy,
+} from './promotion-evaluation.js';
 export type {
   PolicyRef,
   PolicyResolution,
   PromotionEvidence,
   PromotionPolicy,
+  PromotionReason,
+  PromotionResult,
   RiskClass,
 } from './promotion-evaluation.js';
 export { parsePromotionScope, promotionScopeFor } from './promotion-scope.js';

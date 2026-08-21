@@ -26,11 +26,11 @@ Chain strategy: stacked-to-main
 - [x] 1.2 `learning-candidate.ts` types (1A).
 - [x] 1.3 `createLearningCandidate` (1B).
 - [x] 1.4 RED `resolvePromotionPolicy` (1C).
-- [ ] 1.5 PARTIAL: 1C policy-resolution + 1D aggregation + 1E safe-data foundations (`safe-data.ts`, unexported) delivered; parsers/evaluator pending → 1.7.
+- [x] 1.5 COMPLETE: 1C policy-resolution + 1D aggregation + 1E safe-data + 1F explicit parser + 1G authority/scope all delivered on main (evaluator below).
 - [x] 1.6 PARTIAL→DONE: 1E-b1-v2 observation foundation (sha256:8a6aacdb…) + 1F public `parseExplicitPromotionEvidence` envelope (sha256:47d06b31…, 12/12) + 1.11 `parseAuthorityEvidence` delivered; 1.6 complete.
 - [x] 1.11 RED+GREEN `parseAuthorityEvidence`: closed `{companyId,subject,sourceRef}` envelope; missing/malformed/foreign → typed unavailable; export; completes 1.6.
 - [x] 1.12 RED+GREEN `promotionScopeFor`/`parsePromotionScope`: canonical `learning.promote:<companyUtf8Bytes>:<companyId>:<skillUtf8Bytes>:<skillId>:v<positiveVersion>`; reject malformed/trailing/non-positive; byte-exact re-encode.
-- [ ] 1.7 GREEN `evaluatePromotion`: outcomes+reasons; conflict/reserved/unresolved-risk/veto → needs-review BEFORE thresholds; veto never averaged; authority unavailable → needs-review, never promote.
+- [x] 1.7 GREEN `evaluatePromotion` (2B): outcomes+reasons; conflict/reserved/unresolved-risk/veto → needs-review BEFORE thresholds; veto never averaged; authority unavailable → needs-review, never promote.
 - [ ] 1.8 RED corpus: gold→promote; decoy/reorder-identical/missing-not-harmful/veto-any-count/absent-or-revoked-authority/retired-policy-fail-closed; `SkillState`/`MATERIAL_EVENT_TYPES` unchanged.
 - [x] 1.9 GREEN `ports/repositories.ts`: candidate port (4 ops, typed results) + `PromotionAuthorityRepository` (`appendProof`/`resolve`) + authority types; export (2A).
 - [ ] 1.10 `pnpm check` green.

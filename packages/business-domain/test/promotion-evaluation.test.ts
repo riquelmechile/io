@@ -2,7 +2,13 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import * as promotionApi from '../src/index.js';
 import type {
+  AuthorityTransitionProof,
+  AuthorityUnavailableReason,
+  ExplicitObservation,
+  ExplicitPromotionEvidence,
+  LearningCandidate,
   LearningSubject,
+  PromotionAuthorityResolution,
   PromotionEvidence,
   PromotionPolicy,
   SkillOutcomeEvidence,
@@ -375,5 +381,266 @@ describe('aggregateSkillOutcomes — invalid binding, timestamps, and interval f
     for (const bad of badBindings) expect(aggregate([outcomeEvent()], bad).ok).toBe(false);
     expect(aggregate('nope' as unknown as unknown[]).ok).toBe(false);
     expect(aggregate([null]).ok).toBe(false);
+  });
+});
+
+// ── evaluatePromotion (task 1.7) — lean gate set; full 1.8 corpus ⇒ child 2C ──
+
+const evt = (eventId: string, workId: string, occurredAt = 1000): SkillOutcomeEvidence => ({
+  evidenceId: eventId,
+  eventId,
+  companyId: 'acme',
+  subject: subject(),
+  occurredAt,
+  workId,
+});
+const built = promotionApi.createLearningCandidate({
+  companyId: 'acme',
+  subject: subject(),
+  scope,
+  outcomes: [evt('evt:a', 'work-a'), evt('evt:b', 'work-b'), evt('evt:c', 'work-c')],
+  createdAt: 900,
+});
+if (!built.ok) throw new Error('fixture candidate');
+const CAND = built.value;
+const obs = (positive: readonly SkillOutcomeEvidence[]): PromotionEvidence => ({
+  companyId: 'acme',
+  subject: subject(),
+  positiveObservations: positive,
+});
+const observation = (id: string, value: unknown): ExplicitObservation<never> => ({
+  evidenceId: id,
+  companyId: 'acme',
+  subject: subject(),
+  sourceRef: `src-${id}`,
+  observedAt: 1100,
+  value: value as never,
+});
+const explicit = (o: Partial<ExplicitPromotionEvidence> = {}): ExplicitPromotionEvidence => ({
+  conflicts: [],
+  catastrophicVetoes: [],
+  ...o,
+});
+const proof = (o: Partial<AuthorityTransitionProof> = {}): AuthorityTransitionProof => ({
+  proofId: 'proof-1',
+  proofRevision: 1,
+  transitionId: 'tr-1',
+  transitionRevision: 1,
+  kind: 'verification',
+  companyId: 'acme',
+  subject: subject(),
+  actorId: 'actor-1',
+  principalId: 'principal-1',
+  delegationId: 'del-1',
+  grantId: 'del-1',
+  command: 'learning.promote',
+  capability: 'learning.promote',
+  scope: promotionApi.promotionScopeFor('acme', subject()),
+  policyRef: { policyId: 'pol-1', version: 1 },
+  issuedAt: 1000,
+  effectiveFrom: 1000,
+  expiry: 2000,
+  revoked: false,
+  revocationVersion: 0,
+  current: true,
+  ...o,
+});
+const resolved = (o: Partial<AuthorityTransitionProof> = {}): PromotionAuthorityResolution => ({
+  kind: 'resolved',
+  value: proof(o),
+});
+const unavailable = (reason: AuthorityUnavailableReason): PromotionAuthorityResolution => ({
+  kind: 'unavailable',
+  reason,
+});
+const evaluate = (
+  o: {
+    cand?: LearningCandidate;
+    obs?: PromotionEvidence;
+    exp?: ExplicitPromotionEvidence;
+    pol?: PromotionPolicy;
+    aut?: PromotionAuthorityResolution;
+  } = {},
+) =>
+  promotionApi.evaluatePromotion(
+    o.cand ?? CAND,
+    o.obs ?? obs(CAND.outcomeEvidence),
+    o.exp ?? explicit(),
+    o.pol ?? policy(),
+    o.aut ?? resolved(),
+  );
+const ref = { policyId: 'pol-1', version: 1 };
+
+describe('evaluatePromotion — gold promotion within delegated policy', () => {
+  it('promotes with typed references; result frozen; ids canonical and tenant-scoped', () => {
+    const result = evaluate();
+    expect(result).toEqual({
+      outcome: 'promote',
+      reasons: [],
+      policyRef: ref,
+      outcomeIds: ['evt:a', 'evt:b', 'evt:c'],
+    });
+    const ordered = evaluate({
+      obs: obs([
+        evt('evt:c', 'work-c', 1000),
+        { ...evt('evt:x', 'work-x'), companyId: 'other' },
+        evt('evt:b', 'work-b', 900),
+        evt('evt:a', 'work-a', 950),
+      ]),
+    });
+    expect(ordered.outcomeIds).toEqual(['evt:b', 'evt:a', 'evt:c']);
+  });
+});
+
+describe('evaluatePromotion — escalation gates run before thresholds', () => {
+  it('inactive policy short-circuits alone', () => {
+    const result = evaluate({ pol: policy({ active: false }) });
+    expect(result.outcome).toBe('needs-review');
+    expect(result.reasons).toEqual(['policy-inactive']);
+  });
+  it('unresolved conflict and triggered veto escalate despite satisfied thresholds', () => {
+    const conflict = evaluate({
+      exp: explicit({
+        conflicts: [observation('c1', { unresolved: true, description: 'stale' })],
+      }),
+    });
+    expect(conflict.outcome).toBe('needs-review');
+    expect(conflict.reasons).toEqual(['conflict-unresolved']);
+    const veto = evaluate({
+      pol: policy({ catastrophicVetoEnabled: true, successRate: { threshold: 0.8 } }),
+      exp: explicit({
+        rateObservations: [observation('r1', { positive: true, harmful: false })],
+        catastrophicVetoes: [observation('v1', { triggered: true, description: 'boom' })],
+      }),
+    });
+    expect(veto.outcome).toBe('needs-review');
+    expect(veto.reasons).toEqual(['veto-triggered']);
+  });
+  it('harmful without a cap undelegates; reserved critical tier escalates', () => {
+    const undelegated = evaluate({
+      exp: explicit({
+        rateObservations: [observation('r1', { positive: false, harmful: true })],
+      }),
+    });
+    expect(undelegated.outcome).toBe('needs-review');
+    expect(undelegated.reasons).toEqual(['risk-undelegated']);
+    const reserved = evaluate({
+      pol: policy({ delegatedRiskClasses: ['low', 'medium', 'critical'] }),
+    });
+    expect(reserved.reasons).toEqual(['risk-reserved']);
+  });
+});
+
+describe('evaluatePromotion — authority gates promotion', () => {
+  it('unavailable authority is never promotion; revoked/mismatched/foreign proof escalates', () => {
+    expect(evaluate({ aut: unavailable('authority-missing') }).outcome).toBe('needs-review');
+    expect(evaluate({ aut: unavailable('authority-missing') }).reasons).toEqual([
+      'authority-missing',
+    ]);
+    const cases = [
+      [{ revoked: true, revocationVersion: 1 }, 'authority-revoked'],
+      [{ policyRef: { policyId: 'pol-1', version: 2 } }, 'authority-policy-mismatch'],
+      [{ companyId: 'other' }, 'authority-foreign'],
+    ] as const;
+    for (const [override, reason] of cases)
+      expect(evaluate({ aut: resolved({ ...override }) }).reasons).toEqual([reason]);
+  });
+});
+
+describe('evaluatePromotion — insufficient evidence remains candidate', () => {
+  it('positive, linked, and harmful-cap thresholds', () => {
+    const cases: [PromotionPolicy, PromotionEvidence, ExplicitPromotionEvidence, string][] = [
+      [
+        policy(),
+        obs([evt('evt:a', 'work-a'), evt('evt:b', 'work-b')]),
+        explicit(),
+        'insufficient-positive-observations',
+      ],
+      [
+        policy({ minLinkedOutcomes: 3 }),
+        obs([
+          evt('evt:a', 'work-a', 900),
+          evt('evt:b', 'work-a', 950),
+          evt('evt:c', 'work-b', 1000),
+        ]),
+        explicit(),
+        'insufficient-linked-outcomes',
+      ],
+      [
+        policy({ harmfulCap: { threshold: 0.1 } }),
+        obs(CAND.outcomeEvidence),
+        explicit({
+          rateObservations: [
+            observation('r1', { positive: true, harmful: true }),
+            observation('r2', { positive: true, harmful: false }),
+          ],
+        }),
+        'harmful-cap-exceeded',
+      ],
+    ];
+    for (const [pol, o, exp, reason] of cases)
+      expect(evaluate({ pol, obs: o, exp })).toEqual({
+        outcome: 'remain-candidate',
+        reasons: [reason],
+        policyRef: ref,
+        outcomeIds: o.positiveObservations.map((item) => item.eventId),
+      });
+  });
+});
+
+describe('evaluatePromotion — explicit observations are candidate-bound (R3-001)', () => {
+  const foreign = (id: string, value: unknown): ExplicitObservation<never> => ({
+    ...observation(id, value),
+    companyId: 'other',
+  });
+  it('foreign unresolved conflict is ignored; gold still promotes', () => {
+    const result = evaluate({
+      exp: explicit({
+        conflicts: [
+          foreign('c-f', { unresolved: true, description: 'foreign' }),
+          {
+            ...observation('c-s', { unresolved: true, description: 'other skill' }),
+            subject: subject('other', 7),
+          },
+        ],
+      }),
+    });
+    expect(result.outcome).toBe('promote');
+  });
+  it('foreign triggered veto is ignored', () => {
+    const result = evaluate({
+      pol: policy({ catastrophicVetoEnabled: true }),
+      exp: explicit({
+        catastrophicVetoes: [foreign('v-f', { triggered: true, description: 'x' })],
+      }),
+    });
+    expect(result.outcome).toBe('promote');
+  });
+  it('foreign rate observations are excluded from rate gates', () => {
+    const rates = [foreign('r-f', { positive: true, harmful: true })];
+    const success = evaluate({
+      pol: policy({ successRate: { threshold: 0.8 } }),
+      exp: explicit({ rateObservations: rates }),
+    });
+    expect(success.reasons).toEqual(['success-rate-unavailable']);
+    const harmful = evaluate({
+      pol: policy({ harmfulCap: { threshold: 0.1 } }),
+      exp: explicit({ rateObservations: rates }),
+    });
+    expect(harmful.reasons).toEqual(['harmful-evidence-unavailable']);
+    expect(evaluate({ exp: explicit({ rateObservations: rates }) }).outcome).toBe('promote');
+  });
+  it('foreign confidence and source authority become unavailable, never binding', () => {
+    const conf = evaluate({
+      pol: policy({ minConfidence: 0.9 }),
+      exp: explicit({ confidence: foreign('cf-f', 1) }),
+    });
+    expect(conf.reasons).toEqual(['confidence-unavailable']);
+    const unallowed = evaluate({
+      pol: policy({ allowedSourceAuthorities: ['hq'] }),
+      exp: explicit({ sourceAuthority: foreign('s-f', 'field-bot') }),
+    });
+    expect(unallowed.outcome).toBe('remain-candidate');
+    expect(unallowed.reasons).toEqual(['source-authority-unavailable']);
   });
 });

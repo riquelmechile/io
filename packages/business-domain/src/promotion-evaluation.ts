@@ -1,11 +1,17 @@
 import {
   hasLoneSurrogate,
+  type LearningCandidate,
   type LearningSubject,
   type SkillOutcomeEvidence,
 } from './learning-candidate.js';
 import { VALID_RISK_CLASSES } from './heartbeat.js';
+import type { PromotionAuthorityResolution } from './ports/repositories.js';
 import type { SkillScope } from './types.js';
 import type { ParseResult } from './validation/command.js';
+import type {
+  AuthorityUnavailableReason,
+  ExplicitPromotionEvidence,
+} from './validation/promotion-observation.js';
 
 export type RiskClass = (typeof VALID_RISK_CLASSES)[number];
 export interface PolicyRef {
@@ -366,4 +372,176 @@ export function aggregateSkillOutcomes(
       positiveObservations,
     }),
   };
+}
+
+/** Typed outcome vocabulary (task 1.7): escalation reasons name the gate that fired; insufficiency reasons name the failed threshold; `AuthorityUnavailableReason` members name absent/mismatched/revoked proof. */
+export type PromotionReason =
+  | 'conflict-unresolved'
+  | 'veto-triggered'
+  | 'risk-undelegated'
+  | 'risk-reserved'
+  | 'source-authority-not-allowed'
+  | 'policy-inactive'
+  | 'insufficient-positive-observations'
+  | 'insufficient-linked-outcomes'
+  | 'insufficient-confidence'
+  | 'insufficient-success-rate'
+  | 'confidence-unavailable'
+  | 'source-authority-unavailable'
+  | 'success-rate-unavailable'
+  | 'harmful-evidence-unavailable'
+  | 'harmful-cap-exceeded'
+  | AuthorityUnavailableReason;
+
+export interface PromotionResult {
+  readonly outcome: 'promote' | 'remain-candidate' | 'needs-review';
+  readonly reasons: readonly PromotionReason[];
+  readonly policyRef?: PolicyRef;
+  readonly outcomeIds: readonly string[];
+}
+
+type RateValue = Readonly<{ positive: boolean; harmful: boolean }>;
+const RESERVED_RISK_CLASS = 'critical';
+
+const sortOutcomes = (a: SkillOutcomeEvidence, b: SkillOutcomeEvidence): number =>
+  a.occurredAt - b.occurredAt || (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0);
+
+const matchOutcomes = (
+  candidate: LearningCandidate,
+  outcomes: PromotionEvidence,
+): readonly SkillOutcomeEvidence[] =>
+  outcomes.positiveObservations
+    .filter(
+      (item) =>
+        item.companyId === candidate.companyId &&
+        item.subject.skillId === candidate.subject.skillId &&
+        item.subject.skillVersion === candidate.subject.skillVersion,
+    )
+    .sort(sortOutcomes);
+
+const hasHarmful = (observations: readonly { readonly value: RateValue }[]): boolean =>
+  observations.some((item) => item.value.harmful === true);
+
+const rateOf = (
+  observations: readonly { readonly value: RateValue }[],
+  select: (value: RateValue) => boolean,
+): number =>
+  observations.length === 0
+    ? 0
+    : observations.filter((item) => select(item.value)).length / observations.length;
+
+const authorityFailure = (
+  authority: PromotionAuthorityResolution,
+  candidate: LearningCandidate,
+  policyRef: PolicyRef,
+): PromotionReason | undefined => {
+  if (authority.kind !== 'resolved') return authority.reason;
+  const proof = authority.value;
+  if (proof.revoked) return 'authority-revoked';
+  if (
+    proof.policyRef.policyId !== policyRef.policyId ||
+    proof.policyRef.version !== policyRef.version
+  )
+    return 'authority-policy-mismatch';
+  if (
+    proof.companyId !== candidate.companyId ||
+    proof.subject.skillId !== candidate.subject.skillId ||
+    proof.subject.skillVersion !== candidate.subject.skillVersion
+  )
+    return 'authority-foreign';
+  return undefined;
+};
+
+const result = (
+  outcome: PromotionResult['outcome'],
+  reasons: readonly PromotionReason[],
+  policyRef: PolicyRef,
+  outcomeIds: readonly string[],
+): PromotionResult =>
+  Object.freeze({
+    outcome,
+    reasons: Object.freeze([...reasons]),
+    policyRef,
+    outcomeIds: Object.freeze([...outcomeIds]),
+  });
+
+/**
+ * Deterministic bounded evaluation (design "Deterministic bounded evaluation"):
+ * escalation gates run BEFORE thresholds; only insufficient non-conflicting
+ * evidence stays candidate; missing rate evidence is unavailable, never
+ * harmful. Read-only: inputs are observed, never mutated.
+ */
+export function evaluatePromotion(
+  candidate: LearningCandidate,
+  outcomes: PromotionEvidence,
+  explicit: ExplicitPromotionEvidence,
+  policy: PromotionPolicy,
+  authority: PromotionAuthorityResolution,
+): PromotionResult {
+  const policyRef: PolicyRef = { policyId: policy.policyId, version: policy.version };
+  const matched = matchOutcomes(candidate, outcomes);
+  const outcomeIds = matched.map((item) => item.eventId);
+  if (policy.active !== true)
+    return result('needs-review', ['policy-inactive'], policyRef, outcomeIds);
+
+  // Candidate-bound evidence only: foreign explicit observations are ignored.
+  const boundTo = (item: { companyId: string; subject: LearningSubject }): boolean =>
+    item.companyId === candidate.companyId &&
+    item.subject.skillId === candidate.subject.skillId &&
+    item.subject.skillVersion === candidate.subject.skillVersion;
+  const conflicts = explicit.conflicts.filter(boundTo);
+  const catastrophicVetoes = explicit.catastrophicVetoes.filter(boundTo);
+  const rateObservations = (explicit.rateObservations ?? []).filter(boundTo);
+  const confidence =
+    explicit.confidence !== undefined && boundTo(explicit.confidence)
+      ? explicit.confidence
+      : undefined;
+  const sourceAuthority =
+    explicit.sourceAuthority !== undefined && boundTo(explicit.sourceAuthority)
+      ? explicit.sourceAuthority
+      : undefined;
+
+  const escalations: PromotionReason[] = [];
+  if (conflicts.some((item) => item.value.unresolved)) escalations.push('conflict-unresolved');
+  if (
+    policy.catastrophicVetoEnabled === true &&
+    catastrophicVetoes.some((item) => item.value.triggered)
+  )
+    escalations.push('veto-triggered');
+  if (policy.harmfulCap === undefined && hasHarmful(rateObservations))
+    escalations.push('risk-undelegated');
+  if ((policy.delegatedRiskClasses as readonly string[]).includes(RESERVED_RISK_CLASS))
+    escalations.push('risk-reserved');
+  const source = sourceAuthority?.value;
+  if (source !== undefined && !(policy.allowedSourceAuthorities ?? []).includes(source))
+    escalations.push('source-authority-not-allowed');
+  const proofFailure = authorityFailure(authority, candidate, policyRef);
+  if (proofFailure !== undefined) escalations.push(proofFailure);
+  if (escalations.length > 0) return result('needs-review', escalations, policyRef, outcomeIds);
+
+  const insufficient = (reason: PromotionReason): PromotionResult =>
+    result('remain-candidate', [reason], policyRef, outcomeIds);
+  if (matched.length < policy.minPositiveObservations)
+    return insufficient('insufficient-positive-observations');
+  const linked = policy.requireUniqueOutcomes
+    ? new Set(matched.map((item) => item.workId)).size
+    : matched.length;
+  if (linked < policy.minLinkedOutcomes) return insufficient('insufficient-linked-outcomes');
+  if (policy.minConfidence !== undefined) {
+    if (confidence === undefined) return insufficient('confidence-unavailable');
+    if (confidence.value < policy.minConfidence) return insufficient('insufficient-confidence');
+  }
+  if (policy.allowedSourceAuthorities !== undefined && sourceAuthority === undefined)
+    return insufficient('source-authority-unavailable');
+  if (policy.successRate !== undefined) {
+    if (rateObservations.length === 0) return insufficient('success-rate-unavailable');
+    if (rateOf(rateObservations, (value) => value.positive) < policy.successRate.threshold)
+      return insufficient('insufficient-success-rate');
+  }
+  if (policy.harmfulCap !== undefined) {
+    if (rateObservations.length === 0) return insufficient('harmful-evidence-unavailable');
+    if (rateOf(rateObservations, (value) => value.harmful) > policy.harmfulCap.threshold)
+      return insufficient('harmful-cap-exceeded');
+  }
+  return result('promote', [], policyRef, outcomeIds);
 }
