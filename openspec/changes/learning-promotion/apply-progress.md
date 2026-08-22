@@ -328,3 +328,11 @@ TDD: `test/promotion-authority-coverage.test.ts` (Unit) — RED ✅ **10F** on m
 Focused: `pnpm exec vitest run packages/business-domain/test/promotion-authority-coverage.test.ts` — RED 10F (main-base) → GREEN **10/10** (W3B1+W3B2 tree). Runtime harness: N/A (pure fake). Warnings: 0 new; 9 pre-existing.
 Rollback: drop the coverage test file + revert the two tasks.md checkboxes + this section (no production files touched in this child).
 Line count (vs 7003f50): coverage test +222, tasks.md 2/−2, this section +7 = **231 ≤ 400**.
+
+# Work unit 3 children W3C1–W3D2 (app seam + verify hook, stacked on W3A/B1/B2)
+> Stacked-to-main; strict TDD; hybrid. Each child's diff vs its predecessor: W3C1 seam 397 (evaluate.ts 184 + core test 3/3), W3C2 gates 158 (3/3), W3C3 typed matrix 341 (9/9 incl. authority never-promote matrix, skill guards, malformed/zero/conflict/foreign isolation), W3D1 verify hook 394 (verify.ts 116 + 3/3: atomic win/rollback-proof/invalid-state), W3D2 hook coverage 223 (3/3: revocation supersede, delegation-missing, version-conflict zero-writes).
+TDD: W3C1 RED ✅ 1 file failed/no tests (module missing) → GREEN 3/3; W3C2/W3C3 characterization over the shipped seam (2C precedent) → GREEN 3/3 + 9/9; W3D1 RED ✅ 1 file failed/no tests → GREEN 3/3; W3D2 GREEN 3/3. Safety net: baseline 1532/6 → final **1582/6**.
+Gate (task 2.5): `pnpm check` exit 0 — format ✓ typecheck ✓ build ✓ lint ✓ (9 pre-existing warnings) — test **1582 passed / 6 skipped**.
+Deviations (Engram `sdd/learning-promotion/app-seam` + `sdd/learning-promotion/verify-hook`): seam deps = {events, skills, authority, trusted{principalId,actorId}} (design listed only {events,skills}; repository authority resolution requires the extra ports); verify-hook transition identity = (workId, 1) canonical (design left identity free); work-unit 3 split into EIGHT children (W3A/W3B1/W3B2/W3C1/W3C2/W3C3/W3D1/W3D2) because the named sub-boundaries "fakes" and "learning/" each also crossed 400 at apply — no size:exception.
+Runtime harness: N/A — app-layer seam + hook over pure in-memory fakes; no PG/daemon/runtime boundary in this work unit.
+Rollback: per child — drop the child's files + revert its checkbox/section; all files are new modules with no prior consumers.
